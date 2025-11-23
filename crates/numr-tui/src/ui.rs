@@ -421,3 +421,124 @@ fn is_multiply_context(chars: &[char], i: usize) -> bool {
     };
     prev_ok && next_ok
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Extract (text, color) pairs from tokenized spans for testing
+    fn tokenize_to_pairs(input: &str) -> Vec<(String, Color)> {
+        tokenize_and_style(input)
+            .into_iter()
+            .map(|span| {
+                let text = span.content.to_string();
+                let color = span.style.fg.unwrap_or(Color::Reset);
+                (text, color)
+            })
+            .collect()
+    }
+
+    /// Helper to check if a token exists with expected color
+    fn has_token(pairs: &[(String, Color)], text: &str, expected_color: Color) -> bool {
+        pairs.iter().any(|(t, c)| t == text && *c == expected_color)
+    }
+
+    #[test]
+    fn test_simple_number() {
+        let pairs = tokenize_to_pairs("42");
+        assert!(has_token(&pairs, "42", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_negative_number() {
+        let pairs = tokenize_to_pairs("-5");
+        assert!(has_token(&pairs, "-5", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_percentage() {
+        let pairs = tokenize_to_pairs("20%");
+        assert!(has_token(&pairs, "20%", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_basic_operators() {
+        let pairs = tokenize_to_pairs("1 + 2");
+        assert!(has_token(&pairs, "1", palette::NUMBER));
+        assert!(has_token(&pairs, "+", palette::OPERATOR));
+        assert!(has_token(&pairs, "2", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_multiply_asterisk() {
+        let pairs = tokenize_to_pairs("3 * 4");
+        assert!(has_token(&pairs, "*", palette::OPERATOR));
+    }
+
+    #[test]
+    fn test_multiply_x_no_spaces() {
+        let pairs = tokenize_to_pairs("2x3");
+        assert!(has_token(&pairs, "2", palette::NUMBER));
+        assert!(has_token(&pairs, "x", palette::OPERATOR));
+        assert!(has_token(&pairs, "3", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_multiply_x_with_spaces() {
+        let pairs = tokenize_to_pairs("2 x 3");
+        assert!(has_token(&pairs, "2", palette::NUMBER));
+        assert!(has_token(&pairs, "x", palette::OPERATOR));
+        assert!(has_token(&pairs, "3", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_variable_not_multiply() {
+        // "tax" should be a variable, not t*a*x
+        let pairs = tokenize_to_pairs("tax");
+        assert!(has_token(&pairs, "tax", palette::VARIABLE));
+    }
+
+    #[test]
+    fn test_variable_x2() {
+        // "x2" alone should be a variable name
+        let pairs = tokenize_to_pairs("x2");
+        assert!(has_token(&pairs, "x2", palette::VARIABLE));
+    }
+
+    #[test]
+    fn test_currency_symbol_before() {
+        let pairs = tokenize_to_pairs("$100");
+        assert!(has_token(&pairs, "$", palette::UNIT));
+        assert!(has_token(&pairs, "100", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_currency_code() {
+        let pairs = tokenize_to_pairs("100 USD");
+        assert!(has_token(&pairs, "100", palette::NUMBER));
+        assert!(has_token(&pairs, "USD", palette::UNIT));
+    }
+
+    #[test]
+    fn test_unit() {
+        let pairs = tokenize_to_pairs("5 km");
+        assert!(has_token(&pairs, "5", palette::NUMBER));
+        assert!(has_token(&pairs, "km", palette::UNIT));
+    }
+
+    #[test]
+    fn test_assignment() {
+        let pairs = tokenize_to_pairs("x = 10");
+        assert!(has_token(&pairs, "x", palette::VARIABLE));
+        assert!(has_token(&pairs, "=", palette::OPERATOR));
+        assert!(has_token(&pairs, "10", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_function_call() {
+        let pairs = tokenize_to_pairs("sum(1, 2)");
+        assert!(has_token(&pairs, "sum", palette::OPERATOR));
+        assert!(has_token(&pairs, "1", palette::NUMBER));
+        assert!(has_token(&pairs, "2", palette::NUMBER));
+    }
+}
