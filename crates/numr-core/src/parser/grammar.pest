@@ -1,0 +1,176 @@
+// =============================================================================
+// numr grammar - Natural language calculator expressions
+// =============================================================================
+//
+// ADDING NEW CURRENCIES OR UNITS:
+// 1. Add to the registry in types/currency.rs or types/unit.rs (source of truth)
+// 2. Update the corresponding rules below (currency_symbol, currency_code, unit)
+// 3. Update target_unit rule to include the new conversion target
+//
+// The registries in types/ are the source of truth for:
+// - Parsing (Currency::parse, Unit::parse)
+// - Display (symbol(), short_name())
+// - Syntax highlighting (ui.rs reads from registries)
+//
+// This grammar file must be kept in sync with the registries manually.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// ENTRY POINT
+// -----------------------------------------------------------------------------
+
+line = { SOI ~ (assignment | expression)? ~ EOI }
+
+// -----------------------------------------------------------------------------
+// STATEMENTS
+// -----------------------------------------------------------------------------
+
+// Assignment: variable = expression
+assignment = { identifier ~ "=" ~ expression }
+
+// Expression: calculation optionally followed by conversion (e.g., "in usd")
+expression = { calculation ~ conversion_suffix? }
+
+// Calculation: terms connected by operators
+calculation = { term ~ (operation ~ term)* }
+
+// Conversion suffix: "in euros", "to km"
+conversion_suffix = { ("in" | "to") ~ target_unit }
+
+// -----------------------------------------------------------------------------
+// TERMS (atoms)
+// -----------------------------------------------------------------------------
+
+term = _{ atom }
+
+atom = _{
+    percentage_of       // "20% of 150"
+    | function_call     // "sum(1, 2, 3)"
+    | parenthesized     // "(1 + 2)"
+    | percentage        // "20%"
+    | currency_value    // "$100" or "100 USD"
+    | unit_value        // "5 km"
+    | number            // "42.5"
+    | variable_ref      // "tax"
+}
+
+parenthesized = { "(" ~ expression ~ ")" }
+
+// -----------------------------------------------------------------------------
+// OPERATORS (precedence handled in AST building)
+// -----------------------------------------------------------------------------
+
+operation = _{ add | subtract | multiply | divide | power }
+add      = { "+" }
+subtract = { "-" }
+multiply = { "*" | "x" | "×" }
+divide   = { "/" | "÷" }
+power    = { "^" | "**" }
+
+// -----------------------------------------------------------------------------
+// SPECIAL EXPRESSIONS
+// -----------------------------------------------------------------------------
+
+// Percentage of: "20% of 150"
+percentage_of = { percentage ~ "of" ~ atom }
+
+// Function calls: sum(), avg(), min(), max(), sqrt(), etc.
+function_call = { identifier ~ "(" ~ (expression ~ ("," ~ expression)*)? ~ ")" }
+
+// -----------------------------------------------------------------------------
+// VALUES
+// -----------------------------------------------------------------------------
+
+// Numbers: integers, decimals, scientific notation
+number = @{
+    "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)?
+}
+
+// Percentages: "20%"
+percentage = { number ~ "%" }
+
+// Currency values: "$100", "100 USD", "100$"
+currency_value = {
+    (currency_symbol ~ number)
+    | (number ~ currency_code)
+    | (number ~ currency_symbol)
+}
+
+// Unit values: "5 km", "10 hours"
+unit_value = { number ~ unit }
+
+// -----------------------------------------------------------------------------
+// CURRENCIES
+// Keep in sync with: types/currency.rs CURRENCIES registry
+// -----------------------------------------------------------------------------
+
+// Currency symbols (single characters)
+currency_symbol = { "$" | "€" | "£" | "¥" | "₽" | "₪" | "₿" }
+
+// Currency codes and aliases
+// IMPORTANT: Longer strings MUST come before shorter prefixes (PEG parsing order)
+// e.g., "euros" before "eur", "rubles" before "rub"
+currency_code = @{
+    // Word aliases (longer, must come first)
+    "dollars" | "euros" | "pounds" | "rubles" | "bitcoin"
+    // ISO codes (upper case)
+    | "USD" | "EUR" | "GBP" | "JPY" | "RUB" | "ILS" | "BTC"
+    // ISO codes (lower case)
+    | "usd" | "eur" | "gbp" | "jpy" | "rub" | "ils" | "btc"
+}
+
+// -----------------------------------------------------------------------------
+// UNITS
+// Keep in sync with: types/unit.rs UNITS registry
+// -----------------------------------------------------------------------------
+
+unit = @{
+    // Length
+    "km" | "m" | "cm" | "mm" | "mi" | "miles" | "mile" | "ft" | "feet" | "foot" | "inches" | "inch"
+    // Weight
+    | "kg" | "g" | "mg" | "lb" | "lbs" | "pound" | "pounds" | "oz" | "ounce" | "ounces"
+    // Time
+    | "hours" | "hour" | "hr" | "h"
+    | "minutes" | "minute" | "min"
+    | "seconds" | "second" | "sec" | "s"
+    | "days" | "day" | "d"
+    | "weeks" | "week" | "wk"
+    // Data
+    | "TB" | "tb" | "GB" | "gb" | "MB" | "mb" | "KB" | "kb" | "bytes" | "byte" | "b"
+}
+
+// -----------------------------------------------------------------------------
+// CONVERSION TARGETS
+// All valid targets for "in X" or "to X" conversions
+// -----------------------------------------------------------------------------
+
+target_unit = @{
+    currency_code
+    // Length
+    | "km" | "m" | "cm" | "mm" | "mi" | "miles" | "mile" | "ft" | "feet" | "foot" | "inches" | "inch"
+    // Weight
+    | "kg" | "g" | "mg" | "lb" | "lbs" | "pound" | "pounds" | "oz" | "ounce" | "ounces"
+    // Time
+    | "hours" | "hour" | "hr" | "h"
+    | "minutes" | "minute" | "min"
+    | "seconds" | "second" | "sec" | "s"
+    | "days" | "day" | "d"
+    | "weeks" | "week" | "wk"
+    // Data
+    | "TB" | "tb" | "GB" | "gb" | "MB" | "mb" | "KB" | "kb" | "bytes" | "byte" | "b"
+}
+
+// -----------------------------------------------------------------------------
+// IDENTIFIERS AND VARIABLES
+// -----------------------------------------------------------------------------
+
+identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+variable_ref = { identifier }
+
+// -----------------------------------------------------------------------------
+// WHITESPACE AND COMMENTS
+// -----------------------------------------------------------------------------
+
+WHITESPACE = _{ " " | "\t" }
+COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
+NEWLINE = _{ "\n" | "\r\n" }

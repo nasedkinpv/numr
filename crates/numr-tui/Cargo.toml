@@ -1,0 +1,22 @@
+[package]
+name = "numr-tui"
+description = "Terminal UI for numr calculator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "numr"
+path = "src/main.rs"
+
+[dependencies]
+numr-core = { path = "../numr-core" }
+ratatui.workspace = true
+crossterm.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+directories = "5.0"
+reqwest.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true

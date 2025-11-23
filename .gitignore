@@ -1,0 +1,25 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude
+.claude/
+
+# Documentation (keep private for now)
+*.md
+!README.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
