@@ -22,6 +22,14 @@ pub enum FetchStatus {
     Error(String),
 }
 
+/// Pending command for multi-key sequences (like dd, yy)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PendingCommand {
+    #[default]
+    None,
+    Delete, // Waiting for second 'd' to complete 'dd'
+}
+
 pub struct App {
     pub lines: Vec<String>,
     pub results: Vec<Value>,
@@ -33,6 +41,7 @@ pub struct App {
     pub viewport_height: usize, // Visible lines count
     pub engine: Engine,
     pub mode: InputMode,
+    pub pending: PendingCommand, // For multi-key commands like dd
     pub path: Option<PathBuf>,
     pub dirty: bool,
     pub debug_mode: bool,
@@ -325,6 +334,7 @@ impl Default for App {
             viewport_height: 20, // Will be updated by UI
             engine: Engine::new(),
             mode: InputMode::Normal,
+            pending: PendingCommand::None,
             path: None,
             dirty: false,
             debug_mode: false,
