@@ -1,5 +1,6 @@
 //! Minimal UI rendering
 
+use numr_core::{Currency, Unit};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
@@ -7,7 +8,6 @@ use ratatui::{
     widgets::{Block, Paragraph, Wrap},
     Frame,
 };
-use numr_core::{Currency, Unit};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -24,8 +24,8 @@ mod palette {
     pub const VARIABLE: Color = Color::LightGreen;
     pub const UNIT: Color = Color::Blue;
     pub const ERROR: Color = Color::Red;
-    pub const KEYWORD: Color = Color::Cyan;  // "in", "of", "to"
-    pub const TEXT: Color = Color::Gray;     // unrecognized prose (neutral)
+    pub const KEYWORD: Color = Color::Cyan; // "in", "of", "to"
+    pub const TEXT: Color = Color::Gray; // unrecognized prose (neutral)
 }
 
 /// Cached sets for syntax highlighting - built from registries
@@ -65,7 +65,7 @@ fn is_unit_word(word: &str) -> bool {
 }
 
 /// Main draw function
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Calculate the width needed for results column (fit to content)
@@ -93,15 +93,20 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     draw_header(frame, header_area, app);
 
-    // Layout: input (fill) | results (fit)
-    let [input_area, result_area] = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Length(max_result_width + 4),
-    ])
-    .areas(main_area);
+    if app.wrap_mode {
+        // Wrap mode: render line-by-line with results bottom-aligned
+        draw_wrapped_content(frame, main_area, app, max_result_width);
+    } else {
+        // Normal mode: two columns with scroll
+        let [input_area, result_area] = Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Length(max_result_width + 4),
+        ])
+        .areas(main_area);
 
-    draw_input(frame, input_area, app);
-    draw_results(frame, result_area, app);
+        draw_input(frame, input_area, app);
+        draw_results(frame, result_area, app);
+    }
 
     // Draw debug panel if enabled and there's an error
     if app.debug_mode && has_error {
@@ -112,21 +117,127 @@ pub fn draw(frame: &mut Frame, app: &App) {
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let filename = app.path.as_ref()
+    let filename = app
+        .path
+        .as_ref()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or("Untitled");
 
     let status = if app.dirty { " [+]" } else { "" };
-    
+
     let title = format!(" numr - {}{} ", filename, status);
-    
-    let block = Block::default().style(Style::default().bg(palette::DIM).fg(Color::White));
+
+    let block = Block::default().style(Style::new().bg(palette::DIM).fg(Color::White));
     let paragraph = Paragraph::new(title).block(block);
     frame.render_widget(paragraph, area);
 }
 
-fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
+/// Calculate wrapped line height (how many visual rows a line takes)
+fn wrapped_height(text: &str, width: usize) -> usize {
+    if text.is_empty() || width == 0 {
+        return 1;
+    }
+    // Simple word-wrap estimation: count characters and divide by width
+    // For more accurate results, we'd need to track word boundaries
+    let char_count = text.chars().count();
+    char_count.div_ceil(width).max(1)
+}
+
+/// Draw content in wrap mode with results bottom-aligned to each paragraph
+fn draw_wrapped_content(frame: &mut Frame, area: Rect, app: &mut App, result_width: u16) {
+    let input_width = area.width.saturating_sub(result_width + 2) as usize;
+
+    // Update viewport for cursor visibility
+    app.viewport_width = input_width;
+    app.viewport_height = area.height as usize;
+    app.ensure_cursor_visible();
+
+    // Calculate heights for visible lines
+    let mut heights: Vec<u16> = Vec::new();
+    let mut total_height: u16 = 0;
+    let mut visible_start = app.viewport_y;
+
+    // Find which lines fit in viewport
+    for line in app.lines.iter().skip(app.viewport_y) {
+        let h = wrapped_height(line, input_width) as u16;
+        if total_height + h > area.height {
+            break;
+        }
+        heights.push(h);
+        total_height += h;
+    }
+
+    // If we have remaining space, try to show more lines above
+    while visible_start > 0 && total_height < area.height {
+        visible_start -= 1;
+        let h = wrapped_height(&app.lines[visible_start], input_width) as u16;
+        if total_height + h > area.height {
+            visible_start += 1;
+            break;
+        }
+        heights.insert(0, h);
+        total_height += h;
+    }
+
+    if heights.is_empty() {
+        return;
+    }
+
+    // Create constraints for visible lines
+    let constraints: Vec<Constraint> = heights.iter().map(|&h| Constraint::Length(h)).collect();
+
+    // Split area into row areas
+    let row_areas = Layout::vertical(constraints).split(area);
+
+    // Render each visible line
+    for (idx, row_area) in row_areas.iter().enumerate() {
+        let line_idx = visible_start + idx;
+        if line_idx >= app.lines.len() {
+            break;
+        }
+
+        let line = &app.lines[line_idx];
+        let result = &app.results[line_idx];
+
+        // Split row into input + result columns
+        let [input_area, result_area] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(result_width + 2)])
+                .areas(*row_area);
+
+        // Render input with wrap
+        let highlighted = if line_idx == app.cursor_y {
+            highlight_line_with_cursor(line, app.cursor_x)
+        } else {
+            highlight_line(line)
+        };
+
+        let input_para = Paragraph::new(highlighted).wrap(Wrap { trim: false });
+        frame.render_widget(input_para, input_area);
+
+        // Render result bottom-aligned (on the last row of this area)
+        if !result.is_error() && !result.is_empty() {
+            let result_text = result.to_string();
+            // Position result at bottom of result_area
+            let result_y = result_area.y + result_area.height.saturating_sub(1);
+            let bottom_area = Rect {
+                x: result_area.x,
+                y: result_y,
+                width: result_area.width,
+                height: 1,
+            };
+            let result_para = Paragraph::new(result_text.fg(palette::ACCENT)).right_aligned();
+            frame.render_widget(result_para, bottom_area);
+        }
+    }
+}
+
+fn draw_input(frame: &mut Frame, area: Rect, app: &mut App) {
+    // Update viewport dimensions based on actual area
+    app.viewport_width = area.width as usize;
+    app.viewport_height = area.height as usize;
+    app.ensure_cursor_visible();
+
     let lines: Vec<Line> = app
         .lines
         .iter()
@@ -140,7 +251,8 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let paragraph = Paragraph::new(lines);
+    // scroll((row, col)) = (vertical_offset, horizontal_offset)
+    let paragraph = Paragraph::new(lines).scroll((app.viewport_y as u16, app.viewport_x as u16));
     frame.render_widget(paragraph, area);
 }
 
@@ -157,16 +269,17 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let paragraph = Paragraph::new(lines).right_aligned();
+    // Results scroll vertically only (no horizontal scroll needed)
+    let paragraph = Paragraph::new(lines)
+        .right_aligned()
+        .scroll((app.viewport_y as u16, 0));
     frame.render_widget(paragraph, area);
 }
 
 fn draw_debug_panel(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(error) = app.current_line_error() {
         // Clean up error message
-        let clean_error = error
-            .strip_prefix("Parse error: ")
-            .unwrap_or(error);
+        let clean_error = error.strip_prefix("Parse error: ").unwrap_or(error);
 
         // Create a red bordered block
         let block = Block::bordered()
@@ -192,10 +305,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {
         InputMode::Insert => " INSERT ".fg(Color::Black).bg(palette::VARIABLE).bold(),
     };
 
-    let mut hints = vec![
-        mode_span,
-        " ".into(),
-    ];
+    let mut hints = vec![mode_span, " ".into()];
 
     match app.mode {
         InputMode::Normal => {
@@ -207,6 +317,8 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {
             hints.push(" new line ".dim());
             hints.push("dd".fg(palette::ACCENT));
             hints.push(" delete ".dim());
+            hints.push("w".fg(palette::ACCENT));
+            hints.push(" wrap ".dim());
             hints.push("^s".fg(palette::ACCENT));
             hints.push(" save ".dim());
         }
@@ -221,6 +333,11 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {
     if app.debug_mode {
         hints.push("F12".fg(palette::ACCENT));
         hints.push(" debug on ".dim());
+    }
+
+    // Wrap mode indicator
+    if app.wrap_mode {
+        hints.push(" WRAP".fg(palette::KEYWORD));
     }
 
     // Fetch status
@@ -238,14 +355,10 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {
     }
 
     // Split footer into left (hints) and right (total) sections
-    let [left_area, right_area] = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Length(result_width),
-    ])
-    .areas(area);
+    let [left_area, right_area] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(result_width)]).areas(area);
 
-    let left_footer = Paragraph::new(Line::from(hints))
-        .style(Style::default().bg(palette::DIM));
+    let left_footer = Paragraph::new(Line::from(hints)).style(Style::new().bg(palette::DIM));
     frame.render_widget(left_footer, left_area);
 
     let total_line = Line::from(vec![
@@ -254,7 +367,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {
     ]);
     let right_footer = Paragraph::new(total_line)
         .right_aligned()
-        .style(Style::default().bg(palette::DIM));
+        .style(Style::new().bg(palette::DIM));
     frame.render_widget(right_footer, right_area);
 }
 
@@ -335,7 +448,8 @@ fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
     while i < chars.len() {
         let c = chars[i];
 
-        if c.is_ascii_digit() || (c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) {
+        if c.is_ascii_digit() || (c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
+        {
             // Numbers (including negative and percentages)
             let start = i;
             if c == '-' {
@@ -417,7 +531,11 @@ fn find_assignment_variable(input: &str) -> Option<String> {
         let var_part = parts[0].trim();
         // Check it's a valid identifier
         if !var_part.is_empty()
-            && var_part.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false)
+            && var_part
+                .chars()
+                .next()
+                .map(|c| c.is_alphabetic() || c == '_')
+                .unwrap_or(false)
             && var_part.chars().all(|c| c.is_alphanumeric() || c == '_')
         {
             return Some(var_part.to_string());

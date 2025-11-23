@@ -27,11 +27,16 @@ pub struct App {
     pub results: Vec<Value>,
     pub cursor_x: usize,
     pub cursor_y: usize,
+    pub viewport_x: usize,      // Horizontal scroll offset
+    pub viewport_y: usize,      // Vertical scroll offset
+    pub viewport_width: usize,  // Visible columns count
+    pub viewport_height: usize, // Visible lines count
     pub engine: Engine,
     pub mode: InputMode,
     pub path: Option<PathBuf>,
     pub dirty: bool,
     pub debug_mode: bool,
+    pub wrap_mode: bool, // Toggle text wrapping
     pub fetch_status: FetchStatus,
 }
 
@@ -72,7 +77,7 @@ impl App {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            
+
             let mut file = fs::File::create(path)?;
             for (i, line) in self.lines.iter().enumerate() {
                 if i > 0 {
@@ -88,6 +93,15 @@ impl App {
     /// Toggle debug mode
     pub fn toggle_debug(&mut self) {
         self.debug_mode = !self.debug_mode;
+    }
+
+    /// Toggle wrap mode
+    pub fn toggle_wrap(&mut self) {
+        self.wrap_mode = !self.wrap_mode;
+        // Reset horizontal scroll when entering wrap mode
+        if self.wrap_mode {
+            self.viewport_x = 0;
+        }
     }
 
     /// Insert a character at cursor position
@@ -172,6 +186,7 @@ impl App {
         if self.cursor_y > 0 {
             self.cursor_y -= 1;
             self.cursor_x = self.cursor_x.min(self.lines[self.cursor_y].len());
+            self.ensure_cursor_visible();
         }
     }
 
@@ -180,6 +195,27 @@ impl App {
         if self.cursor_y < self.lines.len() - 1 {
             self.cursor_y += 1;
             self.cursor_x = self.cursor_x.min(self.lines[self.cursor_y].len());
+            self.ensure_cursor_visible();
+        }
+    }
+
+    /// Ensure cursor is visible in viewport (both vertical and horizontal)
+    pub fn ensure_cursor_visible(&mut self) {
+        // Vertical scrolling
+        if self.cursor_y < self.viewport_y {
+            self.viewport_y = self.cursor_y;
+        } else if self.cursor_y >= self.viewport_y + self.viewport_height {
+            self.viewport_y = self.cursor_y.saturating_sub(self.viewport_height - 1);
+        }
+
+        // Horizontal scrolling (keep some margin)
+        let margin = 5.min(self.viewport_width / 4);
+        if self.cursor_x < self.viewport_x + margin {
+            self.viewport_x = self.cursor_x.saturating_sub(margin);
+        } else if self.cursor_x >= self.viewport_x + self.viewport_width.saturating_sub(margin) {
+            self.viewport_x = self
+                .cursor_x
+                .saturating_sub(self.viewport_width.saturating_sub(margin + 1));
         }
     }
 
@@ -191,6 +227,7 @@ impl App {
             self.cursor_y -= 1;
             self.cursor_x = self.lines[self.cursor_y].len();
         }
+        self.ensure_cursor_visible();
     }
 
     /// Move cursor right
@@ -202,16 +239,19 @@ impl App {
             self.cursor_y += 1;
             self.cursor_x = 0;
         }
+        self.ensure_cursor_visible();
     }
 
     /// Move to start of current line
     pub fn move_to_line_start(&mut self) {
         self.cursor_x = 0;
+        self.ensure_cursor_visible();
     }
 
     /// Move to end of current line
     pub fn move_to_line_end(&mut self) {
         self.cursor_x = self.lines[self.cursor_y].len();
+        self.ensure_cursor_visible();
     }
 
     /// Get the total sum of all results
@@ -237,7 +277,8 @@ impl App {
                     if let Ok(currency) = Currency::from_str(&code) {
                         if currency == Currency::BTC {
                             // BTC rate is "1 BTC = X USD" (from CoinGecko)
-                            self.engine.set_exchange_rate(Currency::BTC, Currency::USD, rate);
+                            self.engine
+                                .set_exchange_rate(Currency::BTC, Currency::USD, rate);
                         } else {
                             // Fiat rates are "1 USD = X Currency"
                             self.engine.set_exchange_rate(Currency::USD, currency, rate);
@@ -278,11 +319,16 @@ impl Default for App {
             results: vec![Value::Empty],
             cursor_x: 0,
             cursor_y: 0,
+            viewport_x: 0,
+            viewport_y: 0,
+            viewport_width: 80,  // Will be updated by UI
+            viewport_height: 20, // Will be updated by UI
             engine: Engine::new(),
             mode: InputMode::Normal,
             path: None,
             dirty: false,
             debug_mode: false,
+            wrap_mode: false,
             fetch_status: FetchStatus::Idle,
         };
         app.recalculate();

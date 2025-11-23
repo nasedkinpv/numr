@@ -36,20 +36,14 @@ pub enum Expr {
         right: Box<Expr>,
     },
     /// Percentage of: 20% of 150
-    PercentageOf {
-        percentage: f64,
-        value: Box<Expr>,
-    },
+    PercentageOf { percentage: f64, value: Box<Expr> },
     /// Unit/currency conversion: 100$ in EUR
     Conversion {
         value: Box<Expr>,
         target_unit: String,
     },
     /// Function call: sum(), avg()
-    FunctionCall {
-        name: String,
-        args: Vec<Expr>,
-    },
+    FunctionCall { name: String, args: Vec<Expr> },
 }
 
 /// Binary operators
@@ -194,10 +188,14 @@ fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, St
 
     // Pass 1: Power
     process_ops(&mut terms, &mut ops, &[BinaryOp::Power]);
-    
+
     // Pass 2: Multiply, Divide
-    process_ops(&mut terms, &mut ops, &[BinaryOp::Multiply, BinaryOp::Divide]);
-    
+    process_ops(
+        &mut terms,
+        &mut ops,
+        &[BinaryOp::Multiply, BinaryOp::Divide],
+    );
+
     // Pass 3: Add, Subtract
     process_ops(&mut terms, &mut ops, &[BinaryOp::Add, BinaryOp::Subtract]);
 
@@ -215,12 +213,15 @@ fn process_ops(terms: &mut Vec<Expr>, ops: &mut Vec<BinaryOp>, target_ops: &[Bin
             let op = ops.remove(i);
             let left = terms.remove(i);
             let right = terms.remove(i); // Was i+1, but after remove(i) it's at i
-            
-            terms.insert(i, Expr::BinaryOp {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-            });
+
+            terms.insert(
+                i,
+                Expr::BinaryOp {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+            );
         } else {
             i += 1;
         }
@@ -268,10 +269,7 @@ fn parse_unit_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<(f64, Unit)
 fn parse_percentage_of(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
     let mut inner = pair.into_inner();
     let pct_pair = inner.next().ok_or("Expected percentage")?;
-    let pct_num = pct_pair
-        .into_inner()
-        .next()
-        .ok_or("Expected number")?;
+    let pct_num = pct_pair.into_inner().next().ok_or("Expected number")?;
     let percentage: f64 = pct_num.as_str().parse().map_err(|e| format!("{}", e))?;
 
     let value_pair = inner.next().ok_or("Expected value")?;
@@ -283,11 +281,13 @@ fn parse_percentage_of(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, St
     })
 }
 
-
-
 fn parse_function_call(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
     let mut inner = pair.into_inner();
-    let name = inner.next().ok_or("Expected function name")?.as_str().to_string();
+    let name = inner
+        .next()
+        .ok_or("Expected function name")?
+        .as_str()
+        .to_string();
 
     let mut args = Vec::new();
     for arg_pair in inner {

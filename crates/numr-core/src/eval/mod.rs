@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
+use crate::cache::RateCache;
 use crate::parser::{Ast, BinaryOp, Expr};
 use crate::types::{unit, Currency, Unit, Value};
-use crate::cache::RateCache;
 
 /// Evaluation context with variables and rates
 #[derive(Clone)]
@@ -70,11 +70,10 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
         Expr::Currency { amount, currency } => Value::currency(*amount, *currency),
         Expr::WithUnit { amount, unit } => Value::with_unit(*amount, *unit),
 
-        Expr::Variable(name) => {
-            ctx.get_variable(name)
-                .cloned()
-                .unwrap_or_else(|| Value::Error(format!("Unknown variable: {}", name)))
-        }
+        Expr::Variable(name) => ctx
+            .get_variable(name)
+            .cloned()
+            .unwrap_or_else(|| Value::Error(format!("Unknown variable: {}", name))),
 
         Expr::BinaryOp { op, left, right } => {
             let lval = eval_expr(left, ctx);
@@ -89,9 +88,7 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
                 Value::Currency { amount, currency } => {
                     Value::currency(amount * percentage, currency)
                 }
-                Value::WithUnit { amount, unit } => {
-                    Value::with_unit(amount * percentage, unit)
-                }
+                Value::WithUnit { amount, unit } => Value::with_unit(amount * percentage, unit),
                 _ => Value::Error("Cannot calculate percentage of this value".to_string()),
             }
         }
@@ -142,7 +139,16 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
 
     // Handle currency/unit conversion
     let (l_val, r_val, final_currency, final_unit) = match (&left, &right) {
-        (Value::Currency { amount: l, currency: lc }, Value::Currency { amount: r, currency: rc }) => {
+        (
+            Value::Currency {
+                amount: l,
+                currency: lc,
+            },
+            Value::Currency {
+                amount: r,
+                currency: rc,
+            },
+        ) => {
             if lc == rc {
                 (*l, *r, Some(*lc), None)
             } else {
@@ -154,7 +160,16 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
                 }
             }
         }
-        (Value::WithUnit { amount: l, unit: lu }, Value::WithUnit { amount: r, unit: ru }) => {
+        (
+            Value::WithUnit {
+                amount: l,
+                unit: lu,
+            },
+            Value::WithUnit {
+                amount: r,
+                unit: ru,
+            },
+        ) => {
             if lu == ru {
                 (*l, *r, None, Some(*lu))
             } else if let Some(converted) = unit::convert(*r, *ru, *lu) {
@@ -163,16 +178,22 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
                 return Value::Error(format!("Cannot convert {} to {}", ru, lu));
             }
         }
-        _ => {
-            match (left.as_f64(), right.as_f64()) {
-                (Some(l), Some(r)) => {
-                    let c = if let Value::Currency { currency, .. } = left { Some(currency) } else { None };
-                    let u = if let Value::WithUnit { unit, .. } = left { Some(unit) } else { None };
-                    (l, r, c, u)
-                }
-                _ => return Value::Error("Invalid operands".to_string()),
+        _ => match (left.as_f64(), right.as_f64()) {
+            (Some(l), Some(r)) => {
+                let c = if let Value::Currency { currency, .. } = left {
+                    Some(currency)
+                } else {
+                    None
+                };
+                let u = if let Value::WithUnit { unit, .. } = left {
+                    Some(unit)
+                } else {
+                    None
+                };
+                (l, r, c, u)
             }
-        }
+            _ => return Value::Error("Invalid operands".to_string()),
+        },
     };
 
     let result = match op {
@@ -216,14 +237,15 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
 
     // Try as unit
     if let Some(target_unit) = Unit::parse(target) {
-        if let Value::WithUnit { amount, unit: from_unit } = value {
+        if let Value::WithUnit {
+            amount,
+            unit: from_unit,
+        } = value
+        {
             if let Some(converted) = unit::convert(amount, from_unit, target_unit) {
                 return Value::with_unit(converted, target_unit);
             }
-            return Value::Error(format!(
-                "Cannot convert {} to {}",
-                from_unit, target_unit
-            ));
+            return Value::Error(format!("Cannot convert {} to {}", from_unit, target_unit));
         }
     }
 
@@ -244,20 +266,18 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
                 Value::Number(values.iter().sum::<f64>() / values.len() as f64)
             }
         }
-        "min" => {
-            args.iter()
-                .filter_map(|v| v.as_f64())
-                .min_by(|a, b| a.partial_cmp(b).unwrap())
-                .map(Value::Number)
-                .unwrap_or(Value::Error("No values for min".to_string()))
-        }
-        "max" => {
-            args.iter()
-                .filter_map(|v| v.as_f64())
-                .max_by(|a, b| a.partial_cmp(b).unwrap())
-                .map(Value::Number)
-                .unwrap_or(Value::Error("No values for max".to_string()))
-        }
+        "min" => args
+            .iter()
+            .filter_map(|v| v.as_f64())
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .map(Value::Number)
+            .unwrap_or(Value::Error("No values for min".to_string())),
+        "max" => args
+            .iter()
+            .filter_map(|v| v.as_f64())
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .map(Value::Number)
+            .unwrap_or(Value::Error("No values for max".to_string())),
         "abs" => {
             if let Some(Value::Number(n)) = args.first() {
                 Value::Number(n.abs())

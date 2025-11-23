@@ -4,10 +4,6 @@ mod app;
 mod exchange;
 mod ui;
 
-use std::io;
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
 use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -15,6 +11,10 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
+use std::io;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use app::{App, InputMode};
 use clap::Parser;
@@ -39,12 +39,11 @@ fn main() -> Result<()> {
 
     // Parse args
     let args = Args::parse();
-    
+
     // Determine path
     let path = args.file.or_else(|| {
-        ProjectDirs::from("com", "numr", "numr").map(|proj_dirs| {
-            proj_dirs.config_dir().join("default.numr")
-        })
+        ProjectDirs::from("com", "numr", "numr")
+            .map(|proj_dirs| proj_dirs.config_dir().join("default.numr"))
     });
 
     // Create app and run
@@ -57,13 +56,13 @@ fn main() -> Result<()> {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             match exchange::fetch_rates().await {
-            Ok(rates) => {
-                let _ = tx.send(Ok(rates));
+                Ok(rates) => {
+                    let _ = tx.send(Ok(rates));
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e.to_string()));
+                }
             }
-            Err(e) => {
-                let _ = tx.send(Err(e.to_string()));
-            }
-        }
         });
     });
 
@@ -100,57 +99,57 @@ fn run_app<B: ratatui::backend::Backend>(
         // Poll for events
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-            match app.mode {
-                InputMode::Normal => {
-                    match key.code {
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                             if let Err(e) = app.save() {
-                                 eprintln!("Error saving: {}", e);
-                             }
+                match app.mode {
+                    InputMode::Normal => {
+                        match key.code {
+                            KeyCode::Char('q') => return Ok(()),
+                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if let Err(e) = app.save() {
+                                    eprintln!("Error saving: {}", e);
+                                }
+                            }
+                            KeyCode::Char('i') => app.mode = InputMode::Insert,
+                            KeyCode::Char('a') => {
+                                app.move_right();
+                                app.mode = InputMode::Insert;
+                            }
+                            KeyCode::Char('A') => {
+                                app.move_to_line_end();
+                                app.mode = InputMode::Insert;
+                            }
+                            KeyCode::Char('o') => {
+                                app.move_to_line_end();
+                                app.new_line();
+                                app.mode = InputMode::Insert;
+                            }
+                            KeyCode::Char('O') => {
+                                // Insert line above (simplified: just new line for now or move up and new line)
+                                // For now let's just do standard 'o' behavior
+                                app.move_to_line_start();
+                                // Logic for 'O' is a bit more complex with current primitives, skip for MVP
+                            }
+                            KeyCode::Char('h') | KeyCode::Left => app.move_left(),
+                            KeyCode::Char('j') | KeyCode::Down => app.move_down(),
+                            KeyCode::Char('k') | KeyCode::Up => app.move_up(),
+                            KeyCode::Char('l') | KeyCode::Right => app.move_right(),
+                            KeyCode::Char('x') => app.delete_char_forward(),
+                            KeyCode::Char('d') => {
+                                // Simplified 'dd'
+                                app.delete_line();
+                            }
+                            KeyCode::Char('$') => app.move_to_line_end(),
+                            KeyCode::Char('0') => app.move_to_line_start(),
+                            KeyCode::Char('w') => app.toggle_wrap(),
+                            KeyCode::F(12) => app.toggle_debug(),
+                            _ => {}
                         }
-                        KeyCode::Char('i') => app.mode = InputMode::Insert,
-                        KeyCode::Char('a') => {
-                            app.move_right();
-                            app.mode = InputMode::Insert;
-                        }
-                        KeyCode::Char('A') => {
-                            app.move_to_line_end();
-                            app.mode = InputMode::Insert;
-                        }
-                        KeyCode::Char('o') => {
-                            app.move_to_line_end();
-                            app.new_line();
-                            app.mode = InputMode::Insert;
-                        }
-                        KeyCode::Char('O') => {
-                            // Insert line above (simplified: just new line for now or move up and new line)
-                            // For now let's just do standard 'o' behavior
-                            app.move_to_line_start();
-                            // Logic for 'O' is a bit more complex with current primitives, skip for MVP
-                        }
-                        KeyCode::Char('h') | KeyCode::Left => app.move_left(),
-                        KeyCode::Char('j') | KeyCode::Down => app.move_down(),
-                        KeyCode::Char('k') | KeyCode::Up => app.move_up(),
-                        KeyCode::Char('l') | KeyCode::Right => app.move_right(),
-                        KeyCode::Char('x') => app.delete_char_forward(),
-                        KeyCode::Char('d') => {
-                            // Simplified 'dd'
-                            app.delete_line();
-                        }
-                        KeyCode::Char('$') => app.move_to_line_end(),
-                        KeyCode::Char('0') => app.move_to_line_start(),
-                        KeyCode::F(12) => app.toggle_debug(),
-                        _ => {}
                     }
-                }
-                InputMode::Insert => {
-                    match key.code {
+                    InputMode::Insert => match key.code {
                         KeyCode::Esc => app.mode = InputMode::Normal,
                         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                             if let Err(e) = app.save() {
-                                 eprintln!("Error saving: {}", e);
-                             }
+                            if let Err(e) = app.save() {
+                                eprintln!("Error saving: {}", e);
+                            }
                         }
                         KeyCode::Char(c) => app.insert_char(c),
                         KeyCode::Backspace => app.delete_char(),
@@ -162,11 +161,9 @@ fn run_app<B: ratatui::backend::Backend>(
                         KeyCode::Delete => app.delete_char_forward(),
                         KeyCode::F(12) => app.toggle_debug(),
                         _ => {}
-                    }
+                    },
                 }
             }
         }
     }
-    }
 }
-

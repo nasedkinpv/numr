@@ -1,7 +1,7 @@
 //! Rate caching for currency exchange rates
 
-use std::collections::HashMap;
 use crate::types::Currency;
+use std::collections::HashMap;
 
 /// Cache for exchange rates
 #[derive(Clone)]
@@ -55,7 +55,7 @@ impl RateCache {
                 }
             }
         }
-        
+
         None
     }
 
