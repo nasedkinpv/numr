@@ -25,7 +25,7 @@ mod palette {
     pub const UNIT: Color = Color::Blue;
     pub const ERROR: Color = Color::Red;
     pub const KEYWORD: Color = Color::Cyan;  // "in", "of", "to"
-    pub const TEXT: Color = Color::White;    // unrecognized prose
+    pub const TEXT: Color = Color::Gray;     // unrecognized prose (neutral)
 }
 
 /// Cached sets for syntax highlighting - built from registries
