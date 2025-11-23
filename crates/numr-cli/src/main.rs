@@ -6,7 +6,7 @@
 //!   numr-cli -f calculations.txt     # File mode
 //!   numr-cli -i                      # Interactive REPL
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -55,7 +55,7 @@ fn main() -> Result<()> {
     } else if args.interactive {
         // Interactive REPL
         run_repl(&mut engine, args.quiet)?;
-    } else if !atty::is(atty::Stream::Stdin) {
+    } else if !io::stdin().is_terminal() {
         // Pipe mode (stdin is not a tty)
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
