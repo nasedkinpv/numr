@@ -344,6 +344,10 @@ fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
         } else if c == '+' || c == '*' || c == '/' || c == '^' || c == '×' || c == '÷' {
             spans.push(c.to_string().fg(palette::OPERATOR));
             i += 1;
+        } else if c == 'x' && is_multiply_context(&chars, i) {
+            // 'x' as multiplication operator (e.g., "2x3")
+            spans.push("x".fg(palette::OPERATOR));
+            i += 1;
         } else if c == '-' {
             spans.push("-".fg(palette::OPERATOR));
             i += 1;
@@ -387,4 +391,33 @@ fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
     }
 
     spans
+}
+
+/// Check if 'x' at position i is likely a multiplication operator.
+/// True if preceded by digit/)/% and followed by digit/(/currency symbol.
+/// Skips whitespace when checking context.
+fn is_multiply_context(chars: &[char], i: usize) -> bool {
+    // Look backwards, skipping whitespace
+    let prev_ok = {
+        let mut j = i;
+        while j > 0 && chars[j - 1] == ' ' {
+            j -= 1;
+        }
+        j > 0 && {
+            let p = chars[j - 1];
+            p.is_ascii_digit() || p == ')' || p == '%'
+        }
+    };
+    // Look forwards, skipping whitespace
+    let next_ok = {
+        let mut j = i + 1;
+        while j < chars.len() && chars[j] == ' ' {
+            j += 1;
+        }
+        j < chars.len() && {
+            let n = chars[j];
+            n.is_ascii_digit() || n == '(' || is_currency_symbol(n)
+        }
+    };
+    prev_ok && next_ok
 }
