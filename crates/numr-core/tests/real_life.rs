@@ -9,9 +9,8 @@ fn test_real_life_scenario() {
     // 1. Variable assignment with conversion
     // "wit = 300$ in rub" -> 300 * 60 = 18000 RUB
     let res1 = engine.eval("wit = 300$ in rub");
-    // Output format is currently symbol + amount or similar. 
-    // "₽18000" seems to be the default.
-    assert_eq!(res1.to_string(), "₽18000");
+    // RUB uses symbol after number (Russian convention)
+    assert_eq!(res1.to_string(), "18000₽");
 
     // 2. Mixed currency arithmetic with text prefix
     // "wit + 200 ils in usd"

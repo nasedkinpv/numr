@@ -24,10 +24,10 @@ fn test_currency_formats() {
     assert_eq!(engine.eval("75 GBP").to_string(), "£75");
     assert_eq!(engine.eval("75 pounds").to_string(), "£75");
 
-    // RUB formats
-    assert_eq!(engine.eval("₽100").to_string(), "₽100");
-    assert_eq!(engine.eval("100 RUB").to_string(), "₽100");
-    assert_eq!(engine.eval("100 rubles").to_string(), "₽100");
+    // RUB formats (symbol after number in Russian convention)
+    assert_eq!(engine.eval("₽100").to_string(), "100₽");
+    assert_eq!(engine.eval("100 RUB").to_string(), "100₽");
+    assert_eq!(engine.eval("100 rubles").to_string(), "100₽");
 
     // BTC formats
     assert_eq!(engine.eval("₿1").to_string(), "₿1");
@@ -157,15 +157,15 @@ fn test_rub_and_ils_currencies() {
 
     // USD to RUB
     let result = engine.eval("$100 in RUB");
-    assert_eq!(result.to_string(), "₽9200");
+    assert_eq!(result.to_string(), "9200₽");
 
     // USD to ILS
     let result = engine.eval("$100 in ILS");
     assert_eq!(result.to_string(), "₪365");
 
-    // RUB formatting
+    // RUB formatting (symbol after number)
     let result = engine.eval("₽5000");
-    assert_eq!(result.to_string(), "₽5000");
+    assert_eq!(result.to_string(), "5000₽");
 
     // ILS formatting
     let result = engine.eval("₪100");
