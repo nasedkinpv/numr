@@ -1,5 +1,7 @@
 # numr
 
+[![CI](https://github.com/nasedkinpv/numr/actions/workflows/ci.yml/badge.svg)](https://github.com/nasedkinpv/numr/actions/workflows/ci.yml)
+
 A text calculator for natural language expressions with a vim-style TUI.
 
 ```
