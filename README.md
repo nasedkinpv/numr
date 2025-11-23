@@ -21,6 +21,8 @@ tax = 20%                               0.2
 - **Vim-style editing**: Normal and Insert modes with familiar keybindings
 - **File persistence**: Auto-saves to config directory, supports custom files
 - **Syntax highlighting**: Numbers, operators, variables, units, and currencies
+- **Comments**: Lines starting with `#` are treated as comments
+- **Wrap mode**: Toggle text wrapping with bottom-aligned results
 - **Running total**: Automatic sum displayed in the footer
 
 ## Installation
@@ -82,6 +84,7 @@ echo "100 + 200" | numr-cli
 | `$` | Move to end of line |
 | `x` | Delete character under cursor |
 | `dd` | Delete current line |
+| `w` | Toggle wrap mode |
 | `q` | Quit |
 | `Ctrl+s` | Save file |
 | `F12` | Toggle debug mode |
@@ -120,6 +123,13 @@ $50 - 10%         → $45
 price = $100
 tax = 8%
 price + tax       → $108
+```
+
+### Comments
+```
+# This is a comment
+Groceries         $45.00
+# Comments are dimmed and ignored in calculations
 ```
 
 ### Functions
