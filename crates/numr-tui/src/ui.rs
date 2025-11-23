@@ -25,6 +25,7 @@ mod palette {
     pub const UNIT: Color = Color::Blue;
     pub const ERROR: Color = Color::Red;
     pub const KEYWORD: Color = Color::Cyan;  // "in", "of", "to"
+    pub const TEXT: Color = Color::White;    // unrecognized prose
 }
 
 /// Cached sets for syntax highlighting - built from registries
@@ -317,9 +318,19 @@ static FUNCTIONS: &[&str] = &[
 
 /// Tokenize input and apply syntax highlighting
 fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
+    let trimmed = input.trim_start();
+
+    // Comment lines (starting with #)
+    if trimmed.starts_with('#') {
+        return vec![input.to_string().fg(palette::DIM)];
+    }
+
     let mut spans = Vec::new();
     let chars: Vec<char> = input.chars().collect();
     let mut i = 0;
+
+    // Check if line has assignment (word = ...) to identify variable definition
+    let assignment_var = find_assignment_variable(input);
 
     while i < chars.len() {
         let c = chars[i];
@@ -355,7 +366,7 @@ fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
         } else if c == '=' {
             spans.push("=".fg(palette::OPERATOR).dim());
             i += 1;
-        } else if c.is_alphabetic() {
+        } else if c.is_alphabetic() || c == '_' {
             // Words: check against registries
             let start = i;
             while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
@@ -370,12 +381,16 @@ fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
                 palette::OPERATOR
             } else if is_unit_word(&word) || is_currency_word(&word) {
                 palette::UNIT
-            } else {
+            } else if assignment_var.as_ref() == Some(&word) {
+                // Variable being defined
                 palette::VARIABLE
+            } else {
+                // Unknown word - plain text
+                palette::TEXT
             };
 
             spans.push(word.fg(color));
-        } else if c == '(' || c == ')' {
+        } else if c == '(' || c == ')' || c == ',' {
             spans.push(c.to_string().fg(palette::DIM));
             i += 1;
         } else if c == ' ' || c == '\t' {
@@ -386,12 +401,29 @@ fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
             let ws: String = chars[start..i].iter().collect();
             spans.push(Span::raw(ws));
         } else {
-            spans.push(Span::raw(c.to_string()));
+            // Unknown characters (punctuation, etc.) - dim
+            spans.push(c.to_string().fg(palette::DIM));
             i += 1;
         }
     }
 
     spans
+}
+
+/// Find variable name if line is an assignment (e.g., "tax = 20%" returns Some("tax"))
+fn find_assignment_variable(input: &str) -> Option<String> {
+    let parts: Vec<&str> = input.splitn(2, '=').collect();
+    if parts.len() == 2 {
+        let var_part = parts[0].trim();
+        // Check it's a valid identifier
+        if !var_part.is_empty()
+            && var_part.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false)
+            && var_part.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            return Some(var_part.to_string());
+        }
+    }
+    None
 }
 
 /// Check if 'x' at position i is likely a multiplication operator.
@@ -493,17 +525,44 @@ mod tests {
     }
 
     #[test]
-    fn test_variable_not_multiply() {
-        // "tax" should be a variable, not t*a*x
+    fn test_word_not_multiply() {
+        // "tax" alone is plain text (not a defined variable)
         let pairs = tokenize_to_pairs("tax");
-        assert!(has_token(&pairs, "tax", palette::VARIABLE));
+        assert!(has_token(&pairs, "tax", palette::TEXT));
     }
 
     #[test]
-    fn test_variable_x2() {
-        // "x2" alone should be a variable name
+    fn test_word_x2() {
+        // "x2" alone is plain text
         let pairs = tokenize_to_pairs("x2");
-        assert!(has_token(&pairs, "x2", palette::VARIABLE));
+        assert!(has_token(&pairs, "x2", palette::TEXT));
+    }
+
+    #[test]
+    fn test_variable_assignment() {
+        // Variable being defined gets VARIABLE color
+        let pairs = tokenize_to_pairs("tax = 20%");
+        assert!(has_token(&pairs, "tax", palette::VARIABLE));
+        assert!(has_token(&pairs, "20%", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_comment_line() {
+        // Comment lines are dimmed
+        let pairs = tokenize_to_pairs("# this is a comment");
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].1, palette::DIM);
+    }
+
+    #[test]
+    fn test_prose_with_numbers() {
+        // Prose text: words are TEXT, but numbers/units still highlighted
+        let pairs = tokenize_to_pairs("i put 10 usd here");
+        assert!(has_token(&pairs, "i", palette::TEXT));
+        assert!(has_token(&pairs, "put", palette::TEXT));
+        assert!(has_token(&pairs, "10", palette::NUMBER));
+        assert!(has_token(&pairs, "usd", palette::UNIT));
+        assert!(has_token(&pairs, "here", palette::TEXT));
     }
 
     #[test]
