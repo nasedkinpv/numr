@@ -69,7 +69,12 @@ impl std::fmt::Display for Value {
             Value::Number(n) => write!(f, "{}", format_number(*n)),
             Value::Percentage(p) => write!(f, "{}%", format_number(p * 100.0)),
             Value::Currency { amount, currency } => {
-                write!(f, "{}{}", currency.symbol(), format_number(*amount))
+                let formatted = format_currency(*amount);
+                if currency.symbol_after() {
+                    write!(f, "{}{}", formatted, currency.symbol())
+                } else {
+                    write!(f, "{}{}", currency.symbol(), formatted)
+                }
             }
             Value::WithUnit { amount, unit } => {
                 write!(f, "{} {}", format_number(*amount), unit)
@@ -86,6 +91,17 @@ fn format_number(n: f64) -> String {
         format!("{:.0}", n)
     } else {
         let s = format!("{:.10}", n);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// Format currency amount (max 2 decimal places)
+fn format_currency(n: f64) -> String {
+    if n.fract() == 0.0 {
+        format!("{:.0}", n)
+    } else {
+        let rounded = (n * 100.0).round() / 100.0;
+        let s = format!("{:.2}", rounded);
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     }
 }

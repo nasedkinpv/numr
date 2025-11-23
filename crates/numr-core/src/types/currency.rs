@@ -16,6 +16,8 @@ pub struct CurrencyDef {
     pub code: &'static str,
     /// All accepted aliases for parsing (lowercase)
     pub aliases: &'static [&'static str],
+    /// Whether symbol appears after the number (e.g., "100₽" vs "$100")
+    pub symbol_after: bool,
 }
 
 /// Complete registry of all supported currencies.
@@ -26,42 +28,49 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         symbol: "$",
         code: "USD",
         aliases: &["$", "usd", "dollars"],
+        symbol_after: false,
     },
     CurrencyDef {
         currency: Currency::EUR,
         symbol: "€",
         code: "EUR",
         aliases: &["€", "eur", "euros"],
+        symbol_after: false,
     },
     CurrencyDef {
         currency: Currency::GBP,
         symbol: "£",
         code: "GBP",
         aliases: &["£", "gbp", "pounds"],
+        symbol_after: false,
     },
     CurrencyDef {
         currency: Currency::JPY,
         symbol: "¥",
         code: "JPY",
         aliases: &["¥", "jpy"],
+        symbol_after: false,
     },
     CurrencyDef {
         currency: Currency::RUB,
         symbol: "₽",
         code: "RUB",
         aliases: &["₽", "rub", "rubles"],
+        symbol_after: true,
     },
     CurrencyDef {
         currency: Currency::ILS,
         symbol: "₪",
         code: "ILS",
         aliases: &["₪", "ils"],
+        symbol_after: false,
     },
     CurrencyDef {
         currency: Currency::BTC,
         symbol: "₿",
         code: "BTC",
         aliases: &["₿", "btc", "bitcoin"],
+        symbol_after: false,
     },
 ];
 
@@ -94,6 +103,11 @@ impl Currency {
     /// Get the ISO 4217 code
     pub fn code(&self) -> &'static str {
         self.def().code
+    }
+
+    /// Check if symbol appears after the number
+    pub fn symbol_after(&self) -> bool {
+        self.def().symbol_after
     }
 
     /// Get all currency symbols (for UI highlighting)
