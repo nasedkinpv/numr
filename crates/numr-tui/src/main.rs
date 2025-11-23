@@ -16,7 +16,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use app::{App, InputMode};
+use app::{App, InputMode, PendingCommand};
 use clap::Parser;
 use directories::ProjectDirs;
 use std::path::PathBuf;
@@ -101,6 +101,15 @@ fn run_app<B: ratatui::backend::Backend>(
             if let Event::Key(key) = event::read()? {
                 match app.mode {
                     InputMode::Normal => {
+                        // Handle pending commands first
+                        if app.pending == PendingCommand::Delete {
+                            if key.code == KeyCode::Char('d') {
+                                app.delete_line();
+                            }
+                            app.pending = PendingCommand::None;
+                            continue;
+                        }
+
                         match key.code {
                             KeyCode::Char('q') => return Ok(()),
                             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -134,8 +143,8 @@ fn run_app<B: ratatui::backend::Backend>(
                             KeyCode::Char('l') | KeyCode::Right => app.move_right(),
                             KeyCode::Char('x') => app.delete_char_forward(),
                             KeyCode::Char('d') => {
-                                // Simplified 'dd'
-                                app.delete_line();
+                                // Start pending delete (waiting for second 'd')
+                                app.pending = PendingCommand::Delete;
                             }
                             KeyCode::Char('$') => app.move_to_line_end(),
                             KeyCode::Char('0') => app.move_to_line_start(),
