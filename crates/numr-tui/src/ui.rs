@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 use crate::app::{App, InputMode};
 
-/// Color palette - minimal and elegant
+/// Color palette - minimal and elegant (TTY 16-color compatible)
 mod palette {
     use ratatui::style::Color;
 
@@ -21,9 +21,10 @@ mod palette {
     pub const ACCENT: Color = Color::Cyan;
     pub const NUMBER: Color = Color::Yellow;
     pub const OPERATOR: Color = Color::Magenta;
-    pub const VARIABLE: Color = Color::Green;
+    pub const VARIABLE: Color = Color::LightGreen;
     pub const UNIT: Color = Color::Blue;
     pub const ERROR: Color = Color::Red;
+    pub const KEYWORD: Color = Color::Cyan;  // "in", "of", "to"
 }
 
 /// Cached sets for syntax highlighting - built from registries
@@ -364,7 +365,7 @@ fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
             let lower = word.to_lowercase();
 
             let color = if KEYWORDS.contains(&lower.as_str()) {
-                palette::DIM
+                palette::KEYWORD
             } else if FUNCTIONS.contains(&lower.as_str()) {
                 palette::OPERATOR
             } else if is_unit_word(&word) || is_currency_word(&word) {
@@ -540,5 +541,23 @@ mod tests {
         assert!(has_token(&pairs, "sum", palette::OPERATOR));
         assert!(has_token(&pairs, "1", palette::NUMBER));
         assert!(has_token(&pairs, "2", palette::NUMBER));
+    }
+
+    #[test]
+    fn test_keyword_in() {
+        let pairs = tokenize_to_pairs("$100 in EUR");
+        assert!(has_token(&pairs, "in", palette::KEYWORD));
+    }
+
+    #[test]
+    fn test_keyword_of() {
+        let pairs = tokenize_to_pairs("20% of 100");
+        assert!(has_token(&pairs, "of", palette::KEYWORD));
+    }
+
+    #[test]
+    fn test_keyword_to() {
+        let pairs = tokenize_to_pairs("5 km to miles");
+        assert!(has_token(&pairs, "to", palette::KEYWORD));
     }
 }
