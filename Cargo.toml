@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your@email.com>"]
+license = "MIT"
+repository = "https://github.com/yourusername/numr"
+
+[workspace.dependencies]
+# Core dependencies
+thiserror = "2"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Parsing
+pest = "2"
+pest_derive = "2"
+
+# Async/HTTP (for currency rates)
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Testing
+pretty_assertions = "1"
