@@ -25,7 +25,7 @@ reqwest = { version = "0.12", features = ["json"] }
 
 # TUI
 ratatui = "0.29"
-crossterm = "0.28"
+crossterm = "0.29"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
