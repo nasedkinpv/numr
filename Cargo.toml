@@ -5,9 +5,8 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your@email.com>"]
 license = "MIT"
-repository = "https://github.com/yourusername/numr"
+repository = "https://github.com/nasedkinpv/numr"
 
 [workspace.dependencies]
 # Core dependencies

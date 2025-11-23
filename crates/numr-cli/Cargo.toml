@@ -13,4 +13,3 @@ path = "src/main.rs"
 numr-core = { path = "../numr-core" }
 clap.workspace = true
 anyhow.workspace = true
-atty = "0.2"
