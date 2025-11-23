@@ -21,12 +21,16 @@ pub fn parse_line(input: &str) -> Result<Ast, String> {
     // Fuzzy parsing: Try to find a valid suffix
     // We iterate through char indices to find a start position
     for (i, _) in input.char_indices() {
-        if i == 0 { continue; } // Already tried full line
-        
+        if i == 0 {
+            continue;
+        } // Already tried full line
+
         let suffix = &input[i..];
         // Optimization: Only try if it looks like start of something (digit, variable, etc)
         // For now, just try everything to be safe, or maybe skip whitespace
-        if suffix.trim().is_empty() { continue; }
+        if suffix.trim().is_empty() {
+            continue;
+        }
 
         if let Ok(pairs) = NumrParser::parse(Rule::line, suffix) {
             // println!("Found valid suffix: {}", suffix);

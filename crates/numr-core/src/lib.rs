@@ -32,7 +32,7 @@ pub mod types;
 
 pub use eval::EvalContext;
 pub use parser::{parse_line, Ast, BinaryOp, Expr};
-pub use types::{Currency, CurrencyDef, CURRENCIES, Unit, UnitDef, UnitType, UNITS, Value};
+pub use types::{Currency, CurrencyDef, Unit, UnitDef, UnitType, Value, CURRENCIES, UNITS};
 
 /// Main engine for evaluating expressions
 pub struct Engine {
@@ -86,11 +86,7 @@ impl Engine {
 
     /// Get the sum of all computed values
     pub fn sum(&self) -> Value {
-        let total: f64 = self
-            .lines
-            .iter()
-            .filter_map(|lr| lr.value.as_f64())
-            .sum();
+        let total: f64 = self.lines.iter().filter_map(|lr| lr.value.as_f64()).sum();
         Value::Number(total)
     }
 

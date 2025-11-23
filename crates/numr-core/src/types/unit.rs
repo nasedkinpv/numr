@@ -272,10 +272,7 @@ impl Unit {
         let lower = s.to_lowercase();
         UNITS
             .iter()
-            .find(|d| {
-                d.short_name.eq_ignore_ascii_case(s)
-                    || d.aliases.iter().any(|a| *a == lower)
-            })
+            .find(|d| d.short_name.eq_ignore_ascii_case(s) || d.aliases.iter().any(|a| *a == lower))
             .map(|d| d.unit)
     }
 

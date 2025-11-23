@@ -1,4 +1,4 @@
-use numr_core::{Engine, Currency};
+use numr_core::{Currency, Engine};
 
 #[test]
 fn test_real_life_scenario() {
@@ -16,8 +16,8 @@ fn test_real_life_scenario() {
     // "wit + 200 ils in usd"
     // wit (18000 RUB) + 200 ILS (2000 RUB) = 20000 RUB
     // 20000 RUB in USD ( / 60) = 333.33 USD
-    // Note: User example said "20000 rub", but also "in usd". 
-    // If "in usd" is present, it should be USD. 
+    // Note: User example said "20000 rub", but also "in usd".
+    // If "in usd" is present, it should be USD.
     // If the user wants RUB, they shouldn't say "in usd".
     // We will assert the logical result: 333.33 USD.
     // Also, "string here before" should be ignored.
@@ -25,8 +25,8 @@ fn test_real_life_scenario() {
     // This will likely fail currently due to "string here before"
     // Output should be in USD (symbol $)
     println!("Res2: {}", res2);
-    assert!(res2.to_string().contains("$")); 
-    
+    assert!(res2.to_string().contains("$"));
+
     // 3. Total
     // "total" should sum previous lines.
     // Line 1: 18000 RUB (300 USD)
@@ -51,7 +51,7 @@ fn test_real_life_scenario() {
     // $ 4000 -> 4000 USD
     let res7 = engine.eval("$ 4000");
     assert_eq!(res7.to_string(), "$4000");
-    
+
     // 5. BTC
     // 1 BTC in USD
     let res8 = engine.eval("1 btc in usd");
