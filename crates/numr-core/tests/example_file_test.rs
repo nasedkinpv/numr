@@ -108,10 +108,7 @@ fn test_example_file_math_correctness() {
     // === Bank accounts ===
     // checking(4250) + savings(12800) + emergency_fund(8500 converted ils->usd)
     let total_usd = engine.eval("total_usd").as_f64().unwrap();
-    assert!(
-        (total_usd - 25550.0).abs() < 1.0,
-        "total_usd = {total_usd}"
-    );
+    assert!((total_usd - 25550.0).abs() < 1.0, "total_usd = {total_usd}");
 
     // === ILS account ===
     // 45000 ILS in USD = 45000 / 3.65 ≈ 12328.77
@@ -146,19 +143,13 @@ fn test_example_file_math_correctness() {
 
     // overtime: (35h - 40h) in min = -5h = -300 min
     let overtime = engine.eval("overtime").as_f64().unwrap();
-    assert!(
-        (overtime - (-300.0)).abs() < 0.01,
-        "overtime = {overtime}"
-    );
+    assert!((overtime - (-300.0)).abs() < 0.01, "overtime = {overtime}");
 
     // === Debts ===
     // net_debt: 3500 rub - 120 usd (converts to first currency RUB)
     // = 3500 - (120 * 92) = 3500 - 11040 = -7540 rub
     let net_debt = engine.eval("net_debt").as_f64().unwrap();
-    assert!(
-        (net_debt - (-7540.0)).abs() < 1.0,
-        "net_debt = {net_debt}"
-    );
+    assert!((net_debt - (-7540.0)).abs() < 1.0, "net_debt = {net_debt}");
 
     // === Expenses ===
     // monthly_fixed: 1850 usd + 900 ils + 90 ils + 70 ils + 50 usd
