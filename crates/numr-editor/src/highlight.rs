@@ -10,10 +10,10 @@ pub enum TokenType {
     Variable,
     Unit,
     Currency,
-    Keyword,      // "in", "of", "to"
-    Function,     // "sum", "avg", etc.
+    Keyword,  // "in", "of", "to"
+    Function, // "sum", "avg", etc.
     Comment,
-    Text,         // Unrecognized prose
+    Text, // Unrecognized prose
     Whitespace,
     Punctuation,
 }

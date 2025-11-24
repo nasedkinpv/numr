@@ -142,13 +142,25 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
     if op == BinaryOp::Multiply {
         match (&left, &right) {
             // unit × currency → currency (e.g., 45h * $85 = $3825)
-            (Value::WithUnit { amount: l, .. }, Value::Currency { amount: r, currency }) |
-            (Value::Currency { amount: l, currency }, Value::WithUnit { amount: r, .. }) => {
+            (
+                Value::WithUnit { amount: l, .. },
+                Value::Currency {
+                    amount: r,
+                    currency,
+                },
+            )
+            | (
+                Value::Currency {
+                    amount: l,
+                    currency,
+                },
+                Value::WithUnit { amount: r, .. },
+            ) => {
                 return Value::currency(l * r, *currency);
             }
             // currency × number → currency (e.g., $340 * 12 = $4080)
-            (Value::Currency { amount, currency }, Value::Number(n)) |
-            (Value::Number(n), Value::Currency { amount, currency }) => {
+            (Value::Currency { amount, currency }, Value::Number(n))
+            | (Value::Number(n), Value::Currency { amount, currency }) => {
                 return Value::currency(amount * n, *currency);
             }
             _ => {}
