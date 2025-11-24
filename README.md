@@ -23,6 +23,18 @@ A text calculator for natural language expressions with a vim-style TUI.
 
 ## Installation
 
+### Arch Linux (AUR)
+
+```bash
+# Using yay
+yay -S numr
+
+# Using paru
+paru -S numr
+```
+
+### From source
+
 ```bash
 # Install from source
 cargo install --path crates/numr-tui
