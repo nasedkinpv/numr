@@ -156,7 +156,7 @@ ceil(3.2)         → 4
 `kg`, `g`, `mg`, `lb`/`lbs`, `oz`
 
 ### Time
-`hours`/`hr`/`h`, `minutes`/`min`, `seconds`/`sec`/`s`, `days`/`d`, `weeks`/`wk`
+`months`/`mo`, `weeks`/`wk`, `days`/`d`, `hours`/`hr`/`h`, `minutes`/`min`, `seconds`/`sec`/`s`
 
 ### Data
 `TB`, `GB`, `MB`, `KB`, `bytes`
@@ -173,7 +173,11 @@ graph TB
         CLI[numr-cli<br/>Command Line]
     end
 
-    subgraph numr-core
+    subgraph Editor[numr-editor]
+        Highlight[Syntax Highlighting]
+    end
+
+    subgraph Core[numr-core]
         Parser[Parser<br/>Pest PEG Grammar]
         AST[AST Builder]
         Eval[Evaluator]
@@ -186,8 +190,10 @@ graph TB
         Crypto[CoinGecko API<br/>BTC Price]
     end
 
+    TUI --> Highlight
     TUI --> Parser
     CLI --> Parser
+    Highlight --> Types
     Parser --> AST
     AST --> Eval
     Eval --> Types
@@ -206,6 +212,7 @@ numr/
 │   │   ├── eval/      # Expression evaluation with unit/currency handling
 │   │   ├── types/     # Value, Currency, Unit registries
 │   │   └── cache/     # Exchange rate caching with BFS path finding
+│   ├── numr-editor/   # Shared editor logic (syntax highlighting)
 │   ├── numr-tui/      # Terminal UI (Ratatui) with vim modes
 │   └── numr-cli/      # Command-line interface and REPL
 ```
