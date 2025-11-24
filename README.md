@@ -217,3 +217,25 @@ The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, G
 ## License
 
 MIT
+
+## Future Roadmap
+
+### Phase 1: Extract numr-editor (Completed)
+- [x] Create `crates/numr-editor`
+- [x] Move highlighting and tokenization logic
+- [x] Update `numr-tui` to use `numr-editor`
+
+### Phase 2: Dynamic Extensibility (Completed)
+- [x] Relax grammar to support generic identifiers
+- [x] Enable runtime registration of new currencies/units
+
+### Phase 3: Web Support (Future)
+- [ ] Create `crates/numr-web`
+- [ ] Add WASM bindings for `numr-editor`
+- [ ] Implement browser-based `fetch` for exchange rates
+
+### Phase 4: Native Mobile/Desktop (Future)
+- [ ] Create `crates/numr-swift`
+- [ ] Add UniFFI configuration
+- [ ] Generate Swift bindings for iOS/macOS
+

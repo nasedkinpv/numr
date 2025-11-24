@@ -57,4 +57,19 @@ fn test_real_life_scenario() {
     let res8 = engine.eval("1 btc in usd");
     // Default rate is 60000
     assert_eq!(res8.to_string(), "$60000");
+
+    // 6. Other currencies
+    // 100 EUR in USD (Rate 0.92 USD -> EUR => 1 EUR = 1/0.92 USD = 1.087 USD)
+    // Wait, load_defaults: USD -> EUR = 0.92.
+    // So 1 USD = 0.92 EUR.
+    // 1 EUR = 1.0869... USD.
+    // 100 EUR = 108.69... USD.
+    let res9 = engine.eval("100 eur in usd");
+    assert!(res9.to_string().contains("$"));
+    
+    // 100 JPY in USD (Rate 149.50 USD -> JPY)
+    // 1 USD = 149.5 JPY.
+    // 100 JPY = 100 / 149.5 = 0.668... USD.
+    let res10 = engine.eval("100 jpy in usd");
+    assert!(res10.to_string().contains("$"));
 }

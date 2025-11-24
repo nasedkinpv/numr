@@ -1,6 +1,6 @@
 //! Minimal UI rendering
 
-use numr_core::{Currency, Unit};
+
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
@@ -8,10 +8,10 @@ use ratatui::{
     widgets::{Block, Paragraph, Wrap},
     Frame,
 };
-use std::collections::HashSet;
-use std::sync::LazyLock;
+
 
 use crate::app::{App, InputMode};
+use numr_editor::{tokenize, TokenType};
 
 /// Color palette - minimal and elegant (TTY 16-color compatible)
 mod palette {
@@ -28,41 +28,7 @@ mod palette {
     pub const TEXT: Color = Color::Gray; // unrecognized prose (neutral)
 }
 
-/// Cached sets for syntax highlighting - built from registries
-static CURRENCY_SYMBOLS: LazyLock<HashSet<char>> = LazyLock::new(|| {
-    Currency::all_symbols()
-        .filter_map(|s| s.chars().next())
-        .collect()
-});
 
-static CURRENCY_WORDS: LazyLock<HashSet<String>> = LazyLock::new(|| {
-    Currency::all_aliases()
-        .map(|s| s.to_lowercase())
-        .chain(Currency::all_codes().map(|s| s.to_lowercase()))
-        .collect()
-});
-
-static UNIT_WORDS: LazyLock<HashSet<String>> = LazyLock::new(|| {
-    Unit::all_aliases()
-        .map(|s| s.to_lowercase())
-        .chain(Unit::all_short_names().map(|s| s.to_lowercase()))
-        .collect()
-});
-
-/// Check if a character is a currency symbol
-fn is_currency_symbol(c: char) -> bool {
-    CURRENCY_SYMBOLS.contains(&c)
-}
-
-/// Check if a word is a currency code/name
-fn is_currency_word(word: &str) -> bool {
-    CURRENCY_WORDS.contains(&word.to_lowercase())
-}
-
-/// Check if a word is a unit
-fn is_unit_word(word: &str) -> bool {
-    UNIT_WORDS.contains(&word.to_lowercase())
-}
 
 /// Main draw function
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -423,154 +389,29 @@ fn highlight_line_with_cursor(input: &str, cursor_col: usize) -> Line<'static> {
     Line::from(spans)
 }
 
-/// Keywords for syntax highlighting
-static KEYWORDS: &[&str] = &["of", "in", "to"];
-static FUNCTIONS: &[&str] = &[
-    "sum", "avg", "average", "min", "max", "abs", "sqrt", "round", "floor", "ceil", "total",
-];
+fn token_color(token_type: TokenType) -> Color {
+    match token_type {
+        TokenType::Number => palette::NUMBER,
+        TokenType::Operator => palette::OPERATOR,
+        TokenType::Variable => palette::VARIABLE,
+        TokenType::Unit => palette::UNIT,
+        TokenType::Currency => palette::UNIT,
+        TokenType::Keyword => palette::KEYWORD,
+        TokenType::Function => palette::OPERATOR,
+        TokenType::Comment => palette::DIM,
+        TokenType::Text => palette::TEXT,
+        TokenType::Whitespace => Color::Reset,
+        TokenType::Punctuation => palette::DIM,
+    }
+}
 
 /// Tokenize input and apply syntax highlighting
 fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
-    let trimmed = input.trim_start();
-
-    // Comment lines (starting with #)
-    if trimmed.starts_with('#') {
-        return vec![input.to_string().fg(palette::DIM)];
-    }
-
-    let mut spans = Vec::new();
-    let chars: Vec<char> = input.chars().collect();
-    let mut i = 0;
-
-    // Check if line has assignment (word = ...) to identify variable definition
-    let assignment_var = find_assignment_variable(input);
-
-    while i < chars.len() {
-        let c = chars[i];
-
-        if c.is_ascii_digit() || (c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
-        {
-            // Numbers (including negative and percentages)
-            let start = i;
-            if c == '-' {
-                i += 1;
-            }
-            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
-                i += 1;
-            }
-            if i < chars.len() && chars[i] == '%' {
-                i += 1;
-            }
-            let num: String = chars[start..i].iter().collect();
-            spans.push(num.fg(palette::NUMBER));
-        } else if is_currency_symbol(c) {
-            // Currency symbols (from registry)
-            spans.push(c.to_string().fg(palette::UNIT));
-            i += 1;
-        } else if c == '+' || c == '*' || c == '/' || c == '^' || c == '×' || c == '÷' {
-            spans.push(c.to_string().fg(palette::OPERATOR));
-            i += 1;
-        } else if c == 'x' && is_multiply_context(&chars, i) {
-            // 'x' as multiplication operator (e.g., "2x3")
-            spans.push("x".fg(palette::OPERATOR));
-            i += 1;
-        } else if c == '-' {
-            spans.push("-".fg(palette::OPERATOR));
-            i += 1;
-        } else if c == '=' {
-            spans.push("=".fg(palette::OPERATOR).dim());
-            i += 1;
-        } else if c.is_alphabetic() || c == '_' {
-            // Words: check against registries
-            let start = i;
-            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                i += 1;
-            }
-            let word: String = chars[start..i].iter().collect();
-            let lower = word.to_lowercase();
-
-            let color = if KEYWORDS.contains(&lower.as_str()) {
-                palette::KEYWORD
-            } else if FUNCTIONS.contains(&lower.as_str()) {
-                palette::OPERATOR
-            } else if is_unit_word(&word) || is_currency_word(&word) {
-                palette::UNIT
-            } else if assignment_var.as_ref() == Some(&word) {
-                // Variable being defined
-                palette::VARIABLE
-            } else {
-                // Unknown word - plain text
-                palette::TEXT
-            };
-
-            spans.push(word.fg(color));
-        } else if c == '(' || c == ')' || c == ',' {
-            spans.push(c.to_string().fg(palette::DIM));
-            i += 1;
-        } else if c == ' ' || c == '\t' {
-            let start = i;
-            while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
-                i += 1;
-            }
-            let ws: String = chars[start..i].iter().collect();
-            spans.push(Span::raw(ws));
-        } else {
-            // Unknown characters (punctuation, etc.) - dim
-            spans.push(c.to_string().fg(palette::DIM));
-            i += 1;
-        }
-    }
-
-    spans
-}
-
-/// Find variable name if line is an assignment (e.g., "tax = 20%" returns Some("tax"))
-fn find_assignment_variable(input: &str) -> Option<String> {
-    let parts: Vec<&str> = input.splitn(2, '=').collect();
-    if parts.len() == 2 {
-        let var_part = parts[0].trim();
-        // Check it's a valid identifier
-        if !var_part.is_empty()
-            && var_part
-                .chars()
-                .next()
-                .map(|c| c.is_alphabetic() || c == '_')
-                .unwrap_or(false)
-            && var_part.chars().all(|c| c.is_alphanumeric() || c == '_')
-        {
-            return Some(var_part.to_string());
-        }
-    }
-    None
-}
-
-/// Check if 'x' at position i is likely a multiplication operator.
-/// True if preceded by digit/)/% and followed by digit/(/currency symbol.
-/// Skips whitespace when checking context.
-fn is_multiply_context(chars: &[char], i: usize) -> bool {
-    // Look backwards, skipping whitespace
-    let prev_ok = {
-        let mut j = i;
-        while j > 0 && chars[j - 1] == ' ' {
-            j -= 1;
-        }
-        j > 0 && {
-            let p = chars[j - 1];
-            p.is_ascii_digit() || p == ')' || p == '%'
-        }
-    };
-    // Look forwards, skipping whitespace
-    let next_ok = {
-        let mut j = i + 1;
-        while j < chars.len() && chars[j] == ' ' {
-            j += 1;
-        }
-        j < chars.len() && {
-            let n = chars[j];
-            n.is_ascii_digit() || n == '(' || is_currency_symbol(n)
-        }
-    };
-    prev_ok && next_ok
+    let tokens = tokenize(input);
+    tokens
+        .into_iter()
+        .map(|t| Span::styled(t.text, Style::new().fg(token_color(t.token_type))))
+        .collect()
 }
 
 #[cfg(test)]
