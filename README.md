@@ -6,15 +6,6 @@ A text calculator for natural language expressions with a vim-style TUI.
 
 ![numr screenshot](screenshots/numr_1.png)
 
-```
-Groceries         $45.00              $45.00
-Restaurant        $32.50              $32.50
-tax = 20%                               0.2
-20% of $32.50                         $6.50
-                                ───────────
-                          total     $84.50
-```
-
 ## Features
 
 - **Natural language expressions**: `20% of 150`, `$100 in euros`, `2 hours + 30 min`
@@ -33,14 +24,13 @@ tax = 20%                               0.2
 ## Installation
 
 ```bash
-# Build from source
+# Install from source
+cargo install --path crates/numr-tui
+
+# Or build from source
 cargo build --release
 
-# Run TUI
-cargo run --bin numr
-
-# Run with a specific file
-cargo run --bin numr -- myfile.numr
+# Binary will be available at target/release/numr
 ```
 
 ## Usage
@@ -52,7 +42,7 @@ cargo run --bin numr -- myfile.numr
 numr
 
 # Open specific file
-numr calculations.numr
+numr example.numr
 ```
 
 ### CLI Mode
@@ -62,7 +52,7 @@ numr calculations.numr
 numr-cli "20% of 150"
 
 # Evaluate file
-numr-cli -f calculations.numr
+numr-cli -f example.numr
 
 # Interactive REPL
 numr-cli -i
