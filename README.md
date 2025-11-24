@@ -4,6 +4,8 @@
 
 A text calculator for natural language expressions with a vim-style TUI.
 
+![numr screenshot](screenshots/numr_1.png)
+
 ```
 Groceries         $45.00              $45.00
 Restaurant        $32.50              $32.50
@@ -17,10 +19,11 @@ tax = 20%                               0.2
 
 - **Natural language expressions**: `20% of 150`, `$100 in euros`, `2 hours + 30 min`
 - **Variables**: `tax = 15%` then `100 + tax`
-- **Unit conversions**: length, weight, time, data sizes
+- **Unit conversions**: Length, weight, time, temperature, data sizes
 - **Currency conversions**: USD, EUR, GBP, JPY, RUB, ILS, BTC
 - **Live exchange rates**: Fetched automatically on startup
 - **Vim-style editing**: Normal and Insert modes with familiar keybindings
+- **Mouse support**: Scroll with mouse wheel or trackpad
 - **File persistence**: Auto-saves to config directory, supports custom files
 - **Syntax highlighting**: Numbers, operators, variables, units, and currencies
 - **Comments**: Lines starting with `#` are treated as comments
@@ -158,6 +161,9 @@ ceil(3.2)         → 4
 ### Time
 `months`/`mo`, `weeks`/`wk`, `days`/`d`, `hours`/`hr`/`h`, `minutes`/`min`, `seconds`/`sec`/`s`
 
+### Temperature
+`C`/`Celsius`, `F`/`Fahrenheit`
+
 ### Data
 `TB`, `GB`, `MB`, `KB`, `bytes`
 
@@ -224,25 +230,4 @@ The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, G
 ## License
 
 MIT
-
-## Future Roadmap
-
-### Phase 1: Extract numr-editor (Completed)
-- [x] Create `crates/numr-editor`
-- [x] Move highlighting and tokenization logic
-- [x] Update `numr-tui` to use `numr-editor`
-
-### Phase 2: Dynamic Extensibility (Completed)
-- [x] Relax grammar to support generic identifiers
-- [x] Enable runtime registration of new currencies/units
-
-### Phase 3: Web Support (Future)
-- [ ] Create `crates/numr-web`
-- [ ] Add WASM bindings for `numr-editor`
-- [ ] Implement browser-based `fetch` for exchange rates
-
-### Phase 4: Native Mobile/Desktop (Future)
-- [ ] Create `crates/numr-swift`
-- [ ] Add UniFFI configuration
-- [ ] Generate Swift bindings for iOS/macOS
 

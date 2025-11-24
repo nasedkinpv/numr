@@ -13,6 +13,7 @@ pub enum UnitType {
     Weight,
     Time,
     Data,
+    Temperature,
 }
 
 /// Unit metadata - single source of truth for each unit
@@ -25,6 +26,8 @@ pub struct UnitDef {
     pub short_name: &'static str,
     /// Conversion factor to base unit of its type
     pub to_base_factor: f64,
+    /// Offset for non-linear conversions (base = (val + offset) * factor)
+    pub to_base_offset: f64,
     /// All accepted aliases for parsing (lowercase)
     pub aliases: &'static [&'static str],
 }
@@ -38,6 +41,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Length,
         short_name: "km",
         to_base_factor: 1000.0,
+        to_base_offset: 0.0,
         aliases: &["km"],
     },
     UnitDef {
@@ -45,6 +49,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Length,
         short_name: "m",
         to_base_factor: 1.0,
+        to_base_offset: 0.0,
         aliases: &["m"],
     },
     UnitDef {
@@ -52,6 +57,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Length,
         short_name: "cm",
         to_base_factor: 0.01,
+        to_base_offset: 0.0,
         aliases: &["cm"],
     },
     UnitDef {
@@ -59,6 +65,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Length,
         short_name: "mm",
         to_base_factor: 0.001,
+        to_base_offset: 0.0,
         aliases: &["mm"],
     },
     UnitDef {
@@ -66,6 +73,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Length,
         short_name: "mi",
         to_base_factor: 1609.344,
+        to_base_offset: 0.0,
         aliases: &["mi", "miles", "mile"],
     },
     UnitDef {
@@ -73,6 +81,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Length,
         short_name: "ft",
         to_base_factor: 0.3048,
+        to_base_offset: 0.0,
         aliases: &["ft", "feet", "foot"],
     },
     UnitDef {
@@ -80,6 +89,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Length,
         short_name: "in",
         to_base_factor: 0.0254,
+        to_base_offset: 0.0,
         aliases: &["inches", "inch"],
     },
     // Weight (base: gram)
@@ -88,6 +98,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Weight,
         short_name: "kg",
         to_base_factor: 1000.0,
+        to_base_offset: 0.0,
         aliases: &["kg"],
     },
     UnitDef {
@@ -95,6 +106,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Weight,
         short_name: "g",
         to_base_factor: 1.0,
+        to_base_offset: 0.0,
         aliases: &["g"],
     },
     UnitDef {
@@ -102,6 +114,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Weight,
         short_name: "mg",
         to_base_factor: 0.001,
+        to_base_offset: 0.0,
         aliases: &["mg"],
     },
     UnitDef {
@@ -109,6 +122,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Weight,
         short_name: "lb",
         to_base_factor: 453.592,
+        to_base_offset: 0.0,
         aliases: &["lb", "lbs", "pound", "pounds"],
     },
     UnitDef {
@@ -116,6 +130,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Weight,
         short_name: "oz",
         to_base_factor: 28.3495,
+        to_base_offset: 0.0,
         aliases: &["oz", "ounce", "ounces"],
     },
     // Time (base: second)
@@ -124,6 +139,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Time,
         short_name: "mo",
         to_base_factor: 2_629_746.0, // Average month (30.44 days)
+        to_base_offset: 0.0,
         aliases: &["mo", "month", "months"],
     },
     UnitDef {
@@ -131,6 +147,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Time,
         short_name: "wk",
         to_base_factor: 604800.0,
+        to_base_offset: 0.0,
         aliases: &["wk", "week", "weeks"],
     },
     UnitDef {
@@ -138,6 +155,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Time,
         short_name: "d",
         to_base_factor: 86400.0,
+        to_base_offset: 0.0,
         aliases: &["d", "day", "days"],
     },
     UnitDef {
@@ -145,6 +163,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Time,
         short_name: "h",
         to_base_factor: 3600.0,
+        to_base_offset: 0.0,
         aliases: &["h", "hr", "hour", "hours"],
     },
     UnitDef {
@@ -152,6 +171,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Time,
         short_name: "min",
         to_base_factor: 60.0,
+        to_base_offset: 0.0,
         aliases: &["min", "minute", "minutes"],
     },
     UnitDef {
@@ -159,6 +179,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Time,
         short_name: "s",
         to_base_factor: 1.0,
+        to_base_offset: 0.0,
         aliases: &["s", "sec", "second", "seconds"],
     },
     // Data (base: byte)
@@ -167,6 +188,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Data,
         short_name: "TB",
         to_base_factor: 1_099_511_627_776.0,
+        to_base_offset: 0.0,
         aliases: &["tb"],
     },
     UnitDef {
@@ -174,6 +196,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Data,
         short_name: "GB",
         to_base_factor: 1_073_741_824.0,
+        to_base_offset: 0.0,
         aliases: &["gb"],
     },
     UnitDef {
@@ -181,6 +204,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Data,
         short_name: "MB",
         to_base_factor: 1_048_576.0,
+        to_base_offset: 0.0,
         aliases: &["mb"],
     },
     UnitDef {
@@ -188,6 +212,7 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Data,
         short_name: "KB",
         to_base_factor: 1024.0,
+        to_base_offset: 0.0,
         aliases: &["kb"],
     },
     UnitDef {
@@ -195,7 +220,25 @@ pub static UNITS: &[UnitDef] = &[
         unit_type: UnitType::Data,
         short_name: "B",
         to_base_factor: 1.0,
+        to_base_offset: 0.0,
         aliases: &["b", "bytes", "byte"],
+    },
+    // Temperature (base: Celsius)
+    UnitDef {
+        unit: Unit::Celsius,
+        unit_type: UnitType::Temperature,
+        short_name: "C",
+        to_base_factor: 1.0,
+        to_base_offset: 0.0,
+        aliases: &["c", "celsius"],
+    },
+    UnitDef {
+        unit: Unit::Fahrenheit,
+        unit_type: UnitType::Temperature,
+        short_name: "F",
+        to_base_factor: 0.5555555555555556, // 5/9
+        to_base_offset: -32.0,
+        aliases: &["f", "fahrenheit"],
     },
 ];
 
@@ -229,6 +272,9 @@ pub enum Unit {
     Megabyte,
     Kilobyte,
     Byte,
+    // Temperature
+    Celsius,
+    Fahrenheit,
 }
 
 impl Unit {
@@ -252,12 +298,18 @@ impl Unit {
             UnitType::Weight => Unit::Gram,
             UnitType::Time => Unit::Second,
             UnitType::Data => Unit::Byte,
+            UnitType::Temperature => Unit::Celsius,
         }
     }
 
     /// Conversion factor to base unit
     pub fn to_base_factor(&self) -> f64 {
         self.def().to_base_factor
+    }
+
+    /// Offset to base unit
+    pub fn to_base_offset(&self) -> f64 {
+        self.def().to_base_offset
     }
 
     /// Get short display name
@@ -302,9 +354,11 @@ pub fn convert(value: f64, from: Unit, to: Unit) -> Option<f64> {
         return None; // Can't convert between different unit types
     }
 
-    // Convert to base unit, then to target unit
-    let base_value = value * from.to_base_factor();
-    Some(base_value / to.to_base_factor())
+    // Convert to base unit: (value + offset) * factor
+    let base_value = (value + from.to_base_offset()) * from.to_base_factor();
+
+    // Convert from base unit: (base / factor) - offset
+    Some((base_value / to.to_base_factor()) - to.to_base_offset())
 }
 
 #[cfg(test)]

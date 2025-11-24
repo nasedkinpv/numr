@@ -73,7 +73,7 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
         Expr::Variable(name) => ctx
             .get_variable(name)
             .cloned()
-            .unwrap_or_else(|| Value::Error(format!("Unknown variable: {}", name))),
+            .unwrap_or_else(|| Value::Error(format!("Unknown variable: {name}"))),
 
         Expr::BinaryOp { op, left, right } => {
             let lval = eval_expr(left, ctx);
@@ -186,7 +186,7 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
                 if let Some(rate) = ctx.rate_cache.get_rate(*rc, *lc) {
                     (*l, *r * rate, Some(*lc), None)
                 } else {
-                    return Value::Error(format!("No exchange rate for {} to {}", rc, lc));
+                    return Value::Error(format!("No exchange rate for {rc} to {lc}"));
                 }
             }
         }
@@ -205,7 +205,7 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
             } else if let Some(converted) = unit::convert(*r, *ru, *lu) {
                 (*l, converted, None, Some(*lu))
             } else {
-                return Value::Error(format!("Cannot convert {} to {}", ru, lu));
+                return Value::Error(format!("Cannot convert {ru} to {lu}"));
             }
         }
         _ => match (left.as_f64(), right.as_f64()) {
@@ -259,8 +259,7 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
                 return Value::currency(amount * rate, target_currency);
             }
             return Value::Error(format!(
-                "No exchange rate for {} to {}",
-                currency, target_currency
+                "No exchange rate for {currency} to {target_currency}"
             ));
         }
     }
@@ -275,7 +274,7 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
                 if let Some(converted) = unit::convert(amount, from_unit, target_unit) {
                     return Value::with_unit(converted, target_unit);
                 }
-                return Value::Error(format!("Cannot convert {} to {}", from_unit, target_unit));
+                return Value::Error(format!("Cannot convert {from_unit} to {target_unit}"));
             }
             // Plain number → attach unit (e.g., "18.39 in months" → "18.39 months")
             Value::Number(n) => {
@@ -289,7 +288,7 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
         }
     }
 
-    Value::Error(format!("Unknown target unit: {}", target))
+    Value::Error(format!("Unknown target unit: {target}"))
 }
 
 fn eval_function(name: &str, args: &[Value]) -> Value {
@@ -357,7 +356,7 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
                 Value::Error("ceil requires a number".to_string())
             }
         }
-        _ => Value::Error(format!("Unknown function: {}", name)),
+        _ => Value::Error(format!("Unknown function: {name}")),
     }
 }
 

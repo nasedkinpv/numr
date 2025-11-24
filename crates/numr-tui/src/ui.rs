@@ -31,14 +31,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Calculate the width needed for results column (fit to content)
-    let max_result_width = app
+    // Calculate the width needed for results column (fit to content)
+    let content_width = app
         .results
         .iter()
         .filter(|v| !v.is_error())
         .map(|v| v.to_string().len())
         .max()
         .unwrap_or(0)
-        .max(8) as u16;
+        .max(8);
+
+    // Clamp width: max 40 chars or 50% of screen width (whichever is smaller)
+    // But ensure at least 8 chars if possible (unless screen is extremely small)
+    let max_allowed = (area.width as usize / 2).min(40);
+    let max_result_width = content_width.min(max_allowed) as u16;
 
     // Reserve space for debug panel if in debug mode and there's an error
     let has_error = app.current_line_error().is_some();
@@ -88,9 +94,9 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 
     let status = if app.dirty { " [+]" } else { "" };
 
-    let title = format!(" numr - {}{} ", filename, status);
+    let title = format!("numr - {filename}{status}");
 
-    let block = Block::default().style(Style::new().bg(palette::DIM).fg(Color::White));
+    let block = Block::default().style(Style::new().fg(Color::White));
     let paragraph = Paragraph::new(title).block(block);
     frame.render_widget(paragraph, area);
 }
@@ -100,10 +106,14 @@ fn wrapped_height(text: &str, width: usize) -> usize {
     if text.is_empty() || width == 0 {
         return 1;
     }
-    // Simple word-wrap estimation: count characters and divide by width
-    // For more accurate results, we'd need to track word boundaries
-    let char_count = text.chars().count();
-    char_count.div_ceil(width).max(1)
+
+    // Use textwrap to calculate exact line count
+    // We match Ratatui's default behavior: break_words=true, word_splitter=NoHyphenation
+    let options = textwrap::Options::new(width)
+        .break_words(true)
+        .word_splitter(textwrap::WordSplitter::NoHyphenation);
+
+    textwrap::wrap(text, options).len().max(1)
 }
 
 /// Draw content in wrap mode with results bottom-aligned to each paragraph
@@ -320,16 +330,14 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {
     let [left_area, right_area] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(result_width)]).areas(area);
 
-    let left_footer = Paragraph::new(Line::from(hints)).style(Style::new().bg(palette::DIM));
+    let left_footer = Paragraph::new(Line::from(hints));
     frame.render_widget(left_footer, left_area);
 
     let total_line = Line::from(vec![
         "total ".dim(),
-        format!("{:.2}", total).fg(palette::ACCENT).bold(),
+        format!("{total:.2}").fg(palette::ACCENT).bold(),
     ]);
-    let right_footer = Paragraph::new(total_line)
-        .right_aligned()
-        .style(Style::new().bg(palette::DIM));
+    let right_footer = Paragraph::new(total_line).right_aligned();
     frame.render_widget(right_footer, right_area);
 }
 
@@ -573,5 +581,29 @@ mod tests {
     fn test_keyword_to() {
         let pairs = tokenize_to_pairs("5 km to miles");
         assert!(has_token(&pairs, "to", palette::KEYWORD));
+    }
+
+    #[test]
+    fn test_wrapped_height() {
+        // "hello world" (11 chars)
+        // width 5:
+        // hello
+        // world
+        // -> 2 lines
+        assert_eq!(wrapped_height("hello world", 5), 2);
+
+        // width 11:
+        // hello world
+        // -> 1 line
+        assert_eq!(wrapped_height("hello world", 11), 1);
+
+        // width 3:
+        // hel
+        // lo
+        // wor
+        // ld
+        // -> 4 lines (depending on split)
+        // textwrap default splits words if they don't fit
+        assert!(wrapped_height("hello world", 3) >= 2);
     }
 }

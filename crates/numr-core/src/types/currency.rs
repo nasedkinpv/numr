@@ -154,7 +154,7 @@ impl std::str::FromStr for Currency {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Currency::parse(s).ok_or_else(|| format!("Unknown currency: {}", s))
+        Currency::parse(s).ok_or_else(|| format!("Unknown currency: {s}"))
     }
 }
 

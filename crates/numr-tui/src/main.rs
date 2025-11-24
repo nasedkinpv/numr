@@ -98,8 +98,8 @@ fn run_app<B: ratatui::backend::Backend>(
         }
         // Poll for events
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match app.mode {
+            match event::read()? {
+                Event::Key(key) => match app.mode {
                     InputMode::Normal => {
                         // Handle pending commands first
                         if app.pending == PendingCommand::Delete {
@@ -114,7 +114,7 @@ fn run_app<B: ratatui::backend::Backend>(
                             KeyCode::Char('q') => return Ok(()),
                             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 if let Err(e) = app.save() {
-                                    eprintln!("Error saving: {}", e);
+                                    eprintln!("Error saving: {e}");
                                 }
                             }
                             KeyCode::Char('i') => app.mode = InputMode::Insert,
@@ -157,7 +157,7 @@ fn run_app<B: ratatui::backend::Backend>(
                         KeyCode::Esc => app.mode = InputMode::Normal,
                         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if let Err(e) = app.save() {
-                                eprintln!("Error saving: {}", e);
+                                eprintln!("Error saving: {e}");
                             }
                         }
                         KeyCode::Char(c) => app.insert_char(c),
@@ -171,7 +171,13 @@ fn run_app<B: ratatui::backend::Backend>(
                         KeyCode::F(12) => app.toggle_debug(),
                         _ => {}
                     },
-                }
+                },
+                Event::Mouse(mouse) => match mouse.kind {
+                    event::MouseEventKind::ScrollDown => app.move_down(),
+                    event::MouseEventKind::ScrollUp => app.move_up(),
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }
