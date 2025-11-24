@@ -139,12 +139,12 @@ fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, St
     for pair in pairs {
         match pair.as_rule() {
             Rule::number => {
-                let n: f64 = pair.as_str().parse().map_err(|e| format!("{}", e))?;
+                let n: f64 = pair.as_str().parse().map_err(|e| format!("{e}"))?;
                 terms.push(Expr::Number(n));
             }
             Rule::percentage => {
                 let inner = pair.into_inner().next().ok_or("Expected number")?;
-                let n: f64 = inner.as_str().parse().map_err(|e| format!("{}", e))?;
+                let n: f64 = inner.as_str().parse().map_err(|e| format!("{e}"))?;
                 terms.push(Expr::Percentage(n / 100.0));
             }
             Rule::currency_value => {
@@ -234,7 +234,7 @@ fn parse_currency_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<(f64, C
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::number => {
-                amount = inner.as_str().parse().map_err(|e| format!("{}", e))?;
+                amount = inner.as_str().parse().map_err(|e| format!("{e}"))?;
             }
             Rule::currency_symbol => {
                 currency = Currency::parse(inner.as_str()).ok_or("Unknown currency")?;
@@ -249,7 +249,7 @@ fn parse_currency_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<(f64, C
 fn parse_suffixed_number(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
     let mut inner = pair.into_inner();
     let num_pair = inner.next().ok_or("Expected number")?;
-    let amount: f64 = num_pair.as_str().parse().map_err(|e| format!("{}", e))?;
+    let amount: f64 = num_pair.as_str().parse().map_err(|e| format!("{e}"))?;
 
     let suffix_pair = inner.next().ok_or("Expected identifier")?;
     let suffix = suffix_pair.as_str();
@@ -272,7 +272,7 @@ fn parse_percentage_of(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, St
     let mut inner = pair.into_inner();
     let pct_pair = inner.next().ok_or("Expected percentage")?;
     let pct_num = pct_pair.into_inner().next().ok_or("Expected number")?;
-    let percentage: f64 = pct_num.as_str().parse().map_err(|e| format!("{}", e))?;
+    let percentage: f64 = pct_num.as_str().parse().map_err(|e| format!("{e}"))?;
 
     let value_pair = inner.next().ok_or("Expected value")?;
     let value = build_term(value_pair)?;
@@ -304,12 +304,12 @@ fn parse_function_call(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, St
 fn build_term(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
     match pair.as_rule() {
         Rule::number => {
-            let n: f64 = pair.as_str().parse().map_err(|e| format!("{}", e))?;
+            let n: f64 = pair.as_str().parse().map_err(|e| format!("{e}"))?;
             Ok(Expr::Number(n))
         }
         Rule::percentage => {
             let inner = pair.into_inner().next().ok_or("Expected number")?;
-            let n: f64 = inner.as_str().parse().map_err(|e| format!("{}", e))?;
+            let n: f64 = inner.as_str().parse().map_err(|e| format!("{e}"))?;
             Ok(Expr::Percentage(n / 100.0))
         }
         Rule::currency_value => {

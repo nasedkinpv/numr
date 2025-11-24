@@ -24,7 +24,7 @@ fn test_real_life_scenario() {
     let res2 = engine.eval("string here before wit + 200 ils in usd");
     // This will likely fail currently due to "string here before"
     // Output should be in USD (symbol $)
-    println!("Res2: {}", res2);
+    println!("Res2: {res2}");
     assert!(res2.to_string().contains("$"));
 
     // 3. Total

@@ -75,7 +75,7 @@ fn main() -> Result<()> {
     if args.total {
         let sum = engine.sum();
         println!("─────────────");
-        println!("Total: {}", sum);
+        println!("Total: {sum}");
     }
 
     Ok(())
@@ -86,12 +86,12 @@ fn eval_and_print(engine: &mut Engine, input: &str, quiet: bool) {
 
     if quiet {
         if !result.is_empty() {
-            println!("{}", result);
+            println!("{result}");
         }
     } else {
         let result_str = result.to_string();
         if result_str.is_empty() {
-            println!("{}", input);
+            println!("{input}");
         } else {
             // Pad input to align results
             let padding = 40usize.saturating_sub(input.len());

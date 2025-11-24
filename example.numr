@@ -108,3 +108,34 @@ savings_rate = savings_amount / monthly_income * 100
 
 # Runway (months of expenses covered)
 runway = (liquid / total_expenses) in months
+
+# --- Unit Conversions ---
+
+# Cooking (Volume not supported yet, using Weight)
+flour_needed = 500 g
+flour_lb = flour_needed in lb
+
+# Temperature
+room_temp = 22 C
+room_temp_f = room_temp in F
+
+# --- Edge Cases & Complex Math ---
+
+# Division by zero (uncomment to see error)
+# zero_div = 100 / 0
+
+# Recursive definition (uncomment to see error)
+# x = x + 1
+
+# Case sensitivity
+MyVar = 100
+myvar = 200 # Different variable
+total_vars = MyVar + myvar
+
+# Tiny numbers
+tiny = 0.000000001
+tiny_res = tiny * 1000
+
+# Huge numbers
+huge = 1000000000000
+huge_res = huge * huge

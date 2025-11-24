@@ -80,17 +80,19 @@ impl std::fmt::Display for Value {
                 write!(f, "{} {}", format_number(*amount), unit)
             }
             Value::Empty => Ok(()),
-            Value::Error(msg) => write!(f, "Error: {}", msg),
+            Value::Error(msg) => write!(f, "Error: {msg}"),
         }
     }
 }
 
-/// Format a number nicely (remove trailing zeros)
+/// Format a number nicely (max 2 decimal places, remove trailing zeros)
 fn format_number(n: f64) -> String {
     if n.fract() == 0.0 {
-        format!("{:.0}", n)
+        format!("{n:.0}")
     } else {
-        let s = format!("{:.10}", n);
+        // Round to 2 decimal places
+        let rounded = (n * 100.0).round() / 100.0;
+        let s = format!("{rounded:.2}");
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     }
 }
@@ -98,10 +100,10 @@ fn format_number(n: f64) -> String {
 /// Format currency amount (max 2 decimal places)
 fn format_currency(n: f64) -> String {
     if n.fract() == 0.0 {
-        format!("{:.0}", n)
+        format!("{n:.0}")
     } else {
         let rounded = (n * 100.0).round() / 100.0;
-        let s = format!("{:.2}", rounded);
+        let s = format!("{rounded:.2}");
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     }
 }

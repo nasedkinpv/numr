@@ -71,7 +71,7 @@ impl App {
         if let Some(p) = &app.path {
             if p.exists() {
                 if let Err(e) = app.load() {
-                    eprintln!("Failed to load file: {}", e);
+                    eprintln!("Failed to load file: {e}");
                 }
             }
         }
@@ -105,7 +105,7 @@ impl App {
                 if i > 0 {
                     writeln!(file)?;
                 }
-                write!(file, "{}", line)?;
+                write!(file, "{line}")?;
             }
             self.dirty = false;
         }
