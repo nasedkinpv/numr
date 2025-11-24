@@ -23,6 +23,13 @@ A text calculator for natural language expressions with a vim-style TUI.
 
 ## Installation
 
+### macOS (Homebrew)
+
+```bash
+brew tap nasedkinpv/tap
+brew install numr
+```
+
 ### Arch Linux (AUR)
 
 ```bash
