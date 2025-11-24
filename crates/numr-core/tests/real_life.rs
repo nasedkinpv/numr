@@ -66,7 +66,7 @@ fn test_real_life_scenario() {
     // 100 EUR = 108.69... USD.
     let res9 = engine.eval("100 eur in usd");
     assert!(res9.to_string().contains("$"));
-    
+
     // 100 JPY in USD (Rate 149.50 USD -> JPY)
     // 1 USD = 149.5 JPY.
     // 100 JPY = 100 / 149.5 = 0.668... USD.

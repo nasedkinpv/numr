@@ -1,6 +1,5 @@
 //! Minimal UI rendering
 
-
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
@@ -8,7 +7,6 @@ use ratatui::{
     widgets::{Block, Paragraph, Wrap},
     Frame,
 };
-
 
 use crate::app::{App, InputMode};
 use numr_editor::{tokenize, TokenType};
@@ -27,8 +25,6 @@ mod palette {
     pub const KEYWORD: Color = Color::Cyan; // "in", "of", "to"
     pub const TEXT: Color = Color::Gray; // unrecognized prose (neutral)
 }
-
-
 
 /// Main draw function
 pub fn draw(frame: &mut Frame, app: &mut App) {

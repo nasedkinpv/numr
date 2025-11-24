@@ -112,12 +112,20 @@ fn test_example_file_math_correctness() {
     // === Bank accounts ===
     // checking(4250) + savings(12800) + emergency_fund(8500 converted ils->usd)
     let total_usd = engine.eval("total_usd").as_f64().unwrap();
-    assert!((total_usd - 25550.0).abs() < 1.0, "total_usd = {}", total_usd);
+    assert!(
+        (total_usd - 25550.0).abs() < 1.0,
+        "total_usd = {}",
+        total_usd
+    );
 
     // === ILS account ===
     // 45000 ILS in USD = 45000 / 3.65 ≈ 12328.77
     let ils_in_usd = engine.eval("ils_in_usd").as_f64().unwrap();
-    assert!((ils_in_usd - 12328.77).abs() < 1.0, "ils_in_usd = {}", ils_in_usd);
+    assert!(
+        (ils_in_usd - 12328.77).abs() < 1.0,
+        "ils_in_usd = {}",
+        ils_in_usd
+    );
 
     // === Liquid assets ===
     // total_usd(25550) + ils_in_usd(12328.77) + btc_wallet(0.42 * 60000 = 25200)
@@ -129,32 +137,56 @@ fn test_example_file_math_correctness() {
     // liquid + stocks_vanguard(28400 eur -> usd) - debt_alex(3500 rub -> usd)
     // 63078.77 + (28400/0.92) - (3500/92) ≈ 63078.77 + 30869.57 - 38.04 ≈ 93910
     let net_worth = engine.eval("net_worth").as_f64().unwrap();
-    assert!((net_worth - 93910.0).abs() < 50.0, "net_worth = {}", net_worth);
+    assert!(
+        (net_worth - 93910.0).abs() < 50.0,
+        "net_worth = {}",
+        net_worth
+    );
 
     // === Time tracking ===
     // week_hours: 6.5h + 8h + 7.5h + 8h + 5h = 35h
     let week_hours = engine.eval("week_hours").as_f64().unwrap();
-    assert!((week_hours - 35.0).abs() < 0.01, "week_hours = {}", week_hours);
+    assert!(
+        (week_hours - 35.0).abs() < 0.01,
+        "week_hours = {}",
+        week_hours
+    );
 
     // overtime: (35h - 40h) in min = -5h = -300 min
     let overtime = engine.eval("overtime").as_f64().unwrap();
-    assert!((overtime - (-300.0)).abs() < 0.01, "overtime = {}", overtime);
+    assert!(
+        (overtime - (-300.0)).abs() < 0.01,
+        "overtime = {}",
+        overtime
+    );
 
     // === Debts ===
     // net_debt: 3500 rub - 120 usd (converts to first currency RUB)
     // = 3500 - (120 * 92) = 3500 - 11040 = -7540 rub
     let net_debt = engine.eval("net_debt").as_f64().unwrap();
-    assert!((net_debt - (-7540.0)).abs() < 1.0, "net_debt = {}", net_debt);
+    assert!(
+        (net_debt - (-7540.0)).abs() < 1.0,
+        "net_debt = {}",
+        net_debt
+    );
 
     // === Expenses ===
     // monthly_fixed: 1850 usd + 900 ils + 90 ils + 70 ils + 50 usd
     // = 1900 USD + 1060 ILS = 1900 + (1060/3.65) ≈ 2190.41 USD
     let monthly_fixed = engine.eval("monthly_fixed").as_f64().unwrap();
-    assert!((monthly_fixed - 2190.41).abs() < 1.0, "monthly_fixed = {}", monthly_fixed);
+    assert!(
+        (monthly_fixed - 2190.41).abs() < 1.0,
+        "monthly_fixed = {}",
+        monthly_fixed
+    );
 
     // total_expenses ≈ 3430.1 USD
     let total_expenses = engine.eval("total_expenses").as_f64().unwrap();
-    assert!((total_expenses - 3430.1).abs() < 1.0, "total_expenses = {}", total_expenses);
+    assert!(
+        (total_expenses - 3430.1).abs() < 1.0,
+        "total_expenses = {}",
+        total_expenses
+    );
 
     // === Runway ===
     // (liquid / total_expenses) in months = 63078.77 / 3430.1 ≈ 18.39 months
@@ -164,26 +196,50 @@ fn test_example_file_math_correctness() {
     // === Freelance ===
     // techcorp: 45h * $85 = $3825 gross, 25% tax = $956.25, net = $2868.75
     let techcorp_gross = engine.eval("techcorp_gross").as_f64().unwrap();
-    assert!((techcorp_gross - 3825.0).abs() < 0.01, "techcorp_gross = {}", techcorp_gross);
+    assert!(
+        (techcorp_gross - 3825.0).abs() < 0.01,
+        "techcorp_gross = {}",
+        techcorp_gross
+    );
 
     let techcorp_net = engine.eval("techcorp_net").as_f64().unwrap();
-    assert!((techcorp_net - 2868.75).abs() < 0.01, "techcorp_net = {}", techcorp_net);
+    assert!(
+        (techcorp_net - 2868.75).abs() < 0.01,
+        "techcorp_net = {}",
+        techcorp_net
+    );
 
     // startup_total: 2200 + 400 = 2600 USD
     let startup_total = engine.eval("startup_total").as_f64().unwrap();
-    assert!((startup_total - 2600.0).abs() < 0.01, "startup_total = {}", startup_total);
+    assert!(
+        (startup_total - 2600.0).abs() < 0.01,
+        "startup_total = {}",
+        startup_total
+    );
 
     // monthly_income: techcorp_net + startup_total + saas_mrr = 2868.75 + 2600 + 340 = 5808.75
     let monthly_income = engine.eval("monthly_income").as_f64().unwrap();
-    assert!((monthly_income - 5808.75).abs() < 0.01, "monthly_income = {}", monthly_income);
+    assert!(
+        (monthly_income - 5808.75).abs() < 0.01,
+        "monthly_income = {}",
+        monthly_income
+    );
 
     // saas_annual: 340 * 12 = 4080
     let saas_annual = engine.eval("saas_annual").as_f64().unwrap();
-    assert!((saas_annual - 4080.0).abs() < 0.01, "saas_annual = {}", saas_annual);
+    assert!(
+        (saas_annual - 4080.0).abs() < 0.01,
+        "saas_annual = {}",
+        saas_annual
+    );
 
     // hosting_annual: (127 + 48) * 12 = 175 * 12 = 2100
     let hosting_annual = engine.eval("hosting_annual").as_f64().unwrap();
-    assert!((hosting_annual - 2100.0).abs() < 0.01, "hosting_annual = {}", hosting_annual);
+    assert!(
+        (hosting_annual - 2100.0).abs() < 0.01,
+        "hosting_annual = {}",
+        hosting_annual
+    );
 }
 
 // ============================================================================
@@ -221,7 +277,11 @@ fn test_currency_times_months() {
 
     // $340 * 12 months = $4080
     let result = engine.eval("340 usd * 12 months");
-    assert!(!result.is_error(), "340 usd * 12 months should work: {}", result);
+    assert!(
+        !result.is_error(),
+        "340 usd * 12 months should work: {}",
+        result
+    );
 
     assert!(
         (result.as_f64().unwrap() - 4080.0).abs() < 0.01,
@@ -243,7 +303,11 @@ fn test_variable_unit_conversion() {
 
     // 9500 km ≈ 5903.4 miles
     let result = engine.eval("flight_km in miles");
-    assert!(!result.is_error(), "Unit conversion from variable should work: {}", result);
+    assert!(
+        !result.is_error(),
+        "Unit conversion from variable should work: {}",
+        result
+    );
 
     let miles = result.as_f64().unwrap();
     assert!(
@@ -262,13 +326,29 @@ fn test_ratio_to_unit_conversion() {
     engine.eval("liquid = 1000 usd");
     engine.eval("expenses = 100 usd");
     let runway = engine.eval("(liquid / expenses) in months");
-    assert!(!runway.is_error(), "Currency ratio to unit should work: {}", runway);
-    assert!((runway.as_f64().unwrap() - 10.0).abs() < 0.01, "runway = {}", runway);
+    assert!(
+        !runway.is_error(),
+        "Currency ratio to unit should work: {}",
+        runway
+    );
+    assert!(
+        (runway.as_f64().unwrap() - 10.0).abs() < 0.01,
+        "runway = {}",
+        runway
+    );
 
     // Also works with inline calculation
     let result = engine.eval("(500 usd / 50 usd) in months");
-    assert!(!result.is_error(), "Inline ratio to unit should work: {}", result);
-    assert!((result.as_f64().unwrap() - 10.0).abs() < 0.01, "result = {}", result);
+    assert!(
+        !result.is_error(),
+        "Inline ratio to unit should work: {}",
+        result
+    );
+    assert!(
+        (result.as_f64().unwrap() - 10.0).abs() < 0.01,
+        "result = {}",
+        result
+    );
 }
 
 // ============================================================================
