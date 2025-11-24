@@ -1,9 +1,9 @@
-# === Monthly Overview - November 2024 ===
+# === Monthly Overview ===
 
 # --- Bank Accounts ---
-checking = 4250
-savings = 12800
-emergency_fund = 8500
+checking = 4250 usd
+savings = 12800 usd 
+emergency_fund = 8500 usd in ils
 
 total_usd = checking + savings + emergency_fund
 
@@ -13,41 +13,40 @@ ils_in_usd = ils_account in USD
 
 # --- Crypto Holdings ---
 btc_wallet = 0.42 BTC
-btc_in_usd = btc_wallet in USD
 
 eth i sold last month, not counting anymore
 
 # --- Investments ---
-stocks_vanguard = 28400
+stocks_vanguard = 28400 eur
 stock_growth = 12.5%
 projected_annual = stocks_vanguard + 12.5% of stocks_vanguard
 
 # --- Freelance Projects ---
 
 # Client: TechCorp - React dashboard
-techcorp_hours = 45
-techcorp_rate = 85
+techcorp_hours = 45h
+techcorp_rate = 85 usd
 techcorp_gross = techcorp_hours * techcorp_rate
 techcorp_tax = 25% of techcorp_gross
 techcorp_net = techcorp_gross - techcorp_tax
 
 # Client: StartupXYZ - API work
-startup_fixed = 2200
-startup_bonus = 400
+startup_fixed = 2200 $
+startup_bonus = 400 $
 startup_total = startup_fixed + startup_bonus
 
 # Side project revenue (my SaaS)
-saas_mrr = 340
-saas_annual = saas_mrr * 12
+saas_mrr = 340 usd 
+saas_annual = saas_mrr * 12 months
 
 # --- Expenses ---
-rent = 1850
-utilities = 180
-internet = 65
-phone = 45
-groceries = 420
-subscriptions = 89
-gym = 50
+rent = 1850 usd 
+utilities = 900 ils
+internet = 90 ils
+phone = 70 ils
+groceries = 4200 ils
+subscriptions = 89 usd
+gym = 50 usd
 
 monthly_fixed = rent + utilities + internet + phone + gym
 monthly_variable = groceries + subscriptions
@@ -56,25 +55,25 @@ total_expenses = monthly_fixed + monthly_variable
 # --- Debts ---
 
 # Owe to Alex (borrowed for conference trip)
-debt_alex = 350
+debt_alex = 3500 rub
 
 # Tom owes me for shared hosting
-tom_owes = 120
+tom_owes = 120 usd
 
 net_debt = debt_alex - tom_owes
 
 # --- Project Time Tracking ---
 
 # Hours this week
-monday = 6.5
-tuesday = 8
-wednesday = 7.5
-thursday = 8
-friday = 5
+monday = 6.5h
+tuesday = 8h
+wednesday = 7.5h
+thursday = 8h
+friday = 5h
 
 week_hours = monday + tuesday + wednesday + thursday + friday
-target_hours = 40
-overtime = week_hours - target_hours
+target_hours = 40h
+overtime = (week_hours - target_hours) in min
 
 # --- Quick Calculations ---
 
@@ -87,15 +86,15 @@ flight_km = 9500 km
 flight_miles = flight_km in miles
 
 # Server costs (need to optimize)
-aws_monthly = 127
-digitalocean = 48
+aws_monthly = 127 usd
+digitalocean = 48 usd
 total_hosting = aws_monthly + digitalocean
-hosting_annual = total_hosting * 12
+hosting_annual = total_hosting * 12 months
 
 # --- Summary ---
 
 # Total liquid assets
-liquid = total_usd + ils_in_usd + btc_in_usd
+liquid = total_usd + ils_in_usd + btc_wallet
 
 # Net worth estimate
 net_worth = liquid + stocks_vanguard - debt_alex
@@ -108,4 +107,4 @@ savings_amount = monthly_income - total_expenses
 savings_rate = savings_amount / monthly_income * 100
 
 # Runway (months of expenses covered)
-runway = liquid / total_expenses
+runway = (liquid / total_expenses) in months

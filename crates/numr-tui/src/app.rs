@@ -49,6 +49,19 @@ pub struct App {
     pub fetch_status: FetchStatus,
 }
 
+/// Convert character index to byte index in a string
+fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len())
+}
+
+/// Get character count of a string (not byte count)
+fn char_count(s: &str) -> usize {
+    s.chars().count()
+}
+
 impl App {
     pub fn new(path: Option<PathBuf>) -> Self {
         let mut app = Self {
@@ -115,9 +128,10 @@ impl App {
 
     /// Insert a character at cursor position
     pub fn insert_char(&mut self, c: char) {
-        let (line, col) = (self.cursor_y, self.cursor_x);
+        let (line, char_col) = (self.cursor_y, self.cursor_x);
         if line < self.lines.len() {
-            self.lines[line].insert(col, c);
+            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
+            self.lines[line].insert(byte_idx, c);
             self.cursor_x += 1;
             self.recalculate();
         }
@@ -125,30 +139,33 @@ impl App {
 
     /// Delete character before cursor
     pub fn delete_char(&mut self) {
-        let (line, col) = (self.cursor_y, self.cursor_x);
-        if col > 0 && line < self.lines.len() {
-            self.lines[line].remove(col - 1);
+        let (line, char_col) = (self.cursor_y, self.cursor_x);
+        if char_col > 0 && line < self.lines.len() {
+            let byte_idx = char_to_byte_idx(&self.lines[line], char_col - 1);
+            self.lines[line].remove(byte_idx);
             self.cursor_x -= 1;
             self.recalculate();
-        } else if col == 0 && line > 0 {
+        } else if char_col == 0 && line > 0 {
             // Merge with previous line
             let current_line = self.lines.remove(line);
             self.results.remove(line);
-            let prev_len = self.lines[line - 1].len();
+            let prev_char_len = char_count(&self.lines[line - 1]);
             self.lines[line - 1].push_str(&current_line);
             self.cursor_y = line - 1;
-            self.cursor_x = prev_len;
+            self.cursor_x = prev_char_len;
             self.recalculate();
         }
     }
 
     /// Delete character after cursor
     pub fn delete_char_forward(&mut self) {
-        let (line, col) = (self.cursor_y, self.cursor_x);
-        if line < self.lines.len() && col < self.lines[line].len() {
-            self.lines[line].remove(col);
+        let (line, char_col) = (self.cursor_y, self.cursor_x);
+        let line_char_len = char_count(&self.lines[line]);
+        if line < self.lines.len() && char_col < line_char_len {
+            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
+            self.lines[line].remove(byte_idx);
             self.recalculate();
-        } else if col == self.lines[line].len() && line < self.lines.len() - 1 {
+        } else if char_col == line_char_len && line < self.lines.len() - 1 {
             // Merge with next line
             let next_line = self.lines.remove(line + 1);
             self.results.remove(line + 1);
@@ -179,9 +196,10 @@ impl App {
 
     /// Insert a new line
     pub fn new_line(&mut self) {
-        let (line, col) = (self.cursor_y, self.cursor_x);
+        let (line, char_col) = (self.cursor_y, self.cursor_x);
         if line < self.lines.len() {
-            let remainder = self.lines[line].split_off(col);
+            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
+            let remainder = self.lines[line].split_off(byte_idx);
             self.lines.insert(line + 1, remainder);
             self.results.insert(line + 1, Value::Empty);
             self.cursor_y = line + 1;
@@ -194,7 +212,7 @@ impl App {
     pub fn move_up(&mut self) {
         if self.cursor_y > 0 {
             self.cursor_y -= 1;
-            self.cursor_x = self.cursor_x.min(self.lines[self.cursor_y].len());
+            self.cursor_x = self.cursor_x.min(char_count(&self.lines[self.cursor_y]));
             self.ensure_cursor_visible();
         }
     }
@@ -203,7 +221,7 @@ impl App {
     pub fn move_down(&mut self) {
         if self.cursor_y < self.lines.len() - 1 {
             self.cursor_y += 1;
-            self.cursor_x = self.cursor_x.min(self.lines[self.cursor_y].len());
+            self.cursor_x = self.cursor_x.min(char_count(&self.lines[self.cursor_y]));
             self.ensure_cursor_visible();
         }
     }
@@ -234,15 +252,16 @@ impl App {
             self.cursor_x -= 1;
         } else if self.cursor_y > 0 {
             self.cursor_y -= 1;
-            self.cursor_x = self.lines[self.cursor_y].len();
+            self.cursor_x = char_count(&self.lines[self.cursor_y]);
         }
         self.ensure_cursor_visible();
     }
 
     /// Move cursor right
     pub fn move_right(&mut self) {
-        let (line, col) = (self.cursor_y, self.cursor_x);
-        if col < self.lines[line].len() {
+        let (line, char_col) = (self.cursor_y, self.cursor_x);
+        let line_char_len = char_count(&self.lines[line]);
+        if char_col < line_char_len {
             self.cursor_x += 1;
         } else if line < self.lines.len() - 1 {
             self.cursor_y += 1;
@@ -259,7 +278,7 @@ impl App {
 
     /// Move to end of current line
     pub fn move_to_line_end(&mut self) {
-        self.cursor_x = self.lines[self.cursor_y].len();
+        self.cursor_x = char_count(&self.lines[self.cursor_y]);
         self.ensure_cursor_visible();
     }
 

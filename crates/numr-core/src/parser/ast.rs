@@ -151,9 +151,8 @@ fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, St
                 let (amount, currency) = parse_currency_value(pair)?;
                 terms.push(Expr::Currency { amount, currency });
             }
-            Rule::unit_value => {
-                let (amount, unit) = parse_unit_value(pair)?;
-                terms.push(Expr::WithUnit { amount, unit });
+            Rule::suffixed_number => {
+                terms.push(parse_suffixed_number(pair)?);
             }
             Rule::variable_ref => {
                 let name = pair.as_str().to_string();
@@ -237,7 +236,7 @@ fn parse_currency_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<(f64, C
             Rule::number => {
                 amount = inner.as_str().parse().map_err(|e| format!("{}", e))?;
             }
-            Rule::currency_symbol | Rule::currency_code => {
+            Rule::currency_symbol => {
                 currency = Currency::parse(inner.as_str()).ok_or("Unknown currency")?;
             }
             _ => {}
@@ -247,23 +246,26 @@ fn parse_currency_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<(f64, C
     Ok((amount, currency))
 }
 
-fn parse_unit_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<(f64, Unit), String> {
-    let mut amount = 0.0;
-    let mut unit = Unit::Meter;
+fn parse_suffixed_number(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
+    let mut inner = pair.into_inner();
+    let num_pair = inner.next().ok_or("Expected number")?;
+    let amount: f64 = num_pair.as_str().parse().map_err(|e| format!("{}", e))?;
 
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::number => {
-                amount = inner.as_str().parse().map_err(|e| format!("{}", e))?;
-            }
-            Rule::unit => {
-                unit = Unit::parse(inner.as_str()).ok_or("Unknown unit")?;
-            }
-            _ => {}
-        }
+    let suffix_pair = inner.next().ok_or("Expected identifier")?;
+    let suffix = suffix_pair.as_str();
+
+    if let Some(currency) = Currency::parse(suffix) {
+        Ok(Expr::Currency { amount, currency })
+    } else if let Some(unit) = Unit::parse(suffix) {
+        Ok(Expr::WithUnit { amount, unit })
+    } else {
+        // Treat as implicit multiplication with variable
+        Ok(Expr::BinaryOp {
+            op: BinaryOp::Multiply,
+            left: Box::new(Expr::Number(amount)),
+            right: Box::new(Expr::Variable(suffix.to_string())),
+        })
     }
-
-    Ok((amount, unit))
 }
 
 fn parse_percentage_of(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
@@ -314,10 +316,7 @@ fn build_term(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
             let (amount, currency) = parse_currency_value(pair)?;
             Ok(Expr::Currency { amount, currency })
         }
-        Rule::unit_value => {
-            let (amount, unit) = parse_unit_value(pair)?;
-            Ok(Expr::WithUnit { amount, unit })
-        }
+        Rule::suffixed_number => parse_suffixed_number(pair),
         Rule::variable_ref => {
             let name = pair.as_str().to_string();
             Ok(Expr::Variable(name))

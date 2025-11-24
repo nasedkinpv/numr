@@ -120,6 +120,13 @@ pub static UNITS: &[UnitDef] = &[
     },
     // Time (base: second)
     UnitDef {
+        unit: Unit::Month,
+        unit_type: UnitType::Time,
+        short_name: "mo",
+        to_base_factor: 2_629_746.0, // Average month (30.44 days)
+        aliases: &["mo", "month", "months"],
+    },
+    UnitDef {
         unit: Unit::Week,
         unit_type: UnitType::Time,
         short_name: "wk",
@@ -210,8 +217,9 @@ pub enum Unit {
     Pound,
     Ounce,
     // Time
-    Day,
+    Month,
     Week,
+    Day,
     Hour,
     Minute,
     Second,

@@ -30,6 +30,7 @@ impl RateCache {
         if from == to {
             return Some(1.0);
         }
+
         // BFS to find conversion path
         let mut queue = std::collections::VecDeque::new();
         let mut visited = std::collections::HashSet::new();

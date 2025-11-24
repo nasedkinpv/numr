@@ -49,7 +49,7 @@ atom = _{
     | parenthesized     // "(1 + 2)"
     | percentage        // "20%"
     | currency_value    // "$100" or "100 USD"
-    | unit_value        // "5 km"
+    | suffixed_number   // "5 km" or "100 USD"
     | number            // "42.5"
     | variable_ref      // "tax"
 }
@@ -90,75 +90,27 @@ number = @{
 percentage = { number ~ "%" }
 
 // Currency values: "$100", "100 USD", "100$"
+// Currency values with symbols: "$100", "100$"
 currency_value = {
     (currency_symbol ~ number)
-    | (number ~ currency_code)
     | (number ~ currency_symbol)
 }
 
-// Unit values: "5 km", "10 hours"
-unit_value = { number ~ unit }
+// Suffixed number: "100 USD", "5 km", "100 x" (implicit multiplication)
+suffixed_number = { number ~ identifier }
 
 // -----------------------------------------------------------------------------
 // CURRENCIES
-// Keep in sync with: types/currency.rs CURRENCIES registry
 // -----------------------------------------------------------------------------
 
 // Currency symbols (single characters)
 currency_symbol = { "$" | "€" | "£" | "¥" | "₽" | "₪" | "₿" }
 
-// Currency codes and aliases
-// IMPORTANT: Longer strings MUST come before shorter prefixes (PEG parsing order)
-// e.g., "euros" before "eur", "rubles" before "rub"
-currency_code = @{
-    // Word aliases (longer, must come first)
-    "dollars" | "euros" | "pounds" | "rubles" | "bitcoin"
-    // ISO codes (upper case)
-    | "USD" | "EUR" | "GBP" | "JPY" | "RUB" | "ILS" | "BTC"
-    // ISO codes (lower case)
-    | "usd" | "eur" | "gbp" | "jpy" | "rub" | "ils" | "btc"
-}
-
-// -----------------------------------------------------------------------------
-// UNITS
-// Keep in sync with: types/unit.rs UNITS registry
-// -----------------------------------------------------------------------------
-
-unit = @{
-    // Length
-    "km" | "m" | "cm" | "mm" | "mi" | "miles" | "mile" | "ft" | "feet" | "foot" | "inches" | "inch"
-    // Weight
-    | "kg" | "g" | "mg" | "lb" | "lbs" | "pound" | "pounds" | "oz" | "ounce" | "ounces"
-    // Time
-    | "hours" | "hour" | "hr" | "h"
-    | "minutes" | "minute" | "min"
-    | "seconds" | "second" | "sec" | "s"
-    | "days" | "day" | "d"
-    | "weeks" | "week" | "wk"
-    // Data
-    | "TB" | "tb" | "GB" | "gb" | "MB" | "mb" | "KB" | "kb" | "bytes" | "byte" | "b"
-}
-
 // -----------------------------------------------------------------------------
 // CONVERSION TARGETS
-// All valid targets for "in X" or "to X" conversions
 // -----------------------------------------------------------------------------
 
-target_unit = @{
-    currency_code
-    // Length
-    | "km" | "m" | "cm" | "mm" | "mi" | "miles" | "mile" | "ft" | "feet" | "foot" | "inches" | "inch"
-    // Weight
-    | "kg" | "g" | "mg" | "lb" | "lbs" | "pound" | "pounds" | "oz" | "ounce" | "ounces"
-    // Time
-    | "hours" | "hour" | "hr" | "h"
-    | "minutes" | "minute" | "min"
-    | "seconds" | "second" | "sec" | "s"
-    | "days" | "day" | "d"
-    | "weeks" | "week" | "wk"
-    // Data
-    | "TB" | "tb" | "GB" | "gb" | "MB" | "mb" | "KB" | "kb" | "bytes" | "byte" | "b"
-}
+target_unit = { identifier }
 
 // -----------------------------------------------------------------------------
 // IDENTIFIERS AND VARIABLES

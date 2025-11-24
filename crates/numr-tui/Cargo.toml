@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 numr-core = { path = "../numr-core" }
+numr-editor = { path = "../numr-editor" }
 ratatui.workspace = true
 crossterm.workspace = true
 anyhow.workspace = true

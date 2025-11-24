@@ -137,6 +137,24 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
         }
     }
 
+    // Handle multiplication with mixed types (unit × currency = currency)
+    // This handles cases like "45h * 85 usd" = $3825 (hours × rate = money)
+    if op == BinaryOp::Multiply {
+        match (&left, &right) {
+            // unit × currency → currency (e.g., 45h * $85 = $3825)
+            (Value::WithUnit { amount: l, .. }, Value::Currency { amount: r, currency }) |
+            (Value::Currency { amount: l, currency }, Value::WithUnit { amount: r, .. }) => {
+                return Value::currency(l * r, *currency);
+            }
+            // currency × number → currency (e.g., $340 * 12 = $4080)
+            (Value::Currency { amount, currency }, Value::Number(n)) |
+            (Value::Number(n), Value::Currency { amount, currency }) => {
+                return Value::currency(amount * n, *currency);
+            }
+            _ => {}
+        }
+    }
+
     // Handle currency/unit conversion
     let (l_val, r_val, final_currency, final_unit) = match (&left, &right) {
         (
@@ -237,15 +255,25 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
 
     // Try as unit
     if let Some(target_unit) = Unit::parse(target) {
-        if let Value::WithUnit {
-            amount,
-            unit: from_unit,
-        } = value
-        {
-            if let Some(converted) = unit::convert(amount, from_unit, target_unit) {
-                return Value::with_unit(converted, target_unit);
+        match value {
+            Value::WithUnit {
+                amount,
+                unit: from_unit,
+            } => {
+                if let Some(converted) = unit::convert(amount, from_unit, target_unit) {
+                    return Value::with_unit(converted, target_unit);
+                }
+                return Value::Error(format!("Cannot convert {} to {}", from_unit, target_unit));
             }
-            return Value::Error(format!("Cannot convert {} to {}", from_unit, target_unit));
+            // Plain number → attach unit (e.g., "18.39 in months" → "18.39 months")
+            Value::Number(n) => {
+                return Value::with_unit(n, target_unit);
+            }
+            // Currency ratio → attach unit (e.g., "usd/usd in months" → dimensionless with unit)
+            Value::Currency { amount, .. } => {
+                return Value::with_unit(amount, target_unit);
+            }
+            _ => {}
         }
     }
 
