@@ -1,10 +1,10 @@
 //! Minimal UI rendering
 
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Paragraph, Wrap},
+    widgets::{Block, Padding, Paragraph, Wrap},
     Frame,
 };
 
@@ -59,19 +59,32 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ])
     .areas(area);
 
+    // Calculate width for line numbers
+    let line_count = app.lines.len();
+    let line_num_width = if app.show_line_numbers {
+        line_count.to_string().len() as u16 + 1 // +1 for padding
+    } else {
+        0
+    };
+
     draw_header(frame, header_area, app);
 
     if app.wrap_mode {
         // Wrap mode: render line-by-line with results bottom-aligned
-        draw_wrapped_content(frame, main_area, app, max_result_width);
+        draw_wrapped_content(frame, main_area, app, max_result_width, line_num_width);
     } else {
-        // Normal mode: two columns with scroll
+        // Normal mode: three columns [nums | input | results]
+        let [nums_area, rest_area] =
+            Layout::horizontal([Constraint::Length(line_num_width), Constraint::Fill(1)])
+                .areas(main_area);
+
         let [input_area, result_area] = Layout::horizontal([
             Constraint::Fill(1),
             Constraint::Length(max_result_width + 4),
         ])
-        .areas(main_area);
+        .areas(rest_area);
 
+        draw_line_numbers(frame, nums_area, app);
         draw_input(frame, input_area, app);
         draw_results(frame, result_area, app);
     }
@@ -81,7 +94,49 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_debug_panel(frame, debug_area, app);
     }
 
+    // Check status expiry
+    app.clear_status_if_expired();
+
     draw_footer(frame, footer_area, app, max_result_width + 4);
+
+    if app.show_help {
+        draw_help_popup(frame, area);
+    }
+
+    if app.show_quit_confirmation {
+        draw_quit_popup(frame, area);
+    }
+}
+
+fn draw_quit_popup(frame: &mut Frame, area: Rect) {
+    use ratatui::widgets::{Clear, Paragraph};
+
+    let popup_area = centered_rect(area, 40, 20);
+
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::bordered()
+        .title(" Unsaved Changes ")
+        .title_style(Style::new().bold().fg(palette::ERROR))
+        .style(Style::new().bg(Color::Black))
+        .border_style(Style::new().fg(palette::ERROR))
+        .padding(Padding::new(2, 2, 1, 1));
+
+    let text = vec![
+        Line::from("You have unsaved changes."),
+        Line::from(""),
+        Line::from(vec![
+            "Save before quitting? ".into(),
+            "(y/n/esc)".fg(palette::ACCENT).bold(),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(text)
+        .block(block)
+        .alignment(ratatui::layout::Alignment::Center)
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(paragraph, popup_area);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -101,107 +156,145 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-/// Calculate wrapped line height (how many visual rows a line takes)
-fn wrapped_height(text: &str, width: usize) -> usize {
-    if text.is_empty() || width == 0 {
-        return 1;
-    }
-
-    // Use textwrap to calculate exact line count
-    // We match Ratatui's default behavior: break_words=true, word_splitter=NoHyphenation
-    let options = textwrap::Options::new(width)
-        .break_words(true)
-        .word_splitter(textwrap::WordSplitter::NoHyphenation);
-
-    textwrap::wrap(text, options).len().max(1)
-}
-
 /// Draw content in wrap mode with results bottom-aligned to each paragraph
-fn draw_wrapped_content(frame: &mut Frame, area: Rect, app: &mut App, result_width: u16) {
-    let input_width = area.width.saturating_sub(result_width + 2) as usize;
+fn draw_wrapped_content(
+    frame: &mut Frame,
+    area: Rect,
+    app: &mut App,
+    result_width: u16,
+    line_num_width: u16,
+) {
+    let input_width = area.width.saturating_sub(result_width + 2 + line_num_width) as usize;
 
     // Update viewport for cursor visibility
     app.viewport_width = input_width;
     app.viewport_height = area.height as usize;
     app.ensure_cursor_visible();
 
-    // Calculate heights for visible lines
-    let mut heights: Vec<u16> = Vec::new();
-    let mut total_height: u16 = 0;
-    let mut visible_start = app.viewport_y;
+    let mut current_visual_row = 0;
+    let mut rendered_height = 0;
 
-    // Find which lines fit in viewport
-    for line in app.lines.iter().skip(app.viewport_y) {
-        let h = wrapped_height(line, input_width) as u16;
-        if total_height + h > area.height {
-            break;
-        }
-        heights.push(h);
-        total_height += h;
-    }
+    // Iterate through all lines to find what to render
+    // This might be slow for huge files, but for a calculator it's fine.
+    // Optimization: we could cache heights or use a smarter data structure if needed.
+    for (line_idx, line) in app.lines.iter().enumerate() {
+        let line_height = app.get_wrapped_height(line);
 
-    // If we have remaining space, try to show more lines above
-    while visible_start > 0 && total_height < area.height {
-        visible_start -= 1;
-        let h = wrapped_height(&app.lines[visible_start], input_width) as u16;
-        if total_height + h > area.height {
-            visible_start += 1;
-            break;
-        }
-        heights.insert(0, h);
-        total_height += h;
-    }
-
-    if heights.is_empty() {
-        return;
-    }
-
-    // Create constraints for visible lines
-    let constraints: Vec<Constraint> = heights.iter().map(|&h| Constraint::Length(h)).collect();
-
-    // Split area into row areas
-    let row_areas = Layout::vertical(constraints).split(area);
-
-    // Render each visible line
-    for (idx, row_area) in row_areas.iter().enumerate() {
-        let line_idx = visible_start + idx;
-        if line_idx >= app.lines.len() {
-            break;
-        }
-
-        let line = &app.lines[line_idx];
-        let result = &app.results[line_idx];
-
-        // Split row into input + result columns
-        let [input_area, result_area] =
-            Layout::horizontal([Constraint::Fill(1), Constraint::Length(result_width + 2)])
-                .areas(*row_area);
-
-        // Render input with wrap
-        let highlighted = if line_idx == app.cursor_y {
-            highlight_line_with_cursor(line, app.cursor_x)
-        } else {
-            highlight_line(line)
-        };
-
-        let input_para = Paragraph::new(highlighted).wrap(Wrap { trim: false });
-        frame.render_widget(input_para, input_area);
-
-        // Render result bottom-aligned (on the last row of this area)
-        if !result.is_error() && !result.is_empty() {
-            let result_text = result.to_string();
-            // Position result at bottom of result_area
-            let result_y = result_area.y + result_area.height.saturating_sub(1);
-            let bottom_area = Rect {
-                x: result_area.x,
-                y: result_y,
-                width: result_area.width,
-                height: 1,
+        // Check if this line is visible
+        if current_visual_row + line_height > app.viewport_y {
+            // Calculate how much of the top of this line is hidden
+            let skip_rows = if current_visual_row < app.viewport_y {
+                (app.viewport_y - current_visual_row) as u16
+            } else {
+                0
             };
-            let result_para = Paragraph::new(result_text.fg(palette::ACCENT)).right_aligned();
-            frame.render_widget(result_para, bottom_area);
+
+            // Calculate how much space we have left in the viewport
+            let remaining_height = (area.height as usize).saturating_sub(rendered_height);
+            if remaining_height == 0 {
+                break;
+            }
+
+            // Calculate how much of this line we can show
+            let visible_rows = (line_height as u16)
+                .saturating_sub(skip_rows)
+                .min(remaining_height as u16);
+
+            if visible_rows > 0 {
+                let row_area = Rect {
+                    x: area.x,
+                    y: area.y + rendered_height as u16,
+                    width: area.width,
+                    height: visible_rows,
+                };
+
+                let result = &app.results[line_idx];
+
+                // Split row into [nums | input | result]
+                let [nums_area, rest_area] =
+                    Layout::horizontal([Constraint::Length(line_num_width), Constraint::Fill(1)])
+                        .areas(row_area);
+
+                let [input_area, result_area] =
+                    Layout::horizontal([Constraint::Fill(1), Constraint::Length(result_width + 2)])
+                        .areas(rest_area);
+
+                // Render line number (only if we are showing the first row of the line)
+                if skip_rows == 0 {
+                    let num_style = if line_idx == app.cursor_y {
+                        Style::new().fg(palette::ACCENT).bold()
+                    } else {
+                        Style::new().fg(palette::DIM)
+                    };
+                    let num_para = Paragraph::new(format!("{}", line_idx + 1)).style(num_style);
+                    // Only render on the first row of the area (height 1)
+                    let num_rect = Rect {
+                        height: 1,
+                        ..nums_area
+                    };
+                    frame.render_widget(num_para, num_rect);
+                }
+
+                // Render input with wrap
+                let highlighted = if line_idx == app.cursor_y {
+                    highlight_line_with_cursor(line, app.cursor_x)
+                } else {
+                    highlight_line(line)
+                };
+
+                // We use scroll to handle partial visibility
+                let input_para = Paragraph::new(highlighted)
+                    .wrap(Wrap { trim: false })
+                    .scroll((skip_rows, 0));
+
+                frame.render_widget(input_para, input_area);
+
+                // Render result bottom-aligned (on the last row of this area)
+                // Only show result if we are showing the bottom of the line
+                let is_showing_bottom = skip_rows + visible_rows == line_height as u16;
+
+                if is_showing_bottom && !result.is_error() && !result.is_empty() {
+                    let result_text = result.to_string();
+                    // Position result at bottom of result_area
+                    let result_y = result_area.y + result_area.height.saturating_sub(1);
+                    let bottom_area = Rect {
+                        x: result_area.x,
+                        y: result_y,
+                        width: result_area.width,
+                        height: 1,
+                    };
+                    let result_para =
+                        Paragraph::new(result_text.fg(palette::ACCENT)).right_aligned();
+                    frame.render_widget(result_para, bottom_area);
+                }
+
+                rendered_height += visible_rows as usize;
+            }
+        }
+
+        current_visual_row += line_height;
+
+        if rendered_height >= area.height as usize {
+            break;
         }
     }
+}
+
+fn draw_line_numbers(frame: &mut Frame, area: Rect, app: &App) {
+    let lines: Vec<Line> = (0..app.lines.len())
+        .map(|i| {
+            let num = (i + 1).to_string();
+            let style = if i == app.cursor_y {
+                Style::new().fg(palette::ACCENT).bold()
+            } else {
+                Style::new().fg(palette::DIM)
+            };
+            Line::from(Span::styled(num, style))
+        })
+        .collect();
+
+    let paragraph = Paragraph::new(lines).scroll((app.viewport_y as u16, 0));
+    frame.render_widget(paragraph, area);
 }
 
 fn draw_input(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -269,6 +362,67 @@ fn draw_debug_panel(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+fn draw_help_popup(frame: &mut Frame, area: Rect) {
+    use ratatui::widgets::{Clear, Row, Table};
+
+    let popup_area = centered_rect(area, 60, 60);
+
+    frame.render_widget(Clear, popup_area);
+
+    let rows = vec![
+        Row::new(vec!["Navigation", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["Arrows / hjkl", "Move cursor"]),
+        Row::new(vec!["Home / 0", "Start of line"]),
+        Row::new(vec!["End / $", "End of line"]),
+        Row::new(vec!["PageUp / PageDown", "Scroll page"]),
+        Row::new(vec!["", ""]),
+        Row::new(vec!["Editing", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["i / a", "Insert mode"]),
+        Row::new(vec!["o", "New line below"]),
+        Row::new(vec!["dd", "Delete line"]),
+        Row::new(vec!["x", "Delete char"]),
+        Row::new(vec!["", ""]),
+        Row::new(vec!["General", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["w", "Toggle wrap mode"]),
+        Row::new(vec!["n", "Toggle line numbers"]),
+        Row::new(vec!["Ctrl+s", "Save file"]),
+        Row::new(vec!["F12", "Toggle debug"]),
+        Row::new(vec!["? / F1", "Toggle help"]),
+        Row::new(vec!["q / Esc", "Quit / Close help"]),
+    ];
+
+    let table = Table::new(
+        rows,
+        [Constraint::Percentage(40), Constraint::Percentage(60)],
+    )
+    .block(
+        Block::bordered()
+            .title(" Help ")
+            .title_style(Style::new().bold().fg(palette::ACCENT))
+            .style(Style::new().bg(Color::Black)) // Solid background
+            .padding(Padding::new(2, 2, 1, 1)),
+    )
+    .header(
+        Row::new(vec!["Key", "Action"])
+            .style(Style::new().bold().fg(palette::ACCENT).bg(Color::DarkGray))
+            .bottom_margin(1),
+    )
+    .column_spacing(1);
+
+    frame.render_widget(table, popup_area);
+}
+
+/// Helper to center a rect using Flex layout
+fn centered_rect(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
+    let [vertical] = Layout::vertical([Constraint::Percentage(percent_y)])
+        .flex(Flex::Center)
+        .areas(area);
+    let [horizontal] = Layout::horizontal([Constraint::Percentage(percent_x)])
+        .flex(Flex::Center)
+        .areas(vertical);
+    horizontal
+}
+
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {
     let total = app.total();
 
@@ -277,28 +431,28 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {
         InputMode::Insert => " INSERT ".fg(Color::Black).bg(palette::VARIABLE).bold(),
     };
 
-    let mut hints = vec![mode_span, " ".into()];
+    // If we have a status message, it replaces the mode badge
+    let first_span = if let Some(msg) = &app.status_message {
+        Span::styled(
+            format!(" {} ", msg),
+            Style::new().fg(Color::Black).bg(palette::ACCENT).bold(),
+        )
+    } else {
+        mode_span
+    };
+
+    let mut hints = vec![first_span, " ".into()];
 
     match app.mode {
         InputMode::Normal => {
-            hints.push("q".fg(palette::ACCENT));
-            hints.push(" quit ".dim());
-            hints.push("i".fg(palette::ACCENT));
-            hints.push(" insert ".dim());
-            hints.push("o".fg(palette::ACCENT));
-            hints.push(" new line ".dim());
-            hints.push("dd".fg(palette::ACCENT));
-            hints.push(" delete ".dim());
-            hints.push("w".fg(palette::ACCENT));
-            hints.push(" wrap ".dim());
+            hints.push("?".fg(palette::ACCENT));
+            hints.push(" help ".dim());
             hints.push("^s".fg(palette::ACCENT));
             hints.push(" save ".dim());
         }
         InputMode::Insert => {
             hints.push("esc".fg(palette::ACCENT));
             hints.push(" normal ".dim());
-            hints.push("enter".fg(palette::ACCENT));
-            hints.push(" new line ".dim());
         }
     }
 

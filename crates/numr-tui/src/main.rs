@@ -6,6 +6,7 @@ mod ui;
 
 use anyhow::Result;
 use crossterm::{
+    cursor::SetCursorStyle,
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -33,7 +34,12 @@ fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        SetCursorStyle::DefaultUserShape
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -73,7 +79,8 @@ fn main() -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        SetCursorStyle::DefaultUserShape
     )?;
     terminal.show_cursor()?;
 
@@ -89,8 +96,15 @@ fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
     rx: mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>,
 ) -> Result<()> {
+    let mut stdout = io::stdout();
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
+
+        // Update cursor style based on mode
+        match app.mode {
+            InputMode::Normal => execute!(stdout, SetCursorStyle::DefaultUserShape)?,
+            InputMode::Insert => execute!(stdout, SetCursorStyle::BlinkingBar)?,
+        }
 
         // Check for rate updates
         if let Ok(result) = rx.try_recv() {
@@ -99,79 +113,138 @@ fn run_app<B: ratatui::backend::Backend>(
         // Poll for events
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
-                Event::Key(key) => match app.mode {
-                    InputMode::Normal => {
-                        // Handle pending commands first
-                        if app.pending == PendingCommand::Delete {
-                            if key.code == KeyCode::Char('d') {
-                                app.delete_line();
-                            }
-                            app.pending = PendingCommand::None;
-                            continue;
-                        }
-
+                Event::Key(key) => {
+                    // Handle quit confirmation popup
+                    if app.show_quit_confirmation {
                         match key.code {
-                            KeyCode::Char('q') => return Ok(()),
-                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                // Save and quit
                                 if let Err(e) = app.save() {
-                                    eprintln!("Error saving: {e}");
+                                    app.set_status(&format!("Error saving: {e}"));
+                                    app.show_quit_confirmation = false;
+                                } else {
+                                    return Ok(());
                                 }
                             }
-                            KeyCode::Char('i') => app.mode = InputMode::Insert,
-                            KeyCode::Char('a') => {
-                                app.move_right();
-                                app.mode = InputMode::Insert;
+                            KeyCode::Char('n') | KeyCode::Char('N') => {
+                                // Quit without saving
+                                return Ok(());
                             }
-                            KeyCode::Char('A') => {
-                                app.move_to_line_end();
-                                app.mode = InputMode::Insert;
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                // Cancel
+                                app.show_quit_confirmation = false;
                             }
-                            KeyCode::Char('o') => {
-                                app.move_to_line_end();
-                                app.new_line();
-                                app.mode = InputMode::Insert;
-                            }
-                            KeyCode::Char('O') => {
-                                // Insert line above (simplified: just new line for now or move up and new line)
-                                // For now let's just do standard 'o' behavior
-                                app.move_to_line_start();
-                                // Logic for 'O' is a bit more complex with current primitives, skip for MVP
-                            }
-                            KeyCode::Char('h') | KeyCode::Left => app.move_left(),
-                            KeyCode::Char('j') | KeyCode::Down => app.move_down(),
-                            KeyCode::Char('k') | KeyCode::Up => app.move_up(),
-                            KeyCode::Char('l') | KeyCode::Right => app.move_right(),
-                            KeyCode::Char('x') => app.delete_char_forward(),
-                            KeyCode::Char('d') => {
-                                // Start pending delete (waiting for second 'd')
-                                app.pending = PendingCommand::Delete;
-                            }
-                            KeyCode::Char('$') => app.move_to_line_end(),
-                            KeyCode::Char('0') => app.move_to_line_start(),
-                            KeyCode::Char('w') => app.toggle_wrap(),
-                            KeyCode::F(12) => app.toggle_debug(),
                             _ => {}
                         }
+                        continue;
                     }
-                    InputMode::Insert => match key.code {
-                        KeyCode::Esc => app.mode = InputMode::Normal,
-                        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            if let Err(e) = app.save() {
-                                eprintln!("Error saving: {e}");
+
+                    match app.mode {
+                        InputMode::Normal => {
+                            // Handle pending commands first
+                            if app.pending == PendingCommand::Delete {
+                                if key.code == KeyCode::Char('d') {
+                                    app.delete_line();
+                                }
+                                app.pending = PendingCommand::None;
+                                continue;
+                            }
+
+                            match key.code {
+                                KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
+                                KeyCode::Esc => {
+                                    if app.show_help {
+                                        app.toggle_help();
+                                    }
+                                }
+                                _ if app.show_help => {
+                                    // If help is shown, any key (except specific ones maybe) closes it?
+                                    // Or just let navigation work? Let's make Esc/q close it.
+                                    if key.code == KeyCode::Char('q') {
+                                        app.toggle_help();
+                                    }
+                                }
+                                KeyCode::Char('q') => {
+                                    if app.dirty {
+                                        app.show_quit_confirmation = true;
+                                    } else {
+                                        return Ok(());
+                                    }
+                                }
+                                KeyCode::Char('s')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    if let Err(e) = app.save() {
+                                        app.set_status(&format!("Error: {e}"));
+                                    } else {
+                                        app.set_status("Saved to file");
+                                    }
+                                }
+                                KeyCode::Char('i') => app.mode = InputMode::Insert,
+                                KeyCode::Char('a') => {
+                                    app.move_right();
+                                    app.mode = InputMode::Insert;
+                                }
+                                KeyCode::Char('A') => {
+                                    app.move_to_line_end();
+                                    app.mode = InputMode::Insert;
+                                }
+                                KeyCode::Char('o') => {
+                                    app.move_to_line_end();
+                                    app.new_line();
+                                    app.mode = InputMode::Insert;
+                                }
+                                KeyCode::Char('O') => {
+                                    app.move_to_line_start();
+                                    // Logic for 'O' is a bit more complex with current primitives, skip for MVP
+                                }
+                                KeyCode::Char('h') | KeyCode::Left => app.move_left(),
+                                KeyCode::Char('j') | KeyCode::Down => app.move_down(),
+                                KeyCode::Char('k') | KeyCode::Up => app.move_up(),
+                                KeyCode::Char('l') | KeyCode::Right => app.move_right(),
+                                KeyCode::PageUp => app.page_up(),
+                                KeyCode::PageDown => app.page_down(),
+                                KeyCode::Home => app.move_to_line_start(),
+                                KeyCode::End => app.move_to_line_end(),
+                                KeyCode::Char('x') => app.delete_char_forward(),
+                                KeyCode::Char('d') => {
+                                    // Start pending delete (waiting for second 'd')
+                                    app.pending = PendingCommand::Delete;
+                                }
+                                KeyCode::Char('$') => app.move_to_line_end(),
+                                KeyCode::Char('0') => app.move_to_line_start(),
+                                KeyCode::Char('w') => app.toggle_wrap(),
+                                KeyCode::Char('n') => app.toggle_line_numbers(),
+                                KeyCode::F(12) => app.toggle_debug(),
+                                _ => {}
                             }
                         }
-                        KeyCode::Char(c) => app.insert_char(c),
-                        KeyCode::Backspace => app.delete_char(),
-                        KeyCode::Enter => app.new_line(),
-                        KeyCode::Up => app.move_up(),
-                        KeyCode::Down => app.move_down(),
-                        KeyCode::Left => app.move_left(),
-                        KeyCode::Right => app.move_right(),
-                        KeyCode::Delete => app.delete_char_forward(),
-                        KeyCode::F(12) => app.toggle_debug(),
-                        _ => {}
-                    },
-                },
+                        InputMode::Insert => match key.code {
+                            KeyCode::Esc => app.mode = InputMode::Normal,
+                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if let Err(e) = app.save() {
+                                    app.set_status(&format!("Error: {e}"));
+                                } else {
+                                    app.set_status("Saved to file");
+                                }
+                            }
+                            KeyCode::Char(c) => app.insert_char(c),
+                            KeyCode::Backspace => app.delete_char(),
+                            KeyCode::Enter => app.new_line(),
+                            KeyCode::Up => app.move_up(),
+                            KeyCode::Down => app.move_down(),
+                            KeyCode::Left => app.move_left(),
+                            KeyCode::Right => app.move_right(),
+                            KeyCode::PageUp => app.page_up(),
+                            KeyCode::PageDown => app.page_down(),
+                            KeyCode::Home => app.move_to_line_start(),
+                            KeyCode::End => app.move_to_line_end(),
+                            KeyCode::Delete => app.delete_char_forward(),
+                            KeyCode::F(12) => app.toggle_debug(),
+                            _ => {}
+                        },
+                    }
+                }
                 Event::Mouse(mouse) => match mouse.kind {
                     event::MouseEventKind::ScrollDown => app.move_down(),
                     event::MouseEventKind::ScrollUp => app.move_up(),
