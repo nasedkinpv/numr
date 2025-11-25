@@ -85,27 +85,21 @@ impl std::fmt::Display for Value {
     }
 }
 
-/// Format a number nicely (max 2 decimal places, remove trailing zeros)
+/// Format a number nicely (max 2 decimal places, remove trailing zeros only if integer)
 fn format_number(n: f64) -> String {
     if n.fract() == 0.0 {
         format!("{n:.0}")
     } else {
-        // Round to 2 decimal places
+        // Round to 2 decimal places and ensure 2 decimal places are shown
         let rounded = (n * 100.0).round() / 100.0;
-        let s = format!("{rounded:.2}");
-        s.trim_end_matches('0').trim_end_matches('.').to_string()
+        format!("{rounded:.2}")
     }
 }
 
-/// Format currency amount (max 2 decimal places)
+/// Format currency amount (always 2 decimal places)
 fn format_currency(n: f64) -> String {
-    if n.fract() == 0.0 {
-        format!("{n:.0}")
-    } else {
-        let rounded = (n * 100.0).round() / 100.0;
-        let s = format!("{rounded:.2}");
-        s.trim_end_matches('0').trim_end_matches('.').to_string()
-    }
+    let rounded = (n * 100.0).round() / 100.0;
+    format!("{rounded:.2}")
 }
 
 #[cfg(test)]
@@ -117,6 +111,6 @@ mod tests {
     fn test_format_number() {
         assert_eq!(format_number(42.0), "42");
         assert_eq!(format_number(3.14), "3.14");
-        assert_eq!(format_number(100.500), "100.5");
+        assert_eq!(format_number(100.500), "100.50");
     }
 }

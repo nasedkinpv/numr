@@ -6,6 +6,9 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::str::FromStr; // Added for Currency::from_str
+use textwrap::{wrap, Options, WordSplitter};
+
+use std::time::Instant;
 
 /// Application state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +50,11 @@ pub struct App {
     pub debug_mode: bool,
     pub wrap_mode: bool, // Toggle text wrapping
     pub fetch_status: FetchStatus,
+    pub status_message: Option<String>,
+    pub status_start: Option<Instant>,
+    pub show_help: bool,
+    pub show_line_numbers: bool,
+    pub show_quit_confirmation: bool,
 }
 
 /// Convert character index to byte index in a string
@@ -123,6 +131,58 @@ impl App {
         // Reset horizontal scroll when entering wrap mode
         if self.wrap_mode {
             self.viewport_x = 0;
+            // Recalculate viewport_y to ensure cursor is visible in new mode
+            self.ensure_cursor_visible();
+        } else {
+            // Reset to line-based scrolling
+            self.viewport_y = self.cursor_y.saturating_sub(self.viewport_height / 2);
+            self.ensure_cursor_visible();
+        }
+    }
+
+    /// Set a temporary status message
+    pub fn set_status(&mut self, msg: &str) {
+        self.status_message = Some(msg.to_string());
+        self.status_start = Some(Instant::now());
+    }
+
+    /// Clear status message if it has expired (e.g., after 3 seconds)
+    pub fn clear_status_if_expired(&mut self) {
+        if let Some(start) = self.status_start {
+            if start.elapsed().as_secs() >= 3 {
+                self.status_message = None;
+                self.status_start = None;
+            }
+        }
+    }
+
+    /// Toggle help popup
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+
+    /// Toggle line numbers
+    pub fn toggle_line_numbers(&mut self) {
+        self.show_line_numbers = !self.show_line_numbers;
+    }
+
+    /// Page up
+    pub fn page_up(&mut self) {
+        let page_size = self.viewport_height.saturating_sub(1).max(1);
+        if self.cursor_y > 0 {
+            self.cursor_y = self.cursor_y.saturating_sub(page_size);
+            self.cursor_x = self.cursor_x.min(char_count(&self.lines[self.cursor_y]));
+            self.ensure_cursor_visible();
+        }
+    }
+
+    /// Page down
+    pub fn page_down(&mut self) {
+        let page_size = self.viewport_height.saturating_sub(1).max(1);
+        if self.cursor_y < self.lines.len() - 1 {
+            self.cursor_y = (self.cursor_y + page_size).min(self.lines.len() - 1);
+            self.cursor_x = self.cursor_x.min(char_count(&self.lines[self.cursor_y]));
+            self.ensure_cursor_visible();
         }
     }
 
@@ -226,23 +286,77 @@ impl App {
         }
     }
 
+    /// Calculate wrapped height of a line
+    pub fn get_wrapped_height(&self, text: &str) -> usize {
+        if text.is_empty() || self.viewport_width == 0 {
+            return 1;
+        }
+        let options = Options::new(self.viewport_width)
+            .break_words(true)
+            .word_splitter(WordSplitter::NoHyphenation);
+        wrap(text, options).len().max(1)
+    }
+
+    /// Get the visual row index of the cursor (0-indexed global)
+    pub fn get_cursor_visual_row(&self) -> usize {
+        let mut visual_row = 0;
+        for (i, line) in self.lines.iter().enumerate() {
+            if i == self.cursor_y {
+                let options = Options::new(self.viewport_width)
+                    .break_words(true)
+                    .word_splitter(WordSplitter::NoHyphenation);
+                let wrapped = wrap(line, options);
+
+                if wrapped.is_empty() {
+                    return visual_row;
+                }
+
+                let mut current_len = 0;
+                for (idx, part) in wrapped.iter().enumerate() {
+                    let part_len = part.chars().count();
+                    // If cursor is within this part (inclusive of end)
+                    if self.cursor_x <= current_len + part_len {
+                        return visual_row + idx;
+                    }
+                    current_len += part_len;
+                }
+                return visual_row + wrapped.len().saturating_sub(1);
+            }
+            visual_row += self.get_wrapped_height(line);
+        }
+        visual_row
+    }
+
     /// Ensure cursor is visible in viewport (both vertical and horizontal)
     pub fn ensure_cursor_visible(&mut self) {
-        // Vertical scrolling
-        if self.cursor_y < self.viewport_y {
-            self.viewport_y = self.cursor_y;
-        } else if self.cursor_y >= self.viewport_y + self.viewport_height {
-            self.viewport_y = self.cursor_y.saturating_sub(self.viewport_height - 1);
-        }
+        if self.wrap_mode {
+            let visual_row = self.get_cursor_visual_row();
 
-        // Horizontal scrolling (keep some margin)
-        let margin = 5.min(self.viewport_width / 4);
-        if self.cursor_x < self.viewport_x + margin {
-            self.viewport_x = self.cursor_x.saturating_sub(margin);
-        } else if self.cursor_x >= self.viewport_x + self.viewport_width.saturating_sub(margin) {
-            self.viewport_x = self
-                .cursor_x
-                .saturating_sub(self.viewport_width.saturating_sub(margin + 1));
+            // Vertical scrolling (visual rows)
+            if visual_row < self.viewport_y {
+                self.viewport_y = visual_row;
+            } else if visual_row >= self.viewport_y + self.viewport_height {
+                self.viewport_y = visual_row.saturating_sub(self.viewport_height - 1);
+            }
+            // No horizontal scrolling in wrap mode
+        } else {
+            // Vertical scrolling (lines)
+            if self.cursor_y < self.viewport_y {
+                self.viewport_y = self.cursor_y;
+            } else if self.cursor_y >= self.viewport_y + self.viewport_height {
+                self.viewport_y = self.cursor_y.saturating_sub(self.viewport_height - 1);
+            }
+
+            // Horizontal scrolling (keep some margin)
+            let margin = 5.min(self.viewport_width / 4);
+            if self.cursor_x < self.viewport_x + margin {
+                self.viewport_x = self.cursor_x.saturating_sub(margin);
+            } else if self.cursor_x >= self.viewport_x + self.viewport_width.saturating_sub(margin)
+            {
+                self.viewport_x = self
+                    .cursor_x
+                    .saturating_sub(self.viewport_width.saturating_sub(margin + 1));
+            }
         }
     }
 
@@ -359,6 +473,11 @@ impl Default for App {
             debug_mode: false,
             wrap_mode: false,
             fetch_status: FetchStatus::Idle,
+            status_message: None,
+            status_start: None,
+            show_help: false,
+            show_line_numbers: false,
+            show_quit_confirmation: false,
         };
         app.recalculate();
         app

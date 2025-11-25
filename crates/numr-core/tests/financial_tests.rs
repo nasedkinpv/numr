@@ -42,12 +42,12 @@ fn test_discount_calculations() {
 
     // 10% discount on $100
     let result = engine.eval("$100 - 10%");
-    assert_eq!(result.to_string(), "$90");
+    assert_eq!(result.to_string(), "$90.00");
 
     // 25% discount
     engine.eval("discount = 25%");
     let result = engine.eval("$200 - discount");
-    assert_eq!(result.to_string(), "$150");
+    assert_eq!(result.to_string(), "$150.00");
 }
 
 #[test]
@@ -60,11 +60,11 @@ fn test_tip_calculations() {
 
     // Calculate tip amount
     let result = engine.eval("18% of $85");
-    assert_eq!(result.to_string(), "$15.3");
+    assert_eq!(result.to_string(), "$15.30");
 
     // Total with tip
     let result = engine.eval("bill + tip");
-    assert_eq!(result.to_string(), "$100.3");
+    assert_eq!(result.to_string(), "$100.30");
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn test_budget_tracking() {
 
     // Savings target: 20% of salary
     let result = engine.eval("20% of salary");
-    assert_eq!(result.to_string(), "$1000");
+    assert_eq!(result.to_string(), "$1000.00");
 }
 
 #[test]
@@ -127,9 +127,9 @@ fn test_investment_returns() {
 
     // Calculate return
     let result = engine.eval("8% of principal");
-    assert_eq!(result.to_string(), "$800");
+    assert_eq!(result.to_string(), "$800.00");
 
     // New balance after one year
     let result = engine.eval("principal + return_rate");
-    assert_eq!(result.to_string(), "$10800");
+    assert_eq!(result.to_string(), "$10800.00");
 }

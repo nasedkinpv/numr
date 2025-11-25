@@ -10,7 +10,7 @@ fn test_real_life_scenario() {
     // "wit = 300$ in rub" -> 300 * 60 = 18000 RUB
     let res1 = engine.eval("wit = 300$ in rub");
     // RUB uses symbol after number (Russian convention)
-    assert_eq!(res1.to_string(), "18000₽");
+    assert_eq!(res1.to_string(), "18000.00₽");
 
     // 2. Mixed currency arithmetic with text prefix
     // "wit + 200 ils in usd"
@@ -38,25 +38,25 @@ fn test_real_life_scenario() {
     // 4. Formats
     // $4000 -> 4000 USD
     let res4 = engine.eval("$4000");
-    assert_eq!(res4.to_string(), "$4000");
+    assert_eq!(res4.to_string(), "$4000.00");
 
     // 3500$ -> 3500 USD
     let res5 = engine.eval("3500$");
-    assert_eq!(res5.to_string(), "$3500");
+    assert_eq!(res5.to_string(), "$3500.00");
 
     // 3500 $ -> 3500 USD
     let res6 = engine.eval("3500 $");
-    assert_eq!(res6.to_string(), "$3500");
+    assert_eq!(res6.to_string(), "$3500.00");
 
     // $ 4000 -> 4000 USD
     let res7 = engine.eval("$ 4000");
-    assert_eq!(res7.to_string(), "$4000");
+    assert_eq!(res7.to_string(), "$4000.00");
 
     // 5. BTC
     // 1 BTC in USD
     let res8 = engine.eval("1 btc in usd");
     // Default rate is 60000
-    assert_eq!(res8.to_string(), "$60000");
+    assert_eq!(res8.to_string(), "$60000.00");
 
     // 6. Other currencies
     // 100 EUR in USD (Rate 0.92 USD -> EUR => 1 EUR = 1/0.92 USD = 1.087 USD)

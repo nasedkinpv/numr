@@ -94,11 +94,15 @@ echo "100 + 200" | numr-cli
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
 | `l` / `→` | Move right |
-| `0` | Move to start of line |
-| `$` | Move to end of line |
+| `PageUp` | Scroll page up |
+| `PageDown` | Scroll page down |
+| `0` / `Home` | Move to start of line |
+| `$` / `End` | Move to end of line |
 | `x` | Delete character under cursor |
 | `dd` | Delete current line |
 | `w` | Toggle wrap mode |
+| `n` | Toggle line numbers |
+| `?` / `F1` | Toggle help popup |
 | `q` | Quit |
 | `Ctrl+s` | Save file |
 | `F12` | Toggle debug mode |
@@ -111,6 +115,9 @@ echo "100 + 200" | numr-cli
 | `Enter` | New line |
 | `Backspace` | Delete character before cursor |
 | `Delete` | Delete character after cursor |
+| `Arrows` | Move cursor |
+| `PageUp/Down` | Scroll page |
+| `Home/End` | Move to start/end of line |
 | `Ctrl+s` | Save file |
 | `F12` | Toggle debug mode |
 

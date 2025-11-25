@@ -126,16 +126,3 @@ room_temp_f = room_temp in F
 
 # Recursive definition (uncomment to see error)
 # x = x + 1
-
-# Case sensitivity
-MyVar = 100
-myvar = 200 # Different variable
-total_vars = MyVar + myvar
-
-# Tiny numbers
-tiny = 0.000000001
-tiny_res = tiny * 1000
-
-# Huge numbers
-huge = 1000000000000
-huge_res = huge * huge

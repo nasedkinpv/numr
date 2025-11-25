@@ -1001,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "numr-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "numr-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "pest",
@@ -1023,7 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "numr-editor"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "numr-core",
  "serde",
@@ -1032,7 +1032,7 @@ dependencies = [
 
 [[package]]
 name = "numr-tui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
