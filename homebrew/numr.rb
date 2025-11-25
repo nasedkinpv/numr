@@ -1,8 +1,8 @@
 class Numr < Formula
   desc "Text calculator for natural language expressions with a vim-style TUI"
   homepage "https://github.com/nasedkinpv/numr"
-  url "https://github.com/nasedkinpv/numr/archive/v0.1.1.tar.gz"
-  sha256 "aab95fd31bdc5aebf140ae642a39f1a643390c35edeb1725a09f0cc84b3f98fc"
+  url "https://github.com/nasedkinpv/numr/archive/v0.1.2.tar.gz"
+  sha256 "46cf1baf23d9a0ed9ed040647aff1448b8557cca77f5271fa75c322e3599d672"
   license "MIT"
 
   depends_on "rust" => :build
