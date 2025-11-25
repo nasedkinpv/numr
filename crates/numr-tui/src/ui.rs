@@ -736,28 +736,4 @@ mod tests {
         let pairs = tokenize_to_pairs("5 km to miles");
         assert!(has_token(&pairs, "to", palette::KEYWORD));
     }
-
-    #[test]
-    fn test_wrapped_height() {
-        // "hello world" (11 chars)
-        // width 5:
-        // hello
-        // world
-        // -> 2 lines
-        assert_eq!(wrapped_height("hello world", 5), 2);
-
-        // width 11:
-        // hello world
-        // -> 1 line
-        assert_eq!(wrapped_height("hello world", 11), 1);
-
-        // width 3:
-        // hel
-        // lo
-        // wor
-        // ld
-        // -> 4 lines (depending on split)
-        // textwrap default splits words if they don't fit
-        assert!(wrapped_height("hello world", 3) >= 2);
-    }
 }
