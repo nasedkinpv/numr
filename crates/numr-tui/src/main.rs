@@ -2,6 +2,7 @@
 
 mod app;
 mod exchange;
+mod popups;
 mod ui;
 
 use anyhow::Result;
