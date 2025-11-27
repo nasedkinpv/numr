@@ -490,29 +490,26 @@ mod tests {
 
     #[test]
     fn test_get_wrapped_height() {
-        let mut app = App::default();
-
         // "hello world" (11 chars)
-        // width 5:
-        // hello
-        // world
-        // -> 2 lines
-        app.viewport_width = 5;
+        // width 5: "hello" + "world" -> 2 lines
+        let app = App {
+            viewport_width: 5,
+            ..Default::default()
+        };
         assert_eq!(app.get_wrapped_height("hello world"), 2);
 
-        // width 11:
-        // hello world
-        // -> 1 line
-        app.viewport_width = 11;
+        // width 11: "hello world" -> 1 line
+        let app = App {
+            viewport_width: 11,
+            ..Default::default()
+        };
         assert_eq!(app.get_wrapped_height("hello world"), 1);
 
-        // width 3:
-        // hel
-        // lo
-        // wor
-        // ld
-        // -> 4 lines (depending on split)
-        app.viewport_width = 3;
+        // width 3: splits into 4+ lines
+        let app = App {
+            viewport_width: 3,
+            ..Default::default()
+        };
         assert!(app.get_wrapped_height("hello world") >= 2);
     }
 }

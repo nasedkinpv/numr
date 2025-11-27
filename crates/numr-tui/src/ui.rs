@@ -1,18 +1,19 @@
 //! Minimal UI rendering
 
 use ratatui::{
-    layout::{Constraint, Flex, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Padding, Paragraph, Wrap},
+    widgets::{Block, Paragraph, Wrap},
     Frame,
 };
 
 use crate::app::{App, InputMode};
+use crate::popups::{draw_help_popup, draw_quit_popup};
 use numr_editor::{tokenize, TokenType};
 
 /// Color palette - minimal and elegant (TTY 16-color compatible)
-mod palette {
+pub mod palette {
     use ratatui::style::Color;
 
     pub const DIM: Color = Color::DarkGray;
@@ -106,37 +107,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.show_quit_confirmation {
         draw_quit_popup(frame, area);
     }
-}
-
-fn draw_quit_popup(frame: &mut Frame, area: Rect) {
-    use ratatui::widgets::{Clear, Paragraph};
-
-    let popup_area = centered_rect(area, 40, 20);
-
-    frame.render_widget(Clear, popup_area);
-
-    let block = Block::bordered()
-        .title(" Unsaved Changes ")
-        .title_style(Style::new().bold().fg(palette::ERROR))
-        .style(Style::new().bg(Color::Black))
-        .border_style(Style::new().fg(palette::ERROR))
-        .padding(Padding::new(2, 2, 1, 1));
-
-    let text = vec![
-        Line::from("You have unsaved changes."),
-        Line::from(""),
-        Line::from(vec![
-            "Save before quitting? ".into(),
-            "(y/n/esc)".fg(palette::ACCENT).bold(),
-        ]),
-    ];
-
-    let paragraph = Paragraph::new(text)
-        .block(block)
-        .alignment(ratatui::layout::Alignment::Center)
-        .wrap(Wrap { trim: true });
-
-    frame.render_widget(paragraph, popup_area);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -360,67 +330,6 @@ fn draw_debug_panel(frame: &mut Frame, area: Rect, app: &App) {
 
         frame.render_widget(paragraph, area);
     }
-}
-
-fn draw_help_popup(frame: &mut Frame, area: Rect) {
-    use ratatui::widgets::{Clear, Row, Table};
-
-    let popup_area = centered_rect(area, 60, 60);
-
-    frame.render_widget(Clear, popup_area);
-
-    let rows = vec![
-        Row::new(vec!["Navigation", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
-        Row::new(vec!["Arrows / hjkl", "Move cursor"]),
-        Row::new(vec!["Home / 0", "Start of line"]),
-        Row::new(vec!["End / $", "End of line"]),
-        Row::new(vec!["PageUp / PageDown", "Scroll page"]),
-        Row::new(vec!["", ""]),
-        Row::new(vec!["Editing", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
-        Row::new(vec!["i / a", "Insert mode"]),
-        Row::new(vec!["o", "New line below"]),
-        Row::new(vec!["dd", "Delete line"]),
-        Row::new(vec!["x", "Delete char"]),
-        Row::new(vec!["", ""]),
-        Row::new(vec!["General", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
-        Row::new(vec!["w", "Toggle wrap mode"]),
-        Row::new(vec!["n", "Toggle line numbers"]),
-        Row::new(vec!["Ctrl+s", "Save file"]),
-        Row::new(vec!["F12", "Toggle debug"]),
-        Row::new(vec!["? / F1", "Toggle help"]),
-        Row::new(vec!["q / Esc", "Quit / Close help"]),
-    ];
-
-    let table = Table::new(
-        rows,
-        [Constraint::Percentage(40), Constraint::Percentage(60)],
-    )
-    .block(
-        Block::bordered()
-            .title(" Help ")
-            .title_style(Style::new().bold().fg(palette::ACCENT))
-            .style(Style::new().bg(Color::Black)) // Solid background
-            .padding(Padding::new(2, 2, 1, 1)),
-    )
-    .header(
-        Row::new(vec!["Key", "Action"])
-            .style(Style::new().bold().fg(palette::ACCENT).bg(Color::DarkGray))
-            .bottom_margin(1),
-    )
-    .column_spacing(1);
-
-    frame.render_widget(table, popup_area);
-}
-
-/// Helper to center a rect using Flex layout
-fn centered_rect(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
-    let [vertical] = Layout::vertical([Constraint::Percentage(percent_y)])
-        .flex(Flex::Center)
-        .areas(area);
-    let [horizontal] = Layout::horizontal([Constraint::Percentage(percent_x)])
-        .flex(Flex::Center)
-        .areas(vertical);
-    horizontal
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {

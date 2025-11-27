@@ -245,3 +245,130 @@ fn is_multiply_context(chars: &[char], i: usize) -> bool {
     };
     prev_ok && next_ok
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to find a token by text
+    fn find_token<'a>(tokens: &'a [Token], text: &str) -> Option<&'a Token> {
+        tokens.iter().find(|t| t.text == text)
+    }
+
+    /// Helper to check token type
+    fn has_token(tokens: &[Token], text: &str, expected: TokenType) -> bool {
+        find_token(tokens, text)
+            .map(|t| t.token_type == expected)
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn test_simple_number() {
+        let tokens = tokenize("42");
+        assert!(has_token(&tokens, "42", TokenType::Number));
+    }
+
+    #[test]
+    fn test_negative_number() {
+        let tokens = tokenize("-5");
+        assert!(has_token(&tokens, "-5", TokenType::Number));
+    }
+
+    #[test]
+    fn test_percentage() {
+        let tokens = tokenize("20%");
+        assert!(has_token(&tokens, "20%", TokenType::Number));
+    }
+
+    #[test]
+    fn test_operators() {
+        let tokens = tokenize("1 + 2 - 3 * 4 / 5");
+        assert!(has_token(&tokens, "+", TokenType::Operator));
+        assert!(has_token(&tokens, "-", TokenType::Operator));
+        assert!(has_token(&tokens, "*", TokenType::Operator));
+        assert!(has_token(&tokens, "/", TokenType::Operator));
+    }
+
+    #[test]
+    fn test_multiply_x_between_numbers() {
+        let tokens = tokenize("2x3");
+        assert!(has_token(&tokens, "x", TokenType::Operator));
+    }
+
+    #[test]
+    fn test_multiply_x_with_spaces() {
+        let tokens = tokenize("2 x 3");
+        assert!(has_token(&tokens, "x", TokenType::Operator));
+    }
+
+    #[test]
+    fn test_word_not_multiply() {
+        // "tax" alone is plain text
+        let tokens = tokenize("tax");
+        assert!(has_token(&tokens, "tax", TokenType::Text));
+    }
+
+    #[test]
+    fn test_variable_assignment() {
+        let tokens = tokenize("tax = 20%");
+        assert!(has_token(&tokens, "tax", TokenType::Variable));
+        assert!(has_token(&tokens, "=", TokenType::Operator));
+        assert!(has_token(&tokens, "20%", TokenType::Number));
+    }
+
+    #[test]
+    fn test_comment() {
+        let tokens = tokenize("# this is a comment");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_type, TokenType::Comment);
+    }
+
+    #[test]
+    fn test_currency_symbol() {
+        let tokens = tokenize("$100");
+        assert!(has_token(&tokens, "$", TokenType::Currency));
+        assert!(has_token(&tokens, "100", TokenType::Number));
+    }
+
+    #[test]
+    fn test_currency_code() {
+        let tokens = tokenize("100 USD");
+        assert!(has_token(&tokens, "100", TokenType::Number));
+        assert!(has_token(&tokens, "USD", TokenType::Currency));
+    }
+
+    #[test]
+    fn test_unit() {
+        let tokens = tokenize("5 km");
+        assert!(has_token(&tokens, "5", TokenType::Number));
+        assert!(has_token(&tokens, "km", TokenType::Unit));
+    }
+
+    #[test]
+    fn test_keywords() {
+        let tokens = tokenize("$100 in EUR");
+        assert!(has_token(&tokens, "in", TokenType::Keyword));
+
+        let tokens = tokenize("20% of 100");
+        assert!(has_token(&tokens, "of", TokenType::Keyword));
+
+        let tokens = tokenize("5 km to miles");
+        assert!(has_token(&tokens, "to", TokenType::Keyword));
+    }
+
+    #[test]
+    fn test_functions() {
+        let tokens = tokenize("sum(1, 2)");
+        assert!(has_token(&tokens, "sum", TokenType::Function));
+    }
+
+    #[test]
+    fn test_prose_with_numbers() {
+        let tokens = tokenize("i put 10 usd here");
+        assert!(has_token(&tokens, "i", TokenType::Text));
+        assert!(has_token(&tokens, "put", TokenType::Text));
+        assert!(has_token(&tokens, "10", TokenType::Number));
+        assert!(has_token(&tokens, "usd", TokenType::Currency));
+        assert!(has_token(&tokens, "here", TokenType::Text));
+    }
+}
