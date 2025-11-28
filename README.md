@@ -1,10 +1,23 @@
-# numr
+<p align="center">
+<pre>
+███    ██ ██    ██ ███    ███ ██████
+████   ██ ██    ██ ████  ████ ██   ██
+██ ██  ██ ██    ██ ██ ████ ██ ██████
+██  ██ ██ ██    ██ ██  ██  ██ ██   ██
+██   ████  ██████  ██      ██ ██   ██
+</pre>
+</p>
 
-[![CI](https://github.com/nasedkinpv/numr/actions/workflows/ci.yml/badge.svg)](https://github.com/nasedkinpv/numr/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://github.com/nasedkinpv/numr/actions/workflows/ci.yml"><img src="https://github.com/nasedkinpv/numr/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
 
 A text calculator for natural language expressions with a vim-style TUI.
 
-![numr screenshot](screenshots/numr_1.png)
+<p align="center">
+  <img src="screenshots/numr_1.png" width="49%" alt="numr TUI - calculations with variables, units, and currencies">
+  <img src="screenshots/numr_2.png" width="49%" alt="numr TUI - help popup with keybindings">
+</p>
 
 ## Features
 
