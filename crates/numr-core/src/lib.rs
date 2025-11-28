@@ -177,8 +177,15 @@ impl Engine {
             }
         }
 
-        // Plain numbers and percentages are intentionally excluded from totals
-        // as they don't have meaningful units to sum
+        // Sort results for consistent display order (currencies first, then units by type)
+        result.sort_by(|a, b| match (a, b) {
+            (Value::Currency { .. }, Value::WithUnit { .. }) => std::cmp::Ordering::Less,
+            (Value::WithUnit { .. }, Value::Currency { .. }) => std::cmp::Ordering::Greater,
+            (Value::WithUnit { unit: u1, .. }, Value::WithUnit { unit: u2, .. }) => {
+                u1.unit_type().cmp(&u2.unit_type())
+            }
+            _ => std::cmp::Ordering::Equal,
+        });
 
         result
     }
