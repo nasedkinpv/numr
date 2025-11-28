@@ -124,5 +124,4 @@ jobs:
           destination-github-username: nasedkinpv
           destination-repository-name: homebrew-tap
           target-branch: main
-          target-directory: .
           commit-message: "Update numr to ${{ steps.version.outputs.version }}"
