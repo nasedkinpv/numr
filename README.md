@@ -11,7 +11,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Natural language expressions**: `20% of 150`, `$100 in euros`, `2 hours + 30 min`
 - **Variables**: `tax = 15%` then `100 + tax`
 - **Unit conversions**: Length, weight, time, temperature, data sizes
-- **Currency conversions**: USD, EUR, GBP, JPY, RUB, ILS, BTC
+- **Currency conversions**: USD, EUR, GBP, JPY, CHF, CNY, CAD, AUD, INR, KRW, RUB, ILS, PLN, UAH + crypto (BTC, ETH, SOL, and more)
 - **Live exchange rates**: Fetched automatically on startup
 - **Vim-style editing**: Normal and Insert modes with familiar keybindings
 - **Mouse support**: Scroll with mouse wheel or trackpad
@@ -19,7 +19,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Syntax highlighting**: Numbers, operators, variables, units, and currencies
 - **Comments**: Lines starting with `#` are treated as comments
 - **Wrap mode**: Toggle text wrapping with bottom-aligned results
-- **Running total**: Automatic sum displayed in the footer
+- **Grouped totals**: Currencies and units summed separately in footer (respects exchange rates)
 
 ## Installation
 
@@ -100,11 +100,13 @@ echo "100 + 200" | numr-cli
 | `$` / `End` | Move to end of line |
 | `x` | Delete character under cursor |
 | `dd` | Delete current line |
-| `w` | Toggle wrap mode |
-| `n` | Toggle line numbers |
+| `W` | Toggle wrap mode |
+| `N` | Toggle line numbers |
+| `H` | Toggle header (hidden by default) |
 | `?` / `F1` | Toggle help popup |
 | `q` | Quit |
 | `Ctrl+s` | Save file |
+| `Ctrl+r` | Refresh exchange rates |
 | `F12` | Toggle debug mode |
 
 ### Insert Mode
@@ -184,7 +186,10 @@ ceil(3.2)         → 4
 `TB`, `GB`, `MB`, `KB`, `bytes`
 
 ### Currencies
-`$`/`USD`, `€`/`EUR`, `£`/`GBP`, `¥`/`JPY`, `₽`/`RUB`, `₪`/`ILS`, `₿`/`BTC`
+
+**Fiat:** `$`/`USD`, `€`/`EUR`, `£`/`GBP`, `¥`/`JPY`, `CHF`, `CNY`/`RMB`, `CAD`, `AUD`, `₹`/`INR`, `₩`/`KRW`, `₽`/`RUB`, `₪`/`ILS`, `zł`/`PLN`, `₴`/`UAH`
+
+**Crypto:** `₿`/`BTC`, `Ξ`/`ETH`, `◎`/`SOL`, `₮`/`USDT`, `USDC`, `BNB`, `XRP`, `₳`/`ADA`, `Ð`/`DOGE`, `DOT`, `Ł`/`LTC`, `LINK`, `AVAX`, `MATIC`, `TON`
 
 ## Architecture
 
@@ -205,11 +210,12 @@ graph TB
         Eval[Evaluator]
         Types[Types<br/>Value, Currency, Unit]
         Cache[Rate Cache]
+        Fetch[Fetch Module]
     end
 
     subgraph External APIs
         Fiat[open.er-api.com<br/>Fiat Rates]
-        Crypto[CoinGecko API<br/>BTC Price]
+        Crypto[CoinGecko API<br/>Crypto Prices]
     end
 
     TUI --> Highlight
@@ -220,28 +226,36 @@ graph TB
     AST --> Eval
     Eval --> Types
     Eval --> Cache
-    TUI -.->|fetch on startup| Fiat
-    TUI -.->|fetch on startup| Crypto
-    Fiat -.-> Cache
-    Crypto -.-> Cache
+    TUI -.->|fetch on startup| Fetch
+    CLI -.->|fetch if cache expired| Fetch
+    Fetch -.-> Fiat
+    Fetch -.-> Crypto
+    Fetch -.-> Cache
 ```
 
 ```
 numr/
 ├── crates/
-│   ├── numr-core/     # Core evaluation engine (no UI dependencies)
+│   ├── numr-core/     # Core evaluation engine (WASM-compatible by default)
 │   │   ├── parser/    # Pest PEG grammar and AST builder
 │   │   ├── eval/      # Expression evaluation with unit/currency handling
 │   │   ├── types/     # Value, Currency, Unit registries
-│   │   └── cache/     # Exchange rate caching with BFS path finding
+│   │   ├── cache/     # Exchange rate caching with BFS path finding
+│   │   └── fetch/     # HTTP fetching (optional "fetch" feature)
 │   ├── numr-editor/   # Shared editor logic (syntax highlighting)
 │   ├── numr-tui/      # Terminal UI (Ratatui) with vim modes
 │   └── numr-cli/      # Command-line interface and REPL
 ```
 
-The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, GUI, or WASM contexts. Exchange rates are fetched asynchronously on TUI startup from two sources:
+The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, GUI, or WASM contexts. The `fetch` feature flag enables HTTP fetching (adds reqwest dependency, not WASM-compatible).
+
+Exchange rates are cached to `~/.config/numr/rates.json` with 1-hour expiry. Both TUI and CLI share this cache:
+- **TUI**: Fetches fresh rates on startup
+- **CLI**: Fetches only if cache is expired
+
+Rate sources:
 - **Fiat currencies**: [open.er-api.com](https://open.er-api.com) (152 currencies, free)
-- **Cryptocurrency**: [CoinGecko](https://www.coingecko.com/en/api) (BTC/USD, free)
+- **Cryptocurrency**: [CoinGecko](https://www.coingecko.com/en/api) (15 tokens, free)
 
 ## License
 

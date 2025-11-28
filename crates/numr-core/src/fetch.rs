@@ -1,5 +1,9 @@
-use anyhow::Result;
-use numr_core::types::currency::Currency;
+//! Exchange rate fetching (requires "fetch" feature)
+//!
+//! This module provides async functions to fetch exchange rates from external APIs.
+//! It's gated behind the "fetch" feature to keep numr-core WASM-compatible by default.
+
+use crate::types::Currency;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -13,14 +17,15 @@ type CryptoPricesResponse = HashMap<String, CryptoPrice>;
 
 #[derive(Deserialize)]
 struct CryptoPrice {
-    usd: f64,
+    #[serde(default)]
+    usd: Option<f64>,
 }
 
 /// Fetch exchange rates from multiple sources.
 /// Returns rates as HashMap where key is currency code (e.g., "EUR", "BTC").
 /// - Fiat rates: "1 USD = X units" (e.g., EUR -> 0.92)
 /// - Crypto rates: "1 TOKEN = X USD" (e.g., BTC -> 92000, ETH -> 3000)
-pub async fn fetch_rates() -> Result<HashMap<String, f64>> {
+pub async fn fetch_rates() -> Result<HashMap<String, f64>, String> {
     let mut rates = fetch_fiat_rates().await?;
 
     if let Some(crypto_rates) = fetch_crypto_prices().await {
@@ -30,10 +35,15 @@ pub async fn fetch_rates() -> Result<HashMap<String, f64>> {
     Ok(rates)
 }
 
-async fn fetch_fiat_rates() -> Result<HashMap<String, f64>> {
+async fn fetch_fiat_rates() -> Result<HashMap<String, f64>, String> {
     let url = "https://open.er-api.com/v6/latest/USD";
-    let response = reqwest::get(url).await?;
-    let data: FiatRatesResponse = response.json().await?;
+    let response = reqwest::get(url)
+        .await
+        .map_err(|e| format!("Failed to fetch fiat rates: {e}"))?;
+    let data: FiatRatesResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse fiat rates: {e}"))?;
     Ok(data.rates)
 }
 
@@ -55,12 +65,15 @@ async fn fetch_crypto_prices() -> Option<HashMap<String, f64>> {
     );
 
     let response = reqwest::get(&url).await.ok()?;
-    let data: CryptoPricesResponse = response.json().await.ok()?;
+    let text = response.text().await.ok()?;
+    let data: CryptoPricesResponse = serde_json::from_str(&text).ok()?;
 
     let mut rates = HashMap::new();
     for (coingecko_id, code) in &crypto_currencies {
         if let Some(price) = data.get(*coingecko_id) {
-            rates.insert(code.to_string(), price.usd);
+            if let Some(usd) = price.usd {
+                rates.insert(code.to_string(), usd);
+            }
         }
     }
 

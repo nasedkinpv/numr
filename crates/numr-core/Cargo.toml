@@ -5,10 +5,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+fetch = ["reqwest"]
+
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 pest.workspace = true
 pest_derive.workspace = true
+directories = "6.0"
+
+# Optional: for fetching exchange rates (not available in WASM)
+reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions.workspace = true

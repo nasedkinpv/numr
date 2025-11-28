@@ -35,7 +35,12 @@ expression = { calculation ~ conversion_suffix? }
 calculation = { term ~ (operation ~ term)* }
 
 // Conversion suffix: "in euros", "to km"
-conversion_suffix = { ("in" | "to") ~ target_unit }
+// Allows trailing prose text after the target unit (e.g., "in eur and some note here")
+conversion_suffix = { ("in" | "to") ~ target_unit ~ trailing_text? }
+
+// Trailing text after conversion - anything that doesn't look like an operator or continuation
+// Must start with a non-operator, non-digit character sequence
+trailing_text = _{ &ASCII_ALPHA ~ (!EOI ~ ANY)* }
 
 // -----------------------------------------------------------------------------
 // TERMS (atoms)

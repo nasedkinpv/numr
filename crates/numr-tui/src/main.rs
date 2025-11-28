@@ -1,7 +1,6 @@
 //! numr TUI - Terminal User Interface for the numr calculator
 
 mod app;
-mod exchange;
 mod popups;
 mod ui;
 
@@ -31,6 +30,23 @@ struct Args {
     file: Option<PathBuf>,
 }
 
+/// Spawn a background thread to fetch exchange rates
+fn spawn_rate_fetch(
+    app: &mut App,
+) -> mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>> {
+    app.fetch_status = app::FetchStatus::Fetching;
+    app.fetch_start = Some(std::time::Instant::now());
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let result = numr_core::fetch_rates().await;
+            let _ = tx.send(result);
+        });
+    });
+    rx
+}
+
 fn main() -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
@@ -55,23 +71,9 @@ fn main() -> Result<()> {
 
     // Create app and run
     let mut app = App::new(path);
-    app.fetch_status = app::FetchStatus::Fetching;
 
-    // Spawn currency fetcher
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            match exchange::fetch_rates().await {
-                Ok(rates) => {
-                    let _ = tx.send(Ok(rates));
-                }
-                Err(e) => {
-                    let _ = tx.send(Err(e.to_string()));
-                }
-            }
-        });
-    });
+    // Initial rate fetch
+    let rx = spawn_rate_fetch(&mut app);
 
     let res = run_app(&mut terminal, &mut app, rx);
 
@@ -95,9 +97,11 @@ fn main() -> Result<()> {
 fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    rx: mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>,
+    initial_rx: mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>,
 ) -> Result<()> {
     let mut stdout = io::stdout();
+    let mut rate_rx = Some(initial_rx);
+
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
 
@@ -108,8 +112,10 @@ fn run_app<B: ratatui::backend::Backend>(
         }
 
         // Check for rate updates
-        if let Ok(result) = rx.try_recv() {
-            app.update_rates(result);
+        if let Some(ref rx) = rate_rx {
+            if let Ok(result) = rx.try_recv() {
+                app.update_rates(result);
+            }
         }
         // Poll for events
         if event::poll(Duration::from_millis(100))? {
@@ -159,10 +165,16 @@ fn run_app<B: ratatui::backend::Backend>(
                                     }
                                 }
                                 _ if app.show_help => {
-                                    // If help is shown, any key (except specific ones maybe) closes it?
-                                    // Or just let navigation work? Let's make Esc/q close it.
-                                    if key.code == KeyCode::Char('q') {
-                                        app.toggle_help();
+                                    // Handle help popup navigation
+                                    let max_scroll =
+                                        popups::help_max_scroll(terminal.size()?.height);
+                                    match key.code {
+                                        KeyCode::Char('q') => app.toggle_help(),
+                                        KeyCode::Char('j') | KeyCode::Down => {
+                                            app.help_scroll_down(max_scroll)
+                                        }
+                                        KeyCode::Char('k') | KeyCode::Up => app.help_scroll_up(),
+                                        _ => {}
                                     }
                                 }
                                 KeyCode::Char('q') => {
@@ -178,8 +190,14 @@ fn run_app<B: ratatui::backend::Backend>(
                                     if let Err(e) = app.save() {
                                         app.set_status(&format!("Error: {e}"));
                                     } else {
-                                        app.set_status("Saved to file");
+                                        app.set_status("Saved");
                                     }
+                                }
+                                KeyCode::Char('r')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    // Refresh exchange rates
+                                    rate_rx = Some(spawn_rate_fetch(app));
                                 }
                                 KeyCode::Char('i') => app.mode = InputMode::Insert,
                                 KeyCode::Char('a') => {
@@ -214,8 +232,9 @@ fn run_app<B: ratatui::backend::Backend>(
                                 }
                                 KeyCode::Char('$') => app.move_to_line_end(),
                                 KeyCode::Char('0') => app.move_to_line_start(),
-                                KeyCode::Char('w') => app.toggle_wrap(),
-                                KeyCode::Char('n') => app.toggle_line_numbers(),
+                                KeyCode::Char('W') => app.toggle_wrap(),
+                                KeyCode::Char('N') => app.toggle_line_numbers(),
+                                KeyCode::Char('H') => app.toggle_header(),
                                 KeyCode::F(12) => app.toggle_debug(),
                                 _ => {}
                             }
@@ -226,8 +245,11 @@ fn run_app<B: ratatui::backend::Backend>(
                                 if let Err(e) = app.save() {
                                     app.set_status(&format!("Error: {e}"));
                                 } else {
-                                    app.set_status("Saved to file");
+                                    app.set_status("Saved");
                                 }
+                            }
+                            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                rate_rx = Some(spawn_rate_fetch(app));
                             }
                             KeyCode::Char(c) => app.insert_char(c),
                             KeyCode::Backspace => app.delete_char(),

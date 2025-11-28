@@ -197,21 +197,25 @@ fn test_travel_expense_scenario() {
 }
 
 #[test]
-fn test_missing_exchange_rate_graceful_error() {
+fn test_all_currencies_have_default_rates() {
     let mut engine = Engine::new();
 
-    // Without setting rate for PLN, conversion should return error
-    // (only a few currencies have default fallback rates)
+    // All supported currencies now have default fallback rates
+    // PLN should convert successfully
     let result = engine.eval("$100 in PLN");
-    assert!(result.to_string().contains("No exchange rate"));
+    assert!(result.as_f64().is_some());
 
-    // But same-currency operations still work
+    // Same-currency operations work
     assert_eq!(engine.eval("$100 + $50").to_string(), "$150.00");
     assert_eq!(engine.eval("€200 * 2").to_string(), "€400.00");
 
-    // And default fallback rates work (EUR has defaults)
+    // EUR conversion works with fallback rate
     let result = engine.eval("$100 in EUR");
-    assert!(result.as_f64().is_some()); // Should succeed with fallback rate
+    assert!(result.as_f64().is_some());
+
+    // Crypto conversions also work with defaults
+    let result = engine.eval("1 ETH in USD");
+    assert!(result.as_f64().is_some());
 }
 
 #[test]

@@ -1,11 +1,10 @@
 //! Application state and logic
 
-use numr_core::{Currency, Engine, Value};
+use numr_core::{Engine, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::str::FromStr; // Added for Currency::from_str
 use textwrap::{wrap, Options, WordSplitter};
 
 use std::time::Instant;
@@ -50,10 +49,13 @@ pub struct App {
     pub debug_mode: bool,
     pub wrap_mode: bool, // Toggle text wrapping
     pub fetch_status: FetchStatus,
+    pub fetch_start: Option<Instant>, // For loading animation
     pub status_message: Option<String>,
     pub status_start: Option<Instant>,
     pub show_help: bool,
+    pub help_scroll: usize, // Scroll offset for help popup
     pub show_line_numbers: bool,
+    pub show_header: bool,
     pub show_quit_confirmation: bool,
 }
 
@@ -146,10 +148,12 @@ impl App {
         self.status_start = Some(Instant::now());
     }
 
-    /// Clear status message if it has expired (e.g., after 3 seconds)
+    /// Clear status message if it has expired
+    /// "Saved" expires after 1.5s, others after 3s
     pub fn clear_status_if_expired(&mut self) {
-        if let Some(start) = self.status_start {
-            if start.elapsed().as_secs() >= 3 {
+        if let (Some(start), Some(msg)) = (self.status_start, &self.status_message) {
+            let timeout_ms = if msg == "Saved" { 1500 } else { 3000 };
+            if start.elapsed().as_millis() >= timeout_ms {
                 self.status_message = None;
                 self.status_start = None;
             }
@@ -159,11 +163,31 @@ impl App {
     /// Toggle help popup
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
+        if self.show_help {
+            self.help_scroll = 0; // Reset scroll when opening
+        }
+    }
+
+    /// Scroll help popup up
+    pub fn help_scroll_up(&mut self) {
+        self.help_scroll = self.help_scroll.saturating_sub(1);
+    }
+
+    /// Scroll help popup down
+    pub fn help_scroll_down(&mut self, max_scroll: usize) {
+        if self.help_scroll < max_scroll {
+            self.help_scroll += 1;
+        }
     }
 
     /// Toggle line numbers
     pub fn toggle_line_numbers(&mut self) {
         self.show_line_numbers = !self.show_line_numbers;
+    }
+
+    /// Toggle header visibility
+    pub fn toggle_header(&mut self) {
+        self.show_header = !self.show_header;
     }
 
     /// Page up
@@ -396,9 +420,9 @@ impl App {
         self.ensure_cursor_visible();
     }
 
-    /// Get the total sum of all results
-    pub fn total(&self) -> f64 {
-        self.results.iter().filter_map(|v| v.as_f64()).sum()
+    /// Get totals grouped by type (currency, unit, etc.)
+    pub fn grouped_totals(&self) -> Vec<Value> {
+        self.engine.grouped_totals()
     }
 
     /// Get errors for the current line (for debug panel)
@@ -411,21 +435,14 @@ impl App {
         }
     }
 
-    /// Update exchange rates
+    /// Update exchange rates and save to cache
     pub fn update_rates(&mut self, rates: Result<HashMap<String, f64>, String>) {
         match rates {
-            Ok(rates) => {
-                for (code, rate) in rates {
-                    if let Ok(currency) = Currency::from_str(&code) {
-                        if currency.is_crypto() {
-                            // Crypto rates from CoinGecko: "1 TOKEN = X USD"
-                            self.engine.set_exchange_rate(currency, Currency::USD, rate);
-                        } else {
-                            // Fiat rates from exchangerate-api: "1 USD = X Currency"
-                            self.engine.set_exchange_rate(Currency::USD, currency, rate);
-                        }
-                    }
-                }
+            Ok(raw_rates) => {
+                // Apply rates to engine
+                self.engine.apply_raw_rates(&raw_rates);
+                // Save to file cache for CLI and future use
+                self.engine.save_rates_to_cache(&raw_rates);
                 self.fetch_status = FetchStatus::Success;
             }
             Err(e) => {
@@ -472,10 +489,13 @@ impl Default for App {
             debug_mode: false,
             wrap_mode: false,
             fetch_status: FetchStatus::Idle,
+            fetch_start: None,
             status_message: None,
             status_start: None,
             show_help: false,
+            help_scroll: 0,
             show_line_numbers: false,
+            show_header: false,
             show_quit_confirmation: false,
         };
         app.recalculate();

@@ -10,6 +10,7 @@ name = "numr-cli"
 path = "src/main.rs"
 
 [dependencies]
-numr-core = { path = "../numr-core" }
+numr-core = { path = "../numr-core", features = ["fetch"] }
 clap.workspace = true
 anyhow.workspace = true
+tokio.workspace = true
