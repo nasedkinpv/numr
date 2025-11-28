@@ -42,6 +42,16 @@ fn main() -> Result<()> {
 
     let mut engine = Engine::new();
 
+    // Fetch fresh rates if cache is expired
+    if !Engine::is_rate_cache_valid() {
+        // Create a small runtime just for fetching
+        let rt = tokio::runtime::Runtime::new()?;
+        if let Ok(rates) = rt.block_on(numr_core::fetch_rates()) {
+            engine.apply_raw_rates(&rates);
+            engine.save_rates_to_cache(&rates);
+        }
+    }
+
     // Determine input source
     if let Some(expr) = &args.expression {
         // Single expression mode

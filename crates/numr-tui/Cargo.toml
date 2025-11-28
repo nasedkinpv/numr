@@ -10,14 +10,12 @@ name = "numr"
 path = "src/main.rs"
 
 [dependencies]
-numr-core = { path = "../numr-core" }
+numr-core = { path = "../numr-core", features = ["fetch"] }
 numr-editor = { path = "../numr-editor" }
 ratatui.workspace = true
 crossterm.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 directories = "6.0"
-reqwest.workspace = true
 tokio.workspace = true
-serde.workspace = true
 textwrap = "0.16.2"

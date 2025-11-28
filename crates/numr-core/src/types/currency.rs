@@ -285,7 +285,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         aliases: &["matic", "polygon"],
         symbol_after: false,
         is_crypto: true,
-        coingecko_id: Some("matic-network"),
+        coingecko_id: Some("polygon-ecosystem-token"),
     },
     CurrencyDef {
         currency: Currency::TON,

@@ -1006,16 +1006,20 @@ dependencies = [
  "anyhow",
  "clap",
  "numr-core",
+ "tokio",
 ]
 
 [[package]]
 name = "numr-core"
 version = "0.1.2"
 dependencies = [
+ "directories",
  "pest",
  "pest_derive",
  "pretty_assertions",
+ "reqwest",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1036,8 +1040,6 @@ dependencies = [
  "numr-core",
  "numr-editor",
  "ratatui",
- "reqwest",
- "serde",
  "textwrap",
  "tokio",
 ]

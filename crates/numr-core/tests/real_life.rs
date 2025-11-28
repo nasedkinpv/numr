@@ -53,10 +53,10 @@ fn test_real_life_scenario() {
     assert_eq!(res7.to_string(), "$4000.00");
 
     // 5. BTC
-    // 1 BTC in USD
+    // Set explicit rate for test consistency
+    engine.set_exchange_rate(Currency::BTC, Currency::USD, 95000.0);
     let res8 = engine.eval("1 btc in usd");
-    // Default rate is 60000
-    assert_eq!(res8.to_string(), "$60000.00");
+    assert_eq!(res8.to_string(), "$95000.00");
 
     // 6. Other currencies
     // 100 EUR in USD (Rate 0.92 USD -> EUR => 1 EUR = 1/0.92 USD = 1.087 USD)
@@ -72,4 +72,22 @@ fn test_real_life_scenario() {
     // 100 JPY = 100 / 149.5 = 0.668... USD.
     let res10 = engine.eval("100 jpy in usd");
     assert!(res10.to_string().contains("$"));
+}
+
+#[test]
+fn test_mixed_currency_with_trailing_text() {
+    let mut engine = Engine::new();
+    // Set explicit rates for consistent test results
+    engine.set_exchange_rate(Currency::USD, Currency::RUB, 100.0); // 1 USD = 100 RUB
+    engine.set_exchange_rate(Currency::USD, Currency::EUR, 0.9); // 1 USD = 0.9 EUR
+
+    // Basic multi-currency conversion works
+    // 10000 RUB = $100, + $1000 = $1100
+    // $1100 in EUR = €990
+    let result = engine.eval("10000 rubles + 1000 usd in eur");
+    assert_eq!(result.to_string(), "€990.00");
+
+    // Trailing prose text after conversion is ignored
+    let result = engine.eval("10000 rubles + 1000 usd in eur and some text here without comment");
+    assert_eq!(result.to_string(), "€990.00");
 }

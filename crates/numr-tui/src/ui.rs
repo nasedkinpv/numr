@@ -50,13 +50,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Reserve space for debug panel if in debug mode and there's an error
     let has_error = app.current_line_error().is_some();
     let debug_height = if app.debug_mode && has_error { 5 } else { 0 };
+    let header_height = if app.show_header { 1 } else { 0 };
+    let footer_h = footer_height(app, area.width);
 
-    // Layout: Header | Input/Results | Debug (optional) | Footer
+    // Layout: Header (optional) | Input/Results | Debug (optional) | Footer
     let [header_area, main_area, debug_area, footer_area] = Layout::vertical([
-        Constraint::Length(1),
+        Constraint::Length(header_height),
         Constraint::Fill(1),
         Constraint::Length(debug_height),
-        Constraint::Length(1),
+        Constraint::Length(footer_h),
     ])
     .areas(area);
 
@@ -68,7 +70,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         0
     };
 
-    draw_header(frame, header_area, app);
+    if app.show_header {
+        draw_header(frame, header_area, app);
+    }
 
     if app.wrap_mode {
         // Wrap mode: render line-by-line with results bottom-aligned
@@ -101,7 +105,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_footer(frame, footer_area, app, max_result_width + 4);
 
     if app.show_help {
-        draw_help_popup(frame, area);
+        draw_help_popup(frame, area, app.help_scroll);
     }
 
     if app.show_quit_confirmation {
@@ -332,76 +336,228 @@ fn draw_debug_panel(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, app: &App, result_width: u16) {
-    let total = app.total();
-
-    let mode_span = match app.mode {
-        InputMode::Normal => " NORMAL ".fg(Color::Black).bg(palette::ACCENT).bold(),
-        InputMode::Insert => " INSERT ".fg(Color::Black).bg(palette::VARIABLE).bold(),
-    };
-
-    // If we have a status message, it replaces the mode badge
-    let first_span = if let Some(msg) = &app.status_message {
-        Span::styled(
-            format!(" {} ", msg),
-            Style::new().fg(Color::Black).bg(palette::ACCENT).bold(),
-        )
+/// Smooth easing function (ease-in-out)
+fn ease_in_out(t: f64) -> f64 {
+    if t < 0.5 {
+        2.0 * t * t
     } else {
-        mode_span
-    };
+        1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+    }
+}
 
-    let mut hints = vec![first_span, " ".into()];
+/// Generate a flowing gradient color for loading animation
+fn loading_pulse_color(start: std::time::Instant) -> Color {
+    let elapsed = start.elapsed().as_millis() as f64;
+    // Smooth cycle every 1.5s
+    let raw_t = (elapsed / 1500.0).fract();
+    // Ping-pong: 0->1->0
+    let t = if raw_t < 0.5 {
+        raw_t * 2.0
+    } else {
+        2.0 - raw_t * 2.0
+    };
+    let t = ease_in_out(t);
+
+    // Flow from Cyan (80, 180, 220) -> Magenta (180, 100, 220)
+    let r = (80.0 + t * 100.0) as u8;
+    let g = (180.0 - t * 80.0) as u8;
+    let b = 220;
+    Color::Rgb(r, g, b)
+}
+
+/// Generate a flowing gradient color for saved state
+fn saved_pulse_color(start: std::time::Instant) -> Color {
+    let elapsed = start.elapsed().as_millis() as f64;
+    // Smooth cycle every 1.5s
+    let raw_t = (elapsed / 1500.0).fract();
+    // Ping-pong: 0->1->0
+    let t = if raw_t < 0.5 {
+        raw_t * 2.0
+    } else {
+        2.0 - raw_t * 2.0
+    };
+    let t = ease_in_out(t);
+
+    // Flow from Green (100, 200, 120) -> Teal (80, 180, 180)
+    let r = (100.0 - t * 20.0) as u8;
+    let g = (200.0 - t * 20.0) as u8;
+    let b = (120.0 + t * 60.0) as u8;
+    Color::Rgb(r, g, b)
+}
+
+/// Build the totals string from grouped totals
+fn build_totals_string(app: &App) -> String {
+    let grouped = app.grouped_totals();
+    if grouped.is_empty() {
+        String::new()
+    } else {
+        grouped
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join("  ") // Use double space as clean separator
+    }
+}
+
+/// Calculate footer height needed (1 or 2 rows based on content width)
+pub fn footer_height(app: &App, area_width: u16) -> u16 {
+    let totals_str = build_totals_string(app);
+    if totals_str.is_empty() {
+        return 1;
+    }
+
+    // Estimate hints width (mode + filename + hints ≈ 40-50 chars typically)
+    let hints_width_estimate = 45_u16;
+    // "total: " prefix + values
+    let totals_width = (totals_str.len() + 7) as u16;
+
+    // If both fit on one line with some padding, use 1 row
+    if hints_width_estimate + totals_width + 4 <= area_width {
+        1
+    } else {
+        2
+    }
+}
+
+fn draw_footer(frame: &mut Frame, area: Rect, app: &App, _result_width: u16) {
+    let totals_str = build_totals_string(app);
+    let use_two_rows = area.height >= 2 && !totals_str.is_empty();
+
+    // Build hints line
+    let hints = build_hints_line(app);
+
+    if use_two_rows {
+        // Two-row layout: totals on top (right), hints on bottom (space-between)
+        let [totals_area, hints_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+
+        // Totals row (right-aligned): "total:" dim, values bold
+        let total_line = Line::from(vec!["total: ".dim(), totals_str.bold()]);
+        let totals_widget = Paragraph::new(total_line).right_aligned();
+        frame.render_widget(totals_widget, totals_area);
+
+        // Hints row: split into left (mode+file) and right (keybindings)
+        let (left_hints, right_hints) = build_hints_parts(app);
+        let [left_area, right_area] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(hints_area);
+        let left_widget = Paragraph::new(Line::from(left_hints));
+        let right_widget = Paragraph::new(Line::from(right_hints)).right_aligned();
+        frame.render_widget(left_widget, left_area);
+        frame.render_widget(right_widget, right_area);
+    } else {
+        // Single-row layout: hints left, totals right
+        // Account for "total: " prefix (7 chars)
+        let totals_width = if totals_str.is_empty() {
+            0
+        } else {
+            (totals_str.len() + 7) as u16
+        };
+
+        let [left_area, right_area] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(totals_width)]).areas(area);
+
+        let left_footer = Paragraph::new(Line::from(hints));
+        frame.render_widget(left_footer, left_area);
+
+        if !totals_str.is_empty() {
+            let total_line = Line::from(vec!["total: ".dim(), totals_str.bold()]);
+            let right_footer = Paragraph::new(total_line).right_aligned();
+            frame.render_widget(right_footer, right_area);
+        }
+    }
+}
+
+/// Build hints split into (left, right) for two-row layout
+/// Left: mode indicator (with unsaved dot)
+/// Right: keybindings
+fn build_hints_parts(app: &App) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
+    // Left part: mode/status indicator + unsaved indicator
+    let first_span = build_mode_indicator(app);
+
+    let mut left = vec![first_span];
+
+    // Unsaved indicator: a subtle dot after mode
+    if app.dirty {
+        left.push(" •".fg(palette::NUMBER));
+    }
+
+    // Right part: keybindings
+    let mut right: Vec<Span<'static>> = Vec::new();
 
     match app.mode {
         InputMode::Normal => {
-            hints.push("?".fg(palette::ACCENT));
-            hints.push(" help ".dim());
-            hints.push("^s".fg(palette::ACCENT));
-            hints.push(" save ".dim());
+            right.push("?".fg(palette::ACCENT));
+            right.push(" help ".dim());
         }
         InputMode::Insert => {
-            hints.push("esc".fg(palette::ACCENT));
-            hints.push(" normal ".dim());
+            right.push("esc".fg(palette::ACCENT));
+            right.push(" normal ".dim());
         }
     }
+
+    right.push("^s".fg(palette::ACCENT));
+    right.push(" save ".dim());
 
     if app.debug_mode {
-        hints.push("F12".fg(palette::ACCENT));
-        hints.push(" debug on ".dim());
+        right.push("F12".fg(palette::ACCENT));
+        right.push(" debug ".dim());
     }
 
-    // Wrap mode indicator
     if app.wrap_mode {
-        hints.push(" WRAP".fg(palette::KEYWORD));
+        right.push("WRAP ".fg(palette::KEYWORD));
     }
 
-    // Fetch status
-    match &app.fetch_status {
-        crate::app::FetchStatus::Fetching => {
-            hints.push(" Rates: Fetching...".fg(Color::Yellow));
+    let rates_color = match &app.fetch_status {
+        crate::app::FetchStatus::Fetching => Color::Yellow,
+        crate::app::FetchStatus::Success => Color::Green,
+        crate::app::FetchStatus::Error(_) => palette::ERROR,
+        crate::app::FetchStatus::Idle => palette::DIM,
+    };
+    right.push("^r".fg(palette::ACCENT));
+    right.push(Span::styled(" rates", Style::new().fg(rates_color)));
+
+    (left, right)
+}
+
+/// Build the mode/status indicator span
+fn build_mode_indicator(app: &App) -> Span<'static> {
+    if let Some(msg) = &app.status_message {
+        let bg = if msg == "Saved" {
+            // Animated green gradient for saved
+            app.status_start
+                .map(saved_pulse_color)
+                .unwrap_or(palette::VARIABLE)
+        } else {
+            palette::ACCENT
+        };
+        Span::styled(
+            format!(" {} ", msg.to_uppercase()),
+            Style::new().fg(Color::Black).bg(bg).bold(),
+        )
+    } else if app.fetch_status == crate::app::FetchStatus::Fetching {
+        let bg_color = app
+            .fetch_start
+            .map(loading_pulse_color)
+            .unwrap_or(palette::ACCENT);
+        Span::styled(
+            " LOADING ",
+            Style::new().fg(Color::Black).bg(bg_color).bold(),
+        )
+    } else {
+        match app.mode {
+            InputMode::Normal => " NORMAL ".fg(Color::Black).bg(palette::ACCENT).bold(),
+            InputMode::Insert => " INSERT ".fg(Color::Black).bg(palette::VARIABLE).bold(),
         }
-        crate::app::FetchStatus::Success => {
-            hints.push(" Rates: OK".fg(Color::Green));
-        }
-        crate::app::FetchStatus::Error(_) => {
-            hints.push(" Rates: Error".fg(Color::Red));
-        }
-        crate::app::FetchStatus::Idle => {}
     }
+}
 
-    // Split footer into left (hints) and right (total) sections
-    let [left_area, right_area] =
-        Layout::horizontal([Constraint::Fill(1), Constraint::Length(result_width)]).areas(area);
-
-    let left_footer = Paragraph::new(Line::from(hints));
-    frame.render_widget(left_footer, left_area);
-
-    let total_line = Line::from(vec![
-        "total ".dim(),
-        format!("{total:.2}").fg(palette::ACCENT).bold(),
-    ]);
-    let right_footer = Paragraph::new(total_line).right_aligned();
-    frame.render_widget(right_footer, right_area);
+/// Build the hints/status line spans (single row layout)
+fn build_hints_line(app: &App) -> Vec<Span<'static>> {
+    let (mut left, right) = build_hints_parts(app);
+    // Add space after filename for single-row
+    left.push(" ".into());
+    left.extend(right);
+    left
 }
 
 /// Syntax highlighting for a line
