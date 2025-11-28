@@ -6,5 +6,3 @@ license.workspace = true
 
 [dependencies]
 numr-core = { path = "../numr-core" }
-serde = { workspace = true }
-thiserror = { workspace = true }

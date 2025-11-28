@@ -20,5 +20,4 @@ directories = "6.0"
 reqwest.workspace = true
 tokio.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 textwrap = "0.16.2"

@@ -28,6 +28,8 @@ pub struct Token {
 /// Cached sets for syntax highlighting - built from registries
 static CURRENCY_SYMBOLS: LazyLock<HashSet<char>> = LazyLock::new(|| {
     Currency::all_symbols()
+        // Only single-char Unicode symbols (e.g., $, €, ₿), not codes like "CHF", "C$"
+        .filter(|s| s.chars().count() == 1)
         .filter_map(|s| s.chars().next())
         .collect()
 });
