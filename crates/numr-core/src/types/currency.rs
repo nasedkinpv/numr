@@ -1,7 +1,13 @@
 //! Currency definitions and handling
 //!
-//! To add a new currency, simply add an entry to the CURRENCIES array.
-//! All parsing, display, and highlighting will automatically pick it up.
+//! # Adding a new currency
+//!
+//! 1. Add enum variant to `Currency`
+//! 2. Add entry to `CURRENCIES` array with all metadata
+//! 3. If it has a single-char Unicode symbol, add to `grammar.pest` currency_symbol rule
+//!
+//! That's it! Parsing, display, highlighting, and exchange rate fetching
+//! will automatically pick up the new currency from the registry.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -18,17 +24,24 @@ pub struct CurrencyDef {
     pub aliases: &'static [&'static str],
     /// Whether symbol appears after the number (e.g., "100₽" vs "$100")
     pub symbol_after: bool,
+    /// Whether this is a cryptocurrency (affects exchange rate handling)
+    pub is_crypto: bool,
+    /// CoinGecko API ID for fetching prices (crypto only)
+    pub coingecko_id: Option<&'static str>,
 }
 
 /// Complete registry of all supported currencies.
 /// To add a new currency: add enum variant and add entry here.
 pub static CURRENCIES: &[CurrencyDef] = &[
+    // === Fiat Currencies ===
     CurrencyDef {
         currency: Currency::USD,
         symbol: "$",
         code: "USD",
         aliases: &["$", "usd", "dollars"],
         symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
     },
     CurrencyDef {
         currency: Currency::EUR,
@@ -36,6 +49,8 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "EUR",
         aliases: &["€", "eur", "euros"],
         symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
     },
     CurrencyDef {
         currency: Currency::GBP,
@@ -43,13 +58,71 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "GBP",
         aliases: &["£", "gbp", "pounds"],
         symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
     },
     CurrencyDef {
         currency: Currency::JPY,
         symbol: "¥",
         code: "JPY",
-        aliases: &["¥", "jpy"],
+        aliases: &["¥", "jpy", "yen"],
         symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
+    },
+    CurrencyDef {
+        currency: Currency::CHF,
+        symbol: "CHF",
+        code: "CHF",
+        aliases: &["chf", "francs"],
+        symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
+    },
+    CurrencyDef {
+        currency: Currency::CNY,
+        symbol: "¥",
+        code: "CNY",
+        aliases: &["cny", "rmb", "yuan"],
+        symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
+    },
+    CurrencyDef {
+        currency: Currency::CAD,
+        symbol: "C$",
+        code: "CAD",
+        aliases: &["cad"],
+        symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
+    },
+    CurrencyDef {
+        currency: Currency::AUD,
+        symbol: "A$",
+        code: "AUD",
+        aliases: &["aud"],
+        symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
+    },
+    CurrencyDef {
+        currency: Currency::INR,
+        symbol: "₹",
+        code: "INR",
+        aliases: &["₹", "inr", "rupees"],
+        symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
+    },
+    CurrencyDef {
+        currency: Currency::KRW,
+        symbol: "₩",
+        code: "KRW",
+        aliases: &["₩", "krw", "won"],
+        symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
     },
     CurrencyDef {
         currency: Currency::RUB,
@@ -57,33 +130,208 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "RUB",
         aliases: &["₽", "rub", "rubles"],
         symbol_after: true,
+        is_crypto: false,
+        coingecko_id: None,
     },
     CurrencyDef {
         currency: Currency::ILS,
         symbol: "₪",
         code: "ILS",
-        aliases: &["₪", "ils"],
+        aliases: &["₪", "ils", "shekels"],
         symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
     },
+    CurrencyDef {
+        currency: Currency::PLN,
+        symbol: "zł",
+        code: "PLN",
+        aliases: &["zł", "pln", "zloty"],
+        symbol_after: true,
+        is_crypto: false,
+        coingecko_id: None,
+    },
+    CurrencyDef {
+        currency: Currency::UAH,
+        symbol: "₴",
+        code: "UAH",
+        aliases: &["₴", "uah", "hryvnia"],
+        symbol_after: false,
+        is_crypto: false,
+        coingecko_id: None,
+    },
+    // === Cryptocurrencies ===
     CurrencyDef {
         currency: Currency::BTC,
         symbol: "₿",
         code: "BTC",
         aliases: &["₿", "btc", "bitcoin"],
         symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("bitcoin"),
+    },
+    CurrencyDef {
+        currency: Currency::ETH,
+        symbol: "Ξ",
+        code: "ETH",
+        aliases: &["Ξ", "eth", "ethereum", "ether"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("ethereum"),
+    },
+    CurrencyDef {
+        currency: Currency::SOL,
+        symbol: "◎",
+        code: "SOL",
+        aliases: &["◎", "sol", "solana"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("solana"),
+    },
+    CurrencyDef {
+        currency: Currency::USDT,
+        symbol: "₮",
+        code: "USDT",
+        aliases: &["₮", "usdt", "tether"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("tether"),
+    },
+    CurrencyDef {
+        currency: Currency::USDC,
+        symbol: "USDC",
+        code: "USDC",
+        aliases: &["usdc"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("usd-coin"),
+    },
+    CurrencyDef {
+        currency: Currency::BNB,
+        symbol: "BNB",
+        code: "BNB",
+        aliases: &["bnb", "binance"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("binancecoin"),
+    },
+    CurrencyDef {
+        currency: Currency::XRP,
+        symbol: "XRP",
+        code: "XRP",
+        aliases: &["xrp", "ripple"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("ripple"),
+    },
+    CurrencyDef {
+        currency: Currency::ADA,
+        symbol: "₳",
+        code: "ADA",
+        aliases: &["₳", "ada", "cardano"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("cardano"),
+    },
+    CurrencyDef {
+        currency: Currency::DOGE,
+        symbol: "Ð",
+        code: "DOGE",
+        aliases: &["Ð", "doge", "dogecoin"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("dogecoin"),
+    },
+    CurrencyDef {
+        currency: Currency::DOT,
+        symbol: "DOT",
+        code: "DOT",
+        aliases: &["dot", "polkadot"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("polkadot"),
+    },
+    CurrencyDef {
+        currency: Currency::LTC,
+        symbol: "Ł",
+        code: "LTC",
+        aliases: &["Ł", "ltc", "litecoin"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("litecoin"),
+    },
+    CurrencyDef {
+        currency: Currency::LINK,
+        symbol: "LINK",
+        code: "LINK",
+        aliases: &["link", "chainlink"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("chainlink"),
+    },
+    CurrencyDef {
+        currency: Currency::AVAX,
+        symbol: "AVAX",
+        code: "AVAX",
+        aliases: &["avax", "avalanche"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("avalanche-2"),
+    },
+    CurrencyDef {
+        currency: Currency::MATIC,
+        symbol: "MATIC",
+        code: "MATIC",
+        aliases: &["matic", "polygon"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("matic-network"),
+    },
+    CurrencyDef {
+        currency: Currency::TON,
+        symbol: "TON",
+        code: "TON",
+        aliases: &["ton", "toncoin"],
+        symbol_after: false,
+        is_crypto: true,
+        coingecko_id: Some("the-open-network"),
     },
 ];
 
 /// Supported currencies
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Currency {
+    // Fiat
     USD,
     EUR,
     GBP,
     JPY,
+    CHF,
+    CNY,
+    CAD,
+    AUD,
+    INR,
+    KRW,
     RUB,
     ILS,
+    PLN,
+    UAH,
+    // Crypto
     BTC,
+    ETH,
+    SOL,
+    USDT,
+    USDC,
+    BNB,
+    XRP,
+    ADA,
+    DOGE,
+    DOT,
+    LTC,
+    LINK,
+    AVAX,
+    MATIC,
+    TON,
 }
 
 impl Currency {
@@ -108,6 +356,16 @@ impl Currency {
     /// Check if symbol appears after the number
     pub fn symbol_after(&self) -> bool {
         self.def().symbol_after
+    }
+
+    /// Check if this is a cryptocurrency (vs fiat)
+    pub fn is_crypto(&self) -> bool {
+        self.def().is_crypto
+    }
+
+    /// Get CoinGecko API ID (for crypto price fetching)
+    pub fn coingecko_id(&self) -> Option<&'static str> {
+        self.def().coingecko_id
     }
 
     /// Get all currency symbols (for UI highlighting)

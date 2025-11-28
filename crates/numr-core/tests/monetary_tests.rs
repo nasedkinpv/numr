@@ -195,3 +195,72 @@ fn test_travel_expense_scenario() {
     let london_usd = engine.eval("hotel_london in USD");
     assert!(london_usd.as_f64().unwrap() > 300.0); // £300 > $300
 }
+
+#[test]
+fn test_missing_exchange_rate_graceful_error() {
+    let mut engine = Engine::new();
+
+    // Without setting rate for PLN, conversion should return error
+    // (only a few currencies have default fallback rates)
+    let result = engine.eval("$100 in PLN");
+    assert!(result.to_string().contains("No exchange rate"));
+
+    // But same-currency operations still work
+    assert_eq!(engine.eval("$100 + $50").to_string(), "$150.00");
+    assert_eq!(engine.eval("€200 * 2").to_string(), "€400.00");
+
+    // And default fallback rates work (EUR has defaults)
+    let result = engine.eval("$100 in EUR");
+    assert!(result.as_f64().is_some()); // Should succeed with fallback rate
+}
+
+#[test]
+fn test_crypto_currency_formats() {
+    let mut engine = Engine::new();
+
+    // ETH formats
+    assert_eq!(engine.eval("Ξ1").to_string(), "Ξ1.00");
+    assert_eq!(engine.eval("1 ETH").to_string(), "Ξ1.00");
+    assert_eq!(engine.eval("1 ethereum").to_string(), "Ξ1.00");
+
+    // SOL formats
+    assert_eq!(engine.eval("◎10").to_string(), "◎10.00");
+    assert_eq!(engine.eval("10 SOL").to_string(), "◎10.00");
+    assert_eq!(engine.eval("10 solana").to_string(), "◎10.00");
+
+    // USDC/USDT (stablecoins)
+    assert_eq!(engine.eval("100 USDC").to_string(), "USDC100.00");
+    assert_eq!(engine.eval("₮100").to_string(), "₮100.00");
+    assert_eq!(engine.eval("100 USDT").to_string(), "₮100.00");
+}
+
+#[test]
+fn test_crypto_to_usd_conversion() {
+    let mut engine = Engine::new();
+    // Crypto rates: "1 TOKEN = X USD"
+    engine.set_exchange_rate(Currency::ETH, Currency::USD, 3000.0);
+    engine.set_exchange_rate(Currency::SOL, Currency::USD, 140.0);
+    engine.set_exchange_rate(Currency::BTC, Currency::USD, 92000.0);
+
+    // ETH to USD
+    let result = engine.eval("1 ETH in USD");
+    assert_eq!(result.to_string(), "$3000.00");
+
+    // SOL to USD
+    let result = engine.eval("10 SOL in USD");
+    assert_eq!(result.to_string(), "$1400.00");
+
+    // BTC to USD
+    let result = engine.eval("0.5 BTC in USD");
+    assert_eq!(result.to_string(), "$46000.00");
+}
+
+#[test]
+fn test_usd_to_crypto_conversion() {
+    let mut engine = Engine::new();
+    engine.set_exchange_rate(Currency::ETH, Currency::USD, 3000.0);
+
+    // USD to ETH (inverse rate)
+    let result = engine.eval("$6000 in ETH");
+    assert_eq!(result.to_string(), "Ξ2.00");
+}

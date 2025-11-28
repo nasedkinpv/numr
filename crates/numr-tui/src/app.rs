@@ -417,12 +417,11 @@ impl App {
             Ok(rates) => {
                 for (code, rate) in rates {
                     if let Ok(currency) = Currency::from_str(&code) {
-                        if currency == Currency::BTC {
-                            // BTC rate is "1 BTC = X USD" (from CoinGecko)
-                            self.engine
-                                .set_exchange_rate(Currency::BTC, Currency::USD, rate);
+                        if currency.is_crypto() {
+                            // Crypto rates from CoinGecko: "1 TOKEN = X USD"
+                            self.engine.set_exchange_rate(currency, Currency::USD, rate);
                         } else {
-                            // Fiat rates are "1 USD = X Currency"
+                            // Fiat rates from exchangerate-api: "1 USD = X Currency"
                             self.engine.set_exchange_rate(Currency::USD, currency, rate);
                         }
                     }

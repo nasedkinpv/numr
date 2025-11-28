@@ -1012,13 +1012,10 @@ dependencies = [
 name = "numr-core"
 version = "0.1.2"
 dependencies = [
- "anyhow",
  "pest",
  "pest_derive",
  "pretty_assertions",
  "serde",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]
@@ -1026,8 +1023,6 @@ name = "numr-editor"
 version = "0.1.2"
 dependencies = [
  "numr-core",
- "serde",
- "thiserror",
 ]
 
 [[package]]
@@ -1043,7 +1038,6 @@ dependencies = [
  "ratatui",
  "reqwest",
  "serde",
- "serde_json",
  "textwrap",
  "tokio",
 ]

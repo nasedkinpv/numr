@@ -6,10 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-thiserror.workspace = true
-anyhow.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 pest.workspace = true
 pest_derive.workspace = true
 
