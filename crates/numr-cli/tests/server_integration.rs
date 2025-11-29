@@ -427,7 +427,8 @@ fn test_rapid_sequential_requests() {
         let response = send_request(&mut stdin, &mut stdout, eval_request(&expr, i));
 
         let expected = (i + i + 1) as f64;
-        let value = get_result(&response)["value"].as_f64().unwrap();
+        let value_str = get_result(&response)["value"].as_str().unwrap();
+        let value = value_str.parse::<f64>().expect("Float value");
         assert!((value - expected).abs() < 0.01);
     }
 
