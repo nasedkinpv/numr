@@ -5,6 +5,9 @@
 //!   echo "100 + 50" | numr-cli       # Pipe mode
 //!   numr-cli -f calculations.txt     # File mode
 //!   numr-cli -i                      # Interactive REPL
+//!   numr-cli --server                # JSON-RPC server mode
+
+mod server;
 
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
@@ -28,6 +31,10 @@ struct Args {
     #[arg(short, long)]
     interactive: bool,
 
+    /// JSON-RPC server mode (reads from stdin, writes to stdout)
+    #[arg(long)]
+    server: bool,
+
     /// Show only the final result (no input echo)
     #[arg(short, long)]
     quiet: bool,
@@ -42,9 +49,14 @@ fn main() -> Result<()> {
 
     let mut engine = Engine::new();
 
-    // Fetch fresh rates if cache is expired
+    // Server mode: start immediately, let clients call reload_rates if needed
+    if args.server {
+        server::run_server(&mut engine)?;
+        return Ok(());
+    }
+
+    // Fetch fresh rates if cache is expired (skip for server mode - handled above)
     if !Engine::is_rate_cache_valid() {
-        // Create a small runtime just for fetching
         let rt = tokio::runtime::Runtime::new()?;
         if let Ok(rates) = rt.block_on(numr_core::fetch_rates()) {
             engine.apply_raw_rates(&rates);
@@ -77,6 +89,7 @@ fn main() -> Result<()> {
         eprintln!("Usage: numr-cli <expression>");
         eprintln!("       numr-cli -f <file>");
         eprintln!("       numr-cli -i");
+        eprintln!("       numr-cli --server");
         eprintln!("       echo \"100 + 50\" | numr-cli");
         std::process::exit(1);
     }

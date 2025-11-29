@@ -1006,6 +1006,8 @@ dependencies = [
  "anyhow",
  "clap",
  "numr-core",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
