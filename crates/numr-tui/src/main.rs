@@ -48,7 +48,16 @@ fn spawn_rate_fetch(
 }
 
 fn main() -> Result<()> {
-    // Setup terminal
+    // Parse args first - handles --help/--version before terminal setup
+    let args = Args::parse();
+
+    // Determine path
+    let path = args.file.or_else(|| {
+        ProjectDirs::from("com", "numr", "numr")
+            .map(|proj_dirs| proj_dirs.config_dir().join("default.numr"))
+    });
+
+    // Setup terminal (only after arg parsing to avoid breaking terminal on --help)
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(
@@ -59,15 +68,6 @@ fn main() -> Result<()> {
     )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
-    // Parse args
-    let args = Args::parse();
-
-    // Determine path
-    let path = args.file.or_else(|| {
-        ProjectDirs::from("com", "numr", "numr")
-            .map(|proj_dirs| proj_dirs.config_dir().join("default.numr"))
-    });
 
     // Create app and run
     let mut app = App::new(path);

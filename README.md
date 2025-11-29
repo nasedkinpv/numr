@@ -93,6 +93,32 @@ numr-cli -i
 echo "100 + 200" | numr-cli
 ```
 
+### JSON-RPC Server Mode
+
+Run numr as a backend for other tools (editors, launchers, scripts):
+
+```bash
+numr-cli --server
+```
+
+Send JSON-RPC 2.0 requests via stdin, receive responses via stdout:
+
+```bash
+echo '{"jsonrpc":"2.0","method":"eval","params":{"expr":"20% of 150"},"id":1}' | numr-cli --server
+# {"jsonrpc":"2.0","result":{"type":"number","value":30.0,"display":"30"},"id":1}
+```
+
+**Available methods:**
+
+| Method | Params | Description |
+|--------|--------|-------------|
+| `eval` | `{"expr": "..."}` | Evaluate expression |
+| `eval_lines` | `{"lines": [...]}` | Evaluate multiple lines |
+| `clear` | none | Clear state |
+| `get_totals` | none | Get grouped totals |
+| `get_variables` | none | List variables |
+| `reload_rates` | none | Refresh exchange rates |
+
 ## Keybindings (TUI)
 
 ### Normal Mode

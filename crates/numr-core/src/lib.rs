@@ -201,6 +201,16 @@ impl Engine {
         self.context.clear_variables();
     }
 
+    /// Get all user-defined variables (excludes 'total')
+    pub fn variables(&self) -> Vec<(String, Value)> {
+        self.context
+            .variables
+            .iter()
+            .filter(|(name, _)| *name != "total")
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
+    }
+
     /// Set an exchange rate
     pub fn set_exchange_rate(&mut self, from: Currency, to: Currency, rate: f64) {
         self.context.set_exchange_rate(from, to, rate);
