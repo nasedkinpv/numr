@@ -1,4 +1,6 @@
 use numr_core::{Engine, Value};
+use rust_decimal::Decimal;
+use std::str::FromStr;
 
 #[test]
 fn test_division_by_zero() {
@@ -47,13 +49,70 @@ fn test_unit_mismatch() {
 #[test]
 fn test_floating_point_precision() {
     let mut engine = Engine::new();
-    // 0.1 + 0.2 is notoriously 0.30000000000000004
+    // 0.1 + 0.2 is notoriously 0.30000000000000004 in f64
+    // But with rust_decimal, it should be EXACTLY 0.3
     let result = engine.eval("0.1 + 0.2");
-    if let Some(val) = result.as_f64() {
-        assert!((val - 0.3).abs() < 1e-10);
-    } else {
-        panic!("Expected number");
-    }
+
+    // Test using Decimal directly - should be exact
+    let decimal_val = result.as_decimal().expect("Expected Decimal");
+    let expected = Decimal::from_str("0.3").unwrap();
+    assert_eq!(
+        decimal_val, expected,
+        "Decimal precision: 0.1 + 0.2 should be exactly 0.3"
+    );
+
+    // f64 conversion still works for backwards compatibility
+    assert!((result.as_f64().unwrap() - 0.3).abs() < 1e-10);
+}
+
+#[test]
+fn test_decimal_precision_financial() {
+    let mut engine = Engine::new();
+
+    // Financial calculations that would accumulate errors with f64
+    // $19.99 * 3 should be exactly $59.97, not 59.970000000000006
+    let result = engine.eval("$19.99 * 3");
+    let decimal_val = result.as_decimal().expect("Expected Decimal");
+    let expected = Decimal::from_str("59.97").unwrap();
+    assert_eq!(decimal_val, expected, "Currency multiplication precision");
+
+    // Percentage calculations
+    // 15% of $199.99 = $29.9985, rounded displays as $30.00
+    let result = engine.eval("15% of $199.99");
+    let decimal_val = result.as_decimal().expect("Expected Decimal");
+    let expected = Decimal::from_str("29.9985").unwrap();
+    assert_eq!(decimal_val, expected, "Percentage calculation precision");
+}
+
+#[test]
+fn test_decimal_precision_accumulation() {
+    let mut engine = Engine::new();
+
+    // Adding 0.1 ten times should be exactly 1.0
+    engine.eval("a = 0.1");
+    let result = engine.eval("a + a + a + a + a + a + a + a + a + a");
+    let decimal_val = result.as_decimal().expect("Expected Decimal");
+    let expected = Decimal::ONE;
+    assert_eq!(
+        decimal_val, expected,
+        "Accumulated addition should be exact"
+    );
+}
+
+#[test]
+fn test_decimal_division_precision() {
+    let mut engine = Engine::new();
+
+    // 1 / 3 * 3 should give us back 1 (within representable precision)
+    let result = engine.eval("(1 / 3) * 3");
+    let decimal_val = result.as_decimal().expect("Expected Decimal");
+    // Note: 1/3 is a repeating decimal, so we can't expect exact 1.0
+    // but it should be very close
+    let diff = (decimal_val - Decimal::ONE).abs();
+    assert!(
+        diff < Decimal::from_str("0.0000000001").unwrap(),
+        "Division/multiplication should preserve precision: got {decimal_val}"
+    );
 }
 
 #[test]
@@ -98,8 +157,13 @@ fn test_complex_unit_conversions() {
 
     // Temperature: (100 C to F)
     // 100 * 9/5 + 32 = 180 + 32 = 212
+    // Note: Small precision loss from f64 conversion factors in UnitDef
     let res_temp = engine.eval("100 C in F");
-    assert_eq!(res_temp.as_f64(), Some(212.0));
+    let temp_val = res_temp.as_f64().unwrap();
+    assert!(
+        (temp_val - 212.0).abs() < 0.0001,
+        "Expected ~212, got {temp_val}"
+    );
 
     // Weight: 1 kg in g = 1000
     let res_weight = engine.eval("1 kg in g");

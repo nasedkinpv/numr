@@ -2,8 +2,16 @@
 
 use crate::types::{Currency, Unit};
 use pest::iterators::Pairs;
+use rust_decimal::Decimal;
+use std::str::FromStr;
 
 use super::Rule;
+
+/// Parse a number string, stripping comma separators (e.g., "1,234" -> 1234)
+fn parse_number_str(s: &str) -> Result<Decimal, String> {
+    let cleaned = s.replace(',', "");
+    Decimal::from_str(&cleaned).map_err(|e| format!("{e}"))
+}
 
 /// Top-level AST node for a line
 #[derive(Debug, Clone, PartialEq)]
@@ -20,13 +28,13 @@ pub enum Ast {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     /// Numeric literal
-    Number(f64),
-    /// Percentage literal (stored as decimal)
-    Percentage(f64),
+    Number(Decimal),
+    /// Percentage literal (stored as decimal, e.g., 20% = 0.20)
+    Percentage(Decimal),
     /// Currency value
-    Currency { amount: f64, currency: Currency },
+    Currency { amount: Decimal, currency: Currency },
     /// Value with unit
-    WithUnit { amount: f64, unit: Unit },
+    WithUnit { amount: Decimal, unit: Unit },
     /// Variable reference
     Variable(String),
     /// Binary operation
@@ -36,7 +44,10 @@ pub enum Expr {
         right: Box<Expr>,
     },
     /// Percentage of: 20% of 150
-    PercentageOf { percentage: f64, value: Box<Expr> },
+    PercentageOf {
+        percentage: Decimal,
+        value: Box<Expr>,
+    },
     /// Unit/currency conversion: 100$ in EUR
     Conversion {
         value: Box<Expr>,
@@ -139,13 +150,13 @@ fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, St
     for pair in pairs {
         match pair.as_rule() {
             Rule::number => {
-                let n: f64 = pair.as_str().parse().map_err(|e| format!("{e}"))?;
+                let n = parse_number_str(pair.as_str())?;
                 terms.push(Expr::Number(n));
             }
             Rule::percentage => {
                 let inner = pair.into_inner().next().ok_or("Expected number")?;
-                let n: f64 = inner.as_str().parse().map_err(|e| format!("{e}"))?;
-                terms.push(Expr::Percentage(n / 100.0));
+                let n = parse_number_str(inner.as_str())?;
+                terms.push(Expr::Percentage(n / Decimal::from(100)));
             }
             Rule::currency_value => {
                 let (amount, currency) = parse_currency_value(pair)?;
@@ -227,14 +238,16 @@ fn process_ops(terms: &mut Vec<Expr>, ops: &mut Vec<BinaryOp>, target_ops: &[Bin
     }
 }
 
-fn parse_currency_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<(f64, Currency), String> {
-    let mut amount = 0.0;
+fn parse_currency_value(
+    pair: pest::iterators::Pair<'_, Rule>,
+) -> Result<(Decimal, Currency), String> {
+    let mut amount = Decimal::ZERO;
     let mut currency = Currency::USD;
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::number => {
-                amount = inner.as_str().parse().map_err(|e| format!("{e}"))?;
+                amount = parse_number_str(inner.as_str())?;
             }
             Rule::currency_symbol => {
                 currency = Currency::parse(inner.as_str()).ok_or("Unknown currency")?;
@@ -249,7 +262,7 @@ fn parse_currency_value(pair: pest::iterators::Pair<'_, Rule>) -> Result<(f64, C
 fn parse_suffixed_number(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
     let mut inner = pair.into_inner();
     let num_pair = inner.next().ok_or("Expected number")?;
-    let amount: f64 = num_pair.as_str().parse().map_err(|e| format!("{e}"))?;
+    let amount = parse_number_str(num_pair.as_str())?;
 
     let suffix_pair = inner.next().ok_or("Expected identifier")?;
     let suffix = suffix_pair.as_str();
@@ -272,13 +285,13 @@ fn parse_percentage_of(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, St
     let mut inner = pair.into_inner();
     let pct_pair = inner.next().ok_or("Expected percentage")?;
     let pct_num = pct_pair.into_inner().next().ok_or("Expected number")?;
-    let percentage: f64 = pct_num.as_str().parse().map_err(|e| format!("{e}"))?;
+    let percentage = parse_number_str(pct_num.as_str())?;
 
     let value_pair = inner.next().ok_or("Expected value")?;
     let value = build_term(value_pair)?;
 
     Ok(Expr::PercentageOf {
-        percentage: percentage / 100.0,
+        percentage: percentage / Decimal::from(100),
         value: Box::new(value),
     })
 }
@@ -304,13 +317,13 @@ fn parse_function_call(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, St
 fn build_term(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
     match pair.as_rule() {
         Rule::number => {
-            let n: f64 = pair.as_str().parse().map_err(|e| format!("{e}"))?;
+            let n = parse_number_str(pair.as_str())?;
             Ok(Expr::Number(n))
         }
         Rule::percentage => {
             let inner = pair.into_inner().next().ok_or("Expected number")?;
-            let n: f64 = inner.as_str().parse().map_err(|e| format!("{e}"))?;
-            Ok(Expr::Percentage(n / 100.0))
+            let n = parse_number_str(inner.as_str())?;
+            Ok(Expr::Percentage(n / Decimal::from(100)))
         }
         Rule::currency_value => {
             let (amount, currency) = parse_currency_value(pair)?;

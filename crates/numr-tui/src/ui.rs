@@ -1,7 +1,7 @@
 //! Minimal UI rendering
 
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Position, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Paragraph, Wrap},
@@ -31,7 +31,6 @@ pub mod palette {
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
-    // Calculate the width needed for results column (fit to content)
     // Calculate the width needed for results column (fit to content)
     let content_width = app
         .results
@@ -145,6 +144,10 @@ fn draw_wrapped_content(
     app.viewport_height = area.height as usize;
     app.ensure_cursor_visible();
 
+    // Calculate cursor screen position for later
+    let (cursor_row_in_line, cursor_x_in_row) = app.get_cursor_wrapped_position();
+    let mut cursor_set = false;
+
     let mut current_visual_row = 0;
     let mut rendered_height = 0;
 
@@ -210,18 +213,29 @@ fn draw_wrapped_content(
                 }
 
                 // Render input with wrap
-                let highlighted = if line_idx == app.cursor_y {
-                    highlight_line_with_cursor(line, app.cursor_x)
-                } else {
-                    highlight_line(line)
-                };
-
-                // We use scroll to handle partial visibility
-                let input_para = Paragraph::new(highlighted)
+                let input_para = Paragraph::new(highlight_line(line))
                     .wrap(Wrap { trim: false })
                     .scroll((skip_rows, 0));
 
                 frame.render_widget(input_para, input_area);
+
+                // Set cursor position if this is the cursor line
+                if !cursor_set && line_idx == app.cursor_y {
+                    let cursor_visual_row_in_area = cursor_row_in_line as u16;
+                    if cursor_visual_row_in_area >= skip_rows
+                        && cursor_visual_row_in_area < skip_rows + visible_rows
+                    {
+                        let screen_y = input_area.y + (cursor_visual_row_in_area - skip_rows);
+                        let screen_x = input_area.x + cursor_x_in_row as u16;
+                        if screen_x < input_area.x + input_area.width {
+                            frame.set_cursor_position(Position {
+                                x: screen_x,
+                                y: screen_y,
+                            });
+                            cursor_set = true;
+                        }
+                    }
+                }
 
                 // Render result bottom-aligned (on the last row of this area)
                 // Only show result if we are showing the bottom of the line
@@ -277,22 +291,21 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &mut App) {
     app.viewport_height = area.height as usize;
     app.ensure_cursor_visible();
 
-    let lines: Vec<Line> = app
-        .lines
-        .iter()
-        .enumerate()
-        .map(|(i, line)| {
-            if i == app.cursor_y {
-                highlight_line_with_cursor(line, app.cursor_x)
-            } else {
-                highlight_line(line)
-            }
-        })
-        .collect();
+    let lines: Vec<Line> = app.lines.iter().map(|line| highlight_line(line)).collect();
 
-    // scroll((row, col)) = (vertical_offset, horizontal_offset)
     let paragraph = Paragraph::new(lines).scroll((app.viewport_y as u16, app.viewport_x as u16));
     frame.render_widget(paragraph, area);
+
+    // Set terminal cursor position
+    let cursor_screen_x = area.x + (app.cursor_x.saturating_sub(app.viewport_x)) as u16;
+    let cursor_screen_y = area.y + (app.cursor_y.saturating_sub(app.viewport_y)) as u16;
+
+    if cursor_screen_x < area.x + area.width && cursor_screen_y < area.y + area.height {
+        frame.set_cursor_position(Position {
+            x: cursor_screen_x,
+            y: cursor_screen_y,
+        });
+    }
 }
 
 fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
@@ -563,53 +576,6 @@ fn build_hints_line(app: &App) -> Vec<Span<'static>> {
 /// Syntax highlighting for a line
 fn highlight_line(input: &str) -> Line<'static> {
     Line::from(tokenize_and_style(input))
-}
-
-/// Syntax highlighting with cursor
-fn highlight_line_with_cursor(input: &str, cursor_col: usize) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let styled_spans = tokenize_and_style(input);
-
-    let mut current_pos = 0;
-    let mut cursor_handled = false;
-
-    for span in styled_spans {
-        let span_chars: Vec<char> = span.content.chars().collect();
-        let span_len = span_chars.len();
-
-        if !cursor_handled && cursor_col >= current_pos && cursor_col < current_pos + span_len {
-            let local_pos = cursor_col - current_pos;
-
-            if local_pos > 0 {
-                let before: String = span_chars[..local_pos].iter().collect();
-                spans.push(Span::styled(before, span.style));
-            }
-
-            let cursor_char = span_chars.get(local_pos).copied().unwrap_or(' ');
-            spans.push(Span::styled(
-                cursor_char.to_string(),
-                Style::new().bg(Color::White).fg(Color::Black),
-            ));
-
-            if local_pos + 1 < span_len {
-                let after: String = span_chars[local_pos + 1..].iter().collect();
-                spans.push(Span::styled(after, span.style));
-            }
-            cursor_handled = true;
-        } else {
-            spans.push(span);
-        }
-        current_pos += span_len;
-    }
-
-    if !cursor_handled {
-        spans.push(Span::styled(
-            " ",
-            Style::new().bg(Color::White).fg(Color::Black),
-        ));
-    }
-
-    Line::from(spans)
 }
 
 fn token_color(token_type: TokenType) -> Color {

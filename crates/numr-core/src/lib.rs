@@ -25,6 +25,9 @@
 //! assert_eq!(result.as_f64(), Some(30.0));
 //! ```
 
+use rust_decimal::prelude::FromPrimitive;
+use std::str::FromStr;
+
 pub mod cache;
 pub mod eval;
 pub mod parser;
@@ -36,6 +39,24 @@ pub mod fetch;
 pub use eval::EvalContext;
 pub use parser::{parse_line, Ast, BinaryOp, Expr};
 pub use types::{Currency, CurrencyDef, Unit, UnitDef, UnitType, Value, CURRENCIES, UNITS};
+
+// Re-export Decimal for tests and external use
+pub use rust_decimal::Decimal;
+
+/// Parse a string into a Decimal. Convenience for tests.
+///
+/// # Panics
+/// Panics if the string is not a valid decimal number.
+///
+/// # Example
+/// ```
+/// use numr_core::decimal;
+/// let d = decimal("123.45");
+/// assert_eq!(d.to_string(), "123.45");
+/// ```
+pub fn decimal(s: &str) -> Decimal {
+    Decimal::from_str(s).expect("Invalid decimal string")
+}
 
 #[cfg(feature = "fetch")]
 pub use fetch::fetch_rates;
@@ -92,7 +113,11 @@ impl Engine {
 
     /// Get the sum of all computed values (as plain number)
     pub fn sum(&self) -> Value {
-        let total: f64 = self.lines.iter().filter_map(|lr| lr.value.as_f64()).sum();
+        let total: Decimal = self
+            .lines
+            .iter()
+            .filter_map(|lr| lr.value.as_decimal())
+            .sum();
         Value::Number(total)
     }
 
@@ -103,8 +128,8 @@ impl Engine {
     pub fn grouped_totals(&self) -> Vec<Value> {
         use std::collections::HashMap;
 
-        let mut currency_amounts: Vec<(Currency, f64)> = Vec::new();
-        let mut unit_totals: HashMap<Unit, f64> = HashMap::new();
+        let mut currency_amounts: Vec<(Currency, Decimal)> = Vec::new();
+        let mut unit_totals: HashMap<Unit, Decimal> = HashMap::new();
         let mut last_unit_by_type: HashMap<types::UnitType, Unit> = HashMap::new();
 
         // Collect all values, tracking last used currency/unit
@@ -114,7 +139,7 @@ impl Engine {
                     currency_amounts.push((*currency, *amount));
                 }
                 Value::WithUnit { amount, unit } => {
-                    *unit_totals.entry(*unit).or_insert(0.0) += amount;
+                    *unit_totals.entry(*unit).or_insert(Decimal::ZERO) += amount;
                     last_unit_by_type.insert(unit.unit_type(), *unit);
                 }
                 Value::Number(_) | Value::Percentage(_) | Value::Empty | Value::Error(_) => {}
@@ -126,7 +151,7 @@ impl Engine {
         // Sum all currencies, converting to the last used currency
         if !currency_amounts.is_empty() {
             let target_currency = currency_amounts.last().unwrap().0;
-            let mut total_in_target = 0.0;
+            let mut total_in_target = Decimal::ZERO;
 
             for (currency, amount) in &currency_amounts {
                 if *currency == target_currency {
@@ -141,7 +166,7 @@ impl Engine {
                 }
             }
 
-            if total_in_target != 0.0 {
+            if !total_in_target.is_zero() {
                 result.push(Value::Currency {
                     amount: total_in_target,
                     currency: target_currency,
@@ -150,7 +175,7 @@ impl Engine {
         }
 
         // Group units by type and convert to last used unit of that type
-        let mut unit_by_type: HashMap<types::UnitType, f64> = HashMap::new();
+        let mut unit_by_type: HashMap<types::UnitType, Decimal> = HashMap::new();
         for (unit, amount) in &unit_totals {
             let unit_type = unit.unit_type();
             let target_unit = last_unit_by_type.get(&unit_type).unwrap_or(unit);
@@ -165,12 +190,12 @@ impl Engine {
                 *amount // Can't convert, keep as is
             };
 
-            *unit_by_type.entry(unit_type).or_insert(0.0) += converted;
+            *unit_by_type.entry(unit_type).or_insert(Decimal::ZERO) += converted;
         }
 
         // Add unit totals (one per unit type, using last used unit)
         for (unit_type, amount) in unit_by_type {
-            if amount != 0.0 {
+            if !amount.is_zero() {
                 if let Some(&unit) = last_unit_by_type.get(&unit_type) {
                     result.push(Value::WithUnit { amount, unit });
                 }
@@ -212,8 +237,15 @@ impl Engine {
     }
 
     /// Set an exchange rate
-    pub fn set_exchange_rate(&mut self, from: Currency, to: Currency, rate: f64) {
+    pub fn set_exchange_rate(&mut self, from: Currency, to: Currency, rate: Decimal) {
         self.context.set_exchange_rate(from, to, rate);
+    }
+
+    /// Set an exchange rate from f64 (convenience for API compatibility)
+    pub fn set_exchange_rate_f64(&mut self, from: Currency, to: Currency, rate: f64) {
+        if let Some(decimal_rate) = Decimal::from_f64(rate) {
+            self.context.set_exchange_rate(from, to, decimal_rate);
+        }
     }
 
     /// Apply raw rates from API response (delegates to rate cache)
@@ -241,6 +273,7 @@ impl Default for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_engine_basic() {
@@ -270,7 +303,11 @@ mod tests {
     fn test_grouped_totals() {
         let mut engine = Engine::new();
         // Set explicit rate for test: 1 USD = 0.92 EUR, so 1 EUR = 1.087 USD
-        engine.set_exchange_rate(Currency::USD, Currency::EUR, 0.92);
+        engine.set_exchange_rate(
+            Currency::USD,
+            Currency::EUR,
+            Decimal::from_str("0.92").unwrap(),
+        );
 
         engine.eval("$100");
         engine.eval("$50");
@@ -284,22 +321,29 @@ mod tests {
 
         // All currencies converted to EUR (last used)
         // $150 = €138 (150 * 0.92) + €200 = €338
+        let expected_eur = Decimal::from(338);
         assert!(totals.iter().any(|v| matches!(v,
             Value::Currency { amount, currency }
-            if *currency == Currency::EUR && (*amount - 338.0).abs() < 1.0
+            if *currency == Currency::EUR && (*amount - expected_eur).abs() < Decimal::ONE
         )));
 
         // Length: 1000 m + 5 km = 1 km + 5 km = 6 km (last unit is km)
+        let expected_km = Decimal::from(6);
+        let tolerance = Decimal::from_str("0.01").unwrap();
         assert!(totals.iter().any(|v| matches!(v,
             Value::WithUnit { amount, unit }
-            if *unit == Unit::Kilometer && (*amount - 6.0).abs() < 0.01
+            if *unit == Unit::Kilometer && (*amount - expected_km).abs() < tolerance
         )));
     }
 
     #[test]
     fn test_grouped_totals_last_currency() {
         let mut engine = Engine::new();
-        engine.set_exchange_rate(Currency::USD, Currency::EUR, 0.92);
+        engine.set_exchange_rate(
+            Currency::USD,
+            Currency::EUR,
+            Decimal::from_str("0.92").unwrap(),
+        );
 
         engine.eval("€100");
         engine.eval("$50"); // Last is USD, so total in USD
@@ -307,9 +351,10 @@ mod tests {
         let totals = engine.grouped_totals();
 
         // €100 = $108.70 (100 / 0.92) + $50 = $158.70
+        let expected_usd = Decimal::from_str("158.70").unwrap();
         assert!(totals.iter().any(|v| matches!(v,
             Value::Currency { amount, currency }
-            if *currency == Currency::USD && (*amount - 158.70).abs() < 1.0
+            if *currency == Currency::USD && (*amount - expected_usd).abs() < Decimal::ONE
         )));
     }
 }

@@ -351,6 +351,38 @@ impl App {
         visual_row
     }
 
+    /// Get cursor position within wrapped line: (row_offset_within_line, x_position)
+    /// row_offset_within_line: which visual row within the current line (0 = first row)
+    /// x_position: character position within that wrapped row
+    pub fn get_cursor_wrapped_position(&self) -> (usize, usize) {
+        if self.viewport_width == 0 {
+            return (0, self.cursor_x);
+        }
+
+        let line = &self.lines[self.cursor_y];
+        let options = Options::new(self.viewport_width)
+            .break_words(true)
+            .word_splitter(WordSplitter::NoHyphenation);
+        let wrapped = wrap(line, options);
+
+        if wrapped.is_empty() {
+            return (0, self.cursor_x);
+        }
+
+        let mut current_len = 0;
+        for (idx, part) in wrapped.iter().enumerate() {
+            let part_len = part.chars().count();
+            if self.cursor_x <= current_len + part_len {
+                return (idx, self.cursor_x - current_len);
+            }
+            current_len += part_len;
+        }
+        // Cursor is past the end
+        let last_row = wrapped.len().saturating_sub(1);
+        let last_len = wrapped.last().map(|s| s.chars().count()).unwrap_or(0);
+        (last_row, last_len)
+    }
+
     /// Ensure cursor is visible in viewport (both vertical and horizontal)
     pub fn ensure_cursor_visible(&mut self) {
         if self.wrap_mode {
@@ -530,5 +562,36 @@ mod tests {
             ..Default::default()
         };
         assert!(app.get_wrapped_height("hello world") >= 2);
+    }
+
+    #[test]
+    fn test_get_cursor_wrapped_position() {
+        // "hello world" with width 6 wraps to:
+        // Row 0: "hello " (6 chars)
+        // Row 1: "world" (5 chars)
+        let mut app = App {
+            viewport_width: 6,
+            lines: vec!["hello world".to_string()],
+            cursor_y: 0,
+            cursor_x: 0,
+            ..Default::default()
+        };
+
+        // Cursor at start
+        assert_eq!(app.get_cursor_wrapped_position(), (0, 0));
+
+        // Cursor at position 5 (at space in "hello ")
+        app.cursor_x = 5;
+        assert_eq!(app.get_cursor_wrapped_position(), (0, 5));
+
+        // Cursor at position 6 (start of "world") - should be on second row
+        app.cursor_x = 6;
+        let (row, _col) = app.get_cursor_wrapped_position();
+        assert_eq!(row, 1, "cursor_x=6 should be on row 1");
+
+        // Cursor at position 8 (in "world")
+        app.cursor_x = 8;
+        let (row, _col) = app.get_cursor_wrapped_position();
+        assert_eq!(row, 1, "cursor_x=8 should be on row 1");
     }
 }
