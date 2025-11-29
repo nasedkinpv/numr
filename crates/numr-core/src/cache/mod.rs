@@ -5,6 +5,8 @@
 
 use crate::types::Currency;
 use directories::ProjectDirs;
+use rust_decimal::prelude::FromPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -26,7 +28,7 @@ struct CachedRates {
 /// Cache for exchange rates
 #[derive(Clone)]
 pub struct RateCache {
-    pub(crate) rates: HashMap<(Currency, Currency), f64>,
+    pub(crate) rates: HashMap<(Currency, Currency), Decimal>,
 }
 
 impl RateCache {
@@ -37,18 +39,18 @@ impl RateCache {
     }
 
     /// Set an exchange rate
-    pub fn set_rate(&mut self, from: Currency, to: Currency, rate: f64) {
+    pub fn set_rate(&mut self, from: Currency, to: Currency, rate: Decimal) {
         self.rates.insert((from, to), rate);
         // Also store the inverse rate
-        if rate != 0.0 {
-            self.rates.insert((to, from), 1.0 / rate);
+        if !rate.is_zero() {
+            self.rates.insert((to, from), Decimal::ONE / rate);
         }
     }
 
     /// Get an exchange rate (uses BFS to find conversion path)
-    pub fn get_rate(&self, from: Currency, to: Currency) -> Option<f64> {
+    pub fn get_rate(&self, from: Currency, to: Currency) -> Option<Decimal> {
         if from == to {
-            return Some(1.0);
+            return Some(Decimal::ONE);
         }
 
         // BFS to find conversion path
@@ -58,7 +60,7 @@ impl RateCache {
 
         queue.push_back(from);
         visited.insert(from);
-        distances.insert(from, 1.0);
+        distances.insert(from, Decimal::ONE);
 
         while let Some(current) = queue.pop_front() {
             if current == to {
@@ -162,12 +164,14 @@ impl RateCache {
     pub fn apply_raw_rates(&mut self, raw_rates: &HashMap<String, f64>) {
         for (code, rate) in raw_rates {
             if let Ok(currency) = code.parse::<Currency>() {
-                if currency.is_crypto() {
-                    // Crypto: 1 TOKEN = X USD
-                    self.set_rate(currency, Currency::USD, *rate);
-                } else {
-                    // Fiat: 1 USD = X currency
-                    self.set_rate(Currency::USD, currency, *rate);
+                if let Some(decimal_rate) = Decimal::from_f64(*rate) {
+                    if currency.is_crypto() {
+                        // Crypto: 1 TOKEN = X USD
+                        self.set_rate(currency, Currency::USD, decimal_rate);
+                    } else {
+                        // Fiat: 1 USD = X currency
+                        self.set_rate(Currency::USD, currency, decimal_rate);
+                    }
                 }
             }
         }
@@ -175,37 +179,42 @@ impl RateCache {
 
     /// Load default/fallback rates (for offline use when no cache exists)
     pub fn load_defaults(&mut self) {
+        use std::str::FromStr;
+
+        // Helper to create Decimal from string
+        let d = |s: &str| Decimal::from_str(s).unwrap();
+
         // Fiat rates (1 USD = X currency) - approximate values
-        self.set_rate(Currency::USD, Currency::EUR, 0.92);
-        self.set_rate(Currency::USD, Currency::GBP, 0.79);
-        self.set_rate(Currency::USD, Currency::JPY, 150.0);
-        self.set_rate(Currency::USD, Currency::CHF, 0.88);
-        self.set_rate(Currency::USD, Currency::CNY, 7.25);
-        self.set_rate(Currency::USD, Currency::CAD, 1.40);
-        self.set_rate(Currency::USD, Currency::AUD, 1.55);
-        self.set_rate(Currency::USD, Currency::INR, 84.0);
-        self.set_rate(Currency::USD, Currency::KRW, 1400.0);
-        self.set_rate(Currency::USD, Currency::RUB, 92.0);
-        self.set_rate(Currency::USD, Currency::ILS, 3.65);
-        self.set_rate(Currency::USD, Currency::PLN, 4.0);
-        self.set_rate(Currency::USD, Currency::UAH, 41.0);
+        self.set_rate(Currency::USD, Currency::EUR, d("0.92"));
+        self.set_rate(Currency::USD, Currency::GBP, d("0.79"));
+        self.set_rate(Currency::USD, Currency::JPY, d("150"));
+        self.set_rate(Currency::USD, Currency::CHF, d("0.88"));
+        self.set_rate(Currency::USD, Currency::CNY, d("7.25"));
+        self.set_rate(Currency::USD, Currency::CAD, d("1.40"));
+        self.set_rate(Currency::USD, Currency::AUD, d("1.55"));
+        self.set_rate(Currency::USD, Currency::INR, d("84"));
+        self.set_rate(Currency::USD, Currency::KRW, d("1400"));
+        self.set_rate(Currency::USD, Currency::RUB, d("92"));
+        self.set_rate(Currency::USD, Currency::ILS, d("3.65"));
+        self.set_rate(Currency::USD, Currency::PLN, d("4"));
+        self.set_rate(Currency::USD, Currency::UAH, d("41"));
 
         // Crypto rates (1 TOKEN = X USD) - approximate values
-        self.set_rate(Currency::BTC, Currency::USD, 95000.0);
-        self.set_rate(Currency::ETH, Currency::USD, 3500.0);
-        self.set_rate(Currency::SOL, Currency::USD, 150.0);
-        self.set_rate(Currency::USDT, Currency::USD, 1.0);
-        self.set_rate(Currency::USDC, Currency::USD, 1.0);
-        self.set_rate(Currency::BNB, Currency::USD, 650.0);
-        self.set_rate(Currency::XRP, Currency::USD, 1.5);
-        self.set_rate(Currency::ADA, Currency::USD, 1.0);
-        self.set_rate(Currency::DOGE, Currency::USD, 0.40);
-        self.set_rate(Currency::DOT, Currency::USD, 8.0);
-        self.set_rate(Currency::LTC, Currency::USD, 100.0);
-        self.set_rate(Currency::LINK, Currency::USD, 18.0);
-        self.set_rate(Currency::AVAX, Currency::USD, 45.0);
-        self.set_rate(Currency::MATIC, Currency::USD, 0.55);
-        self.set_rate(Currency::TON, Currency::USD, 6.0);
+        self.set_rate(Currency::BTC, Currency::USD, d("95000"));
+        self.set_rate(Currency::ETH, Currency::USD, d("3500"));
+        self.set_rate(Currency::SOL, Currency::USD, d("150"));
+        self.set_rate(Currency::USDT, Currency::USD, d("1"));
+        self.set_rate(Currency::USDC, Currency::USD, d("1"));
+        self.set_rate(Currency::BNB, Currency::USD, d("650"));
+        self.set_rate(Currency::XRP, Currency::USD, d("1.5"));
+        self.set_rate(Currency::ADA, Currency::USD, d("1"));
+        self.set_rate(Currency::DOGE, Currency::USD, d("0.40"));
+        self.set_rate(Currency::DOT, Currency::USD, d("8"));
+        self.set_rate(Currency::LTC, Currency::USD, d("100"));
+        self.set_rate(Currency::LINK, Currency::USD, d("18"));
+        self.set_rate(Currency::AVAX, Currency::USD, d("45"));
+        self.set_rate(Currency::MATIC, Currency::USD, d("0.55"));
+        self.set_rate(Currency::TON, Currency::USD, d("6"));
     }
 }
 
@@ -224,20 +233,31 @@ impl Default for RateCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_rate_cache() {
         let mut cache = RateCache::new();
-        cache.set_rate(Currency::USD, Currency::EUR, 0.92);
+        cache.set_rate(
+            Currency::USD,
+            Currency::EUR,
+            Decimal::from_str("0.92").unwrap(),
+        );
 
-        assert_eq!(cache.get_rate(Currency::USD, Currency::EUR), Some(0.92));
+        assert_eq!(
+            cache.get_rate(Currency::USD, Currency::EUR),
+            Some(Decimal::from_str("0.92").unwrap())
+        );
         assert!(cache.get_rate(Currency::EUR, Currency::USD).is_some());
     }
 
     #[test]
     fn test_same_currency() {
         let cache = RateCache::new();
-        assert_eq!(cache.get_rate(Currency::USD, Currency::USD), Some(1.0));
+        assert_eq!(
+            cache.get_rate(Currency::USD, Currency::USD),
+            Some(Decimal::ONE)
+        );
     }
 
     #[test]

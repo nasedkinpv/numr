@@ -1,19 +1,20 @@
 //! Core value representation
 
 use super::{Currency, Unit};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 /// A computed value with optional unit/currency
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     /// Plain number
-    Number(f64),
+    Number(Decimal),
     /// Percentage (stored as decimal, e.g., 0.20 for 20%)
-    Percentage(f64),
+    Percentage(Decimal),
     /// Value with currency
-    Currency { amount: f64, currency: Currency },
+    Currency { amount: Decimal, currency: Currency },
     /// Value with unit
-    WithUnit { amount: f64, unit: Unit },
+    WithUnit { amount: Decimal, unit: Unit },
     /// No value (empty line or comment)
     Empty,
     /// Error during evaluation
@@ -22,27 +23,27 @@ pub enum Value {
 
 impl Value {
     /// Create a new number value
-    pub fn number(n: f64) -> Self {
+    pub fn number(n: Decimal) -> Self {
         Value::Number(n)
     }
 
-    /// Create a new percentage value (input as percentage, e.g., 20 for 20%)
-    pub fn percentage(p: f64) -> Self {
-        Value::Percentage(p / 100.0)
+    /// Create a new percentage value (input as decimal, e.g., 0.20 for 20%)
+    pub fn percentage(p: Decimal) -> Self {
+        Value::Percentage(p)
     }
 
     /// Create a currency value
-    pub fn currency(amount: f64, currency: Currency) -> Self {
+    pub fn currency(amount: Decimal, currency: Currency) -> Self {
         Value::Currency { amount, currency }
     }
 
     /// Create a value with unit
-    pub fn with_unit(amount: f64, unit: Unit) -> Self {
+    pub fn with_unit(amount: Decimal, unit: Unit) -> Self {
         Value::WithUnit { amount, unit }
     }
 
-    /// Get the numeric value, ignoring units
-    pub fn as_f64(&self) -> Option<f64> {
+    /// Get the numeric value as Decimal, ignoring units
+    pub fn as_decimal(&self) -> Option<Decimal> {
         match self {
             Value::Number(n) => Some(*n),
             Value::Percentage(p) => Some(*p),
@@ -50,6 +51,12 @@ impl Value {
             Value::WithUnit { amount, .. } => Some(*amount),
             Value::Empty | Value::Error(_) => None,
         }
+    }
+
+    /// Get the numeric value as f64 (for backwards compatibility)
+    pub fn as_f64(&self) -> Option<f64> {
+        use rust_decimal::prelude::ToPrimitive;
+        self.as_decimal().and_then(|d| d.to_f64())
     }
 
     /// Check if value is empty
@@ -67,7 +74,7 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Number(n) => write!(f, "{}", format_number(*n)),
-            Value::Percentage(p) => write!(f, "{}%", format_number(p * 100.0)),
+            Value::Percentage(p) => write!(f, "{}%", format_number(*p * Decimal::from(100))),
             Value::Currency { amount, currency } => {
                 let formatted = format_currency(*amount);
                 if currency.symbol_after() {
@@ -86,31 +93,32 @@ impl std::fmt::Display for Value {
 }
 
 /// Format a number nicely (max 2 decimal places, remove trailing zeros only if integer)
-fn format_number(n: f64) -> String {
-    if n.fract() == 0.0 {
-        format!("{n:.0}")
+fn format_number(n: Decimal) -> String {
+    let rounded = n.round_dp(2);
+    if rounded.fract().is_zero() {
+        format!("{}", rounded.trunc())
     } else {
-        // Round to 2 decimal places and ensure 2 decimal places are shown
-        let rounded = (n * 100.0).round() / 100.0;
-        format!("{rounded:.2}")
+        format!("{:.2}", rounded)
     }
 }
 
 /// Format currency amount (always 2 decimal places)
-fn format_currency(n: f64) -> String {
-    let rounded = (n * 100.0).round() / 100.0;
-    format!("{rounded:.2}")
+fn format_currency(n: Decimal) -> String {
+    format!("{:.2}", n.round_dp(2))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
-    #[allow(clippy::approx_constant)]
     fn test_format_number() {
-        assert_eq!(format_number(42.0), "42");
-        assert_eq!(format_number(3.14), "3.14");
-        assert_eq!(format_number(100.500), "100.50");
+        assert_eq!(format_number(Decimal::from(42)), "42");
+        assert_eq!(format_number(Decimal::from_str("3.14").unwrap()), "3.14");
+        assert_eq!(
+            format_number(Decimal::from_str("100.500").unwrap()),
+            "100.50"
+        );
     }
 }

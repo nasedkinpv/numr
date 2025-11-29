@@ -2,6 +2,9 @@
 
 use std::collections::HashMap;
 
+use rust_decimal::Decimal;
+use rust_decimal::MathematicalOps;
+
 use crate::cache::RateCache;
 use crate::parser::{Ast, BinaryOp, Expr};
 use crate::types::{unit, Currency, Unit, Value};
@@ -22,7 +25,7 @@ impl EvalContext {
     }
 
     /// Set exchange rates (for testing or offline mode)
-    pub fn set_exchange_rate(&mut self, from: Currency, to: Currency, rate: f64) {
+    pub fn set_exchange_rate(&mut self, from: Currency, to: Currency, rate: Decimal) {
         self.rate_cache.set_rate(from, to, rate);
     }
 
@@ -108,31 +111,32 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
 fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) -> Value {
     // Handle percentage in operations (e.g., 100 + 20% = 120)
     if let Value::Percentage(p) = right {
-        if let Some(base) = left.as_f64() {
+        if let Some(base) = left.as_decimal() {
+            let one = Decimal::ONE;
             return match op {
                 BinaryOp::Add => match &left {
                     Value::Currency { currency, .. } => {
-                        Value::currency(base * (1.0 + p), *currency)
+                        Value::currency(base * (one + p), *currency)
                     }
-                    Value::WithUnit { unit, .. } => Value::with_unit(base * (1.0 + p), *unit),
-                    _ => Value::Number(base * (1.0 + p)),
+                    Value::WithUnit { unit, .. } => Value::with_unit(base * (one + p), *unit),
+                    _ => Value::Number(base * (one + p)),
                 },
                 BinaryOp::Subtract => match &left {
                     Value::Currency { currency, .. } => {
-                        Value::currency(base * (1.0 - p), *currency)
+                        Value::currency(base * (one - p), *currency)
                     }
-                    Value::WithUnit { unit, .. } => Value::with_unit(base * (1.0 - p), *unit),
-                    _ => Value::Number(base * (1.0 - p)),
+                    Value::WithUnit { unit, .. } => Value::with_unit(base * (one - p), *unit),
+                    _ => Value::Number(base * (one - p)),
                 },
                 BinaryOp::Multiply => Value::Number(base * p),
                 BinaryOp::Divide => {
-                    if p == 0.0 {
+                    if p.is_zero() {
                         Value::Error("Division by zero".to_string())
                     } else {
                         Value::Number(base / p)
                     }
                 }
-                BinaryOp::Power => Value::Number(base.powf(p)),
+                BinaryOp::Power => Value::Number(base.powd(p)),
             };
         }
     }
@@ -208,7 +212,7 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
                 return Value::Error(format!("Cannot convert {ru} to {lu}"));
             }
         }
-        _ => match (left.as_f64(), right.as_f64()) {
+        _ => match (left.as_decimal(), right.as_decimal()) {
             (Some(l), Some(r)) => {
                 let c = if let Value::Currency { currency, .. } = left {
                     Some(currency)
@@ -231,12 +235,12 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
         BinaryOp::Subtract => l_val - r_val,
         BinaryOp::Multiply => l_val * r_val,
         BinaryOp::Divide => {
-            if r_val == 0.0 {
+            if r_val.is_zero() {
                 return Value::Error("Division by zero".to_string());
             }
             l_val / r_val
         }
-        BinaryOp::Power => l_val.powf(r_val),
+        BinaryOp::Power => l_val.powd(r_val),
     };
 
     if let Some(c) = final_currency {
@@ -294,27 +298,28 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
 fn eval_function(name: &str, args: &[Value]) -> Value {
     match name.to_lowercase().as_str() {
         "sum" | "total" => {
-            let sum: f64 = args.iter().filter_map(|v| v.as_f64()).sum();
+            let sum: Decimal = args.iter().filter_map(|v| v.as_decimal()).sum();
             Value::Number(sum)
         }
         "avg" | "average" => {
-            let values: Vec<f64> = args.iter().filter_map(|v| v.as_f64()).collect();
+            let values: Vec<Decimal> = args.iter().filter_map(|v| v.as_decimal()).collect();
             if values.is_empty() {
-                Value::Number(0.0)
+                Value::Number(Decimal::ZERO)
             } else {
-                Value::Number(values.iter().sum::<f64>() / values.len() as f64)
+                let len = Decimal::from(values.len());
+                Value::Number(values.iter().sum::<Decimal>() / len)
             }
         }
         "min" => args
             .iter()
-            .filter_map(|v| v.as_f64())
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .filter_map(|v| v.as_decimal())
+            .min()
             .map(Value::Number)
             .unwrap_or(Value::Error("No values for min".to_string())),
         "max" => args
             .iter()
-            .filter_map(|v| v.as_f64())
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .filter_map(|v| v.as_decimal())
+            .max()
             .map(Value::Number)
             .unwrap_or(Value::Error("No values for max".to_string())),
         "abs" => {
@@ -326,8 +331,8 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
         }
         "sqrt" => {
             if let Some(Value::Number(n)) = args.first() {
-                if *n >= 0.0 {
-                    Value::Number(n.sqrt())
+                if !n.is_sign_negative() {
+                    Value::Number(n.sqrt().unwrap_or(Decimal::ZERO))
                 } else {
                     Value::Error("Cannot take sqrt of negative number".to_string())
                 }

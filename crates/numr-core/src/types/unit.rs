@@ -3,6 +3,8 @@
 //! To add a new unit, simply add an entry to the UNITS array.
 //! All parsing, display, and highlighting will automatically pick it up.
 
+use rust_decimal::prelude::FromPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -302,14 +304,14 @@ impl Unit {
         }
     }
 
-    /// Conversion factor to base unit
-    pub fn to_base_factor(&self) -> f64 {
-        self.def().to_base_factor
+    /// Conversion factor to base unit (as Decimal)
+    pub fn to_base_factor(&self) -> Decimal {
+        Decimal::from_f64(self.def().to_base_factor).unwrap_or(Decimal::ONE)
     }
 
-    /// Offset to base unit
-    pub fn to_base_offset(&self) -> f64 {
-        self.def().to_base_offset
+    /// Offset to base unit (as Decimal)
+    pub fn to_base_offset(&self) -> Decimal {
+        Decimal::from_f64(self.def().to_base_offset).unwrap_or(Decimal::ZERO)
     }
 
     /// Get short display name
@@ -349,7 +351,7 @@ impl fmt::Display for Unit {
 }
 
 /// Convert a value from one unit to another
-pub fn convert(value: f64, from: Unit, to: Unit) -> Option<f64> {
+pub fn convert(value: Decimal, from: Unit, to: Unit) -> Option<Decimal> {
     if from.unit_type() != to.unit_type() {
         return None; // Can't convert between different unit types
     }
@@ -364,25 +366,27 @@ pub fn convert(value: f64, from: Unit, to: Unit) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_length_conversion() {
-        let km_to_m = convert(1.0, Unit::Kilometer, Unit::Meter);
-        assert_eq!(km_to_m, Some(1000.0));
+        let km_to_m = convert(Decimal::ONE, Unit::Kilometer, Unit::Meter);
+        assert_eq!(km_to_m, Some(Decimal::from(1000)));
 
-        let mi_to_km = convert(1.0, Unit::Mile, Unit::Kilometer);
-        assert!((mi_to_km.unwrap() - 1.609344).abs() < 0.0001);
+        let mi_to_km = convert(Decimal::ONE, Unit::Mile, Unit::Kilometer);
+        let expected = Decimal::from_str("1.609344").unwrap();
+        assert!((mi_to_km.unwrap() - expected).abs() < Decimal::from_str("0.0001").unwrap());
     }
 
     #[test]
     fn test_time_conversion() {
-        let hours_to_min = convert(2.0, Unit::Hour, Unit::Minute);
-        assert_eq!(hours_to_min, Some(120.0));
+        let hours_to_min = convert(Decimal::from(2), Unit::Hour, Unit::Minute);
+        assert_eq!(hours_to_min, Some(Decimal::from(120)));
     }
 
     #[test]
     fn test_incompatible_units() {
-        let result = convert(1.0, Unit::Kilometer, Unit::Kilogram);
+        let result = convert(Decimal::ONE, Unit::Kilometer, Unit::Kilogram);
         assert_eq!(result, None);
     }
 
