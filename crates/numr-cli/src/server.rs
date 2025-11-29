@@ -41,7 +41,7 @@ struct EvalResult {
     #[serde(rename = "type")]
     result_type: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    value: Option<f64>,
+    value: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     unit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -102,28 +102,28 @@ fn value_to_result(value: &Value) -> EvalResult {
     match value {
         Value::Number(n) => EvalResult {
             result_type: "number",
-            value: Some(*n),
+            value: Some(n.to_string()),
             unit: None,
             message: None,
             display: value.to_string(),
         },
         Value::Percentage(p) => EvalResult {
             result_type: "percentage",
-            value: Some(*p),
+            value: Some(p.to_string()),
             unit: None,
             message: None,
             display: value.to_string(),
         },
         Value::Currency { amount, currency } => EvalResult {
             result_type: "currency",
-            value: Some(*amount),
+            value: Some(amount.to_string()),
             unit: Some(currency.code().to_string()),
             message: None,
             display: value.to_string(),
         },
         Value::WithUnit { amount, unit } => EvalResult {
             result_type: "unit",
-            value: Some(*amount),
+            value: Some(amount.to_string()),
             unit: Some(unit.to_string()),
             message: None,
             display: value.to_string(),
