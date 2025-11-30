@@ -302,3 +302,196 @@ fn test_usd_to_crypto_conversion() {
     );
     assert_eq!(result.to_string(), "Ξ2.00");
 }
+
+// ============================================================================
+// CURRENCY PROPAGATION TESTS
+// These tests document expected behavior for mixing plain numbers with currency
+// ============================================================================
+
+#[test]
+fn test_plain_number_plus_currency_propagates() {
+    let mut engine = Engine::new();
+
+    // Plain numbers + currency should result in currency
+    // The currency should propagate from whichever operand has it
+
+    // Case 1: plain + plain + currency (user's example: 1000 + 1000 RUB)
+    let result = engine.eval("500 + 500 + 1000 RUB");
+    assert_eq!(result.as_decimal(), Some(d("2000")));
+    assert_eq!(result.to_string(), "2000.00₽");
+
+    // Case 2: plain + currency (simpler case)
+    let result = engine.eval("1000 + 1000 RUB");
+    assert_eq!(result.as_decimal(), Some(d("2000")));
+    assert_eq!(result.to_string(), "2000.00₽");
+
+    // Case 3: currency on left side (should already work)
+    let result = engine.eval("1000 RUB + 500");
+    assert_eq!(result.as_decimal(), Some(d("1500")));
+    assert_eq!(result.to_string(), "1500.00₽");
+
+    // Case 4: currency in the middle of expression
+    let result = engine.eval("100 + 200 USD + 300");
+    assert_eq!(result.as_decimal(), Some(d("600")));
+    assert_eq!(result.to_string(), "$600.00");
+
+    // Case 5: subtraction with plain number
+    let result = engine.eval("2000 - 500 RUB");
+    assert_eq!(result.as_decimal(), Some(d("1500")));
+    assert_eq!(result.to_string(), "1500.00₽");
+}
+
+#[test]
+fn test_plain_number_times_currency() {
+    let mut engine = Engine::new();
+
+    // Multiplication: plain × currency = currency
+    let result = engine.eval("3 * 100 USD");
+    assert_eq!(result.as_decimal(), Some(d("300")));
+    assert_eq!(result.to_string(), "$300.00");
+
+    // Division: currency / plain = currency
+    let result = engine.eval("300 USD / 3");
+    assert_eq!(result.as_decimal(), Some(d("100")));
+    assert_eq!(result.to_string(), "$100.00");
+
+    // plain / currency = plain (dimensionless ratio)
+    let result = engine.eval("300 / 100 USD");
+    // This case is ambiguous - currently returns plain number
+    assert!(result.as_decimal().is_some());
+}
+
+// ============================================================================
+// UNIT + CURRENCY INCOMPATIBILITY TESTS
+// These test that adding/subtracting units and currency produces an error
+// ============================================================================
+
+#[test]
+fn test_unit_plus_currency_errors() {
+    let mut engine = Engine::new();
+
+    // Adding time units to currency should error - incompatible types
+    let result = engine.eval("5 hours + 100 RUB");
+    assert!(
+        result.is_error(),
+        "hours + currency should error, got: {result}"
+    );
+
+    // Same for other units
+    let result = engine.eval("10 kg + $50");
+    assert!(
+        result.is_error(),
+        "kg + currency should error, got: {result}"
+    );
+
+    // Currency + unit (reversed order)
+    let result = engine.eval("$100 + 5 hours");
+    assert!(
+        result.is_error(),
+        "currency + hours should error, got: {result}"
+    );
+
+    // Subtraction should also error
+    let result = engine.eval("100 RUB - 2 hours");
+    assert!(
+        result.is_error(),
+        "currency - hours should error, got: {result}"
+    );
+}
+
+#[test]
+fn test_unit_times_currency_allowed() {
+    let mut engine = Engine::new();
+
+    // Multiplication IS allowed (rate calculation: hours × rate = money)
+    let result = engine.eval("8 hours * $50");
+    assert!(!result.is_error());
+    assert_eq!(result.as_decimal(), Some(d("400")));
+    assert_eq!(result.to_string(), "$400.00");
+
+    // Currency × unit (reversed)
+    let result = engine.eval("$85 * 45h");
+    assert!(!result.is_error());
+    assert_eq!(result.as_decimal(), Some(d("3825")));
+    assert_eq!(result.to_string(), "$3825.00");
+
+    // Months × currency (subscription calc)
+    let result = engine.eval("12 months * 340 usd");
+    assert!(!result.is_error());
+    assert_eq!(result.as_decimal(), Some(d("4080")));
+    assert_eq!(result.to_string(), "$4080.00");
+}
+
+// ============================================================================
+// EXAMPLE.NUMR SCENARIO TESTS
+// Tests based on real-world usage from example.numr
+// ============================================================================
+
+#[test]
+fn test_example_freelance_calculation() {
+    let mut engine = Engine::new();
+
+    // From example.numr: techcorp calculation
+    engine.eval("techcorp_hours = 45h");
+    engine.eval("techcorp_rate = 85 usd");
+
+    // hours × rate = currency
+    let result = engine.eval("techcorp_hours * techcorp_rate");
+    assert_eq!(result.as_decimal(), Some(d("3825")));
+    assert_eq!(result.to_string(), "$3825.00");
+
+    // tax calculation
+    let result = engine.eval("25% of 3825 usd");
+    assert_eq!(result.as_decimal(), Some(d("956.25")));
+
+    // net calculation
+    let result = engine.eval("$3825 - 25%");
+    assert_eq!(result.as_decimal(), Some(d("2868.75")));
+    assert_eq!(result.to_string(), "$2868.75");
+}
+
+#[test]
+fn test_example_saas_annual() {
+    let mut engine = Engine::new();
+
+    // From example.numr: saas_annual = saas_mrr * 12 months
+    engine.eval("saas_mrr = 340 usd");
+
+    let result = engine.eval("saas_mrr * 12 months");
+    assert_eq!(result.as_decimal(), Some(d("4080")));
+    assert_eq!(result.to_string(), "$4080.00");
+}
+
+#[test]
+fn test_example_mixed_currency_expenses() {
+    let mut engine = Engine::new();
+    engine.set_exchange_rate(Currency::USD, Currency::ILS, d("3.65"));
+
+    // From example.numr: expenses in mixed currencies
+    engine.eval("rent = 1850 usd");
+    engine.eval("utilities = 900 ils");
+
+    // Mixed currency addition converts to left operand's currency
+    let result = engine.eval("rent + utilities");
+    // 1850 + (900 / 3.65) ≈ 1850 + 246.58 = 2096.58
+    assert!(result.to_string().starts_with("$"));
+    let amount = result.as_decimal().unwrap();
+    assert!(amount > d("2000") && amount < d("2200"));
+}
+
+#[test]
+fn test_example_cross_currency_debt() {
+    let mut engine = Engine::new();
+    engine.set_exchange_rate(Currency::USD, Currency::RUB, d("92"));
+
+    // From example.numr: net_debt = debt_alex - tom_owes
+    engine.eval("debt_alex = 3500 rub");
+    engine.eval("tom_owes = 120 usd");
+
+    // RUB - USD: converts USD to RUB first
+    // 3500 - (120 * 92) = 3500 - 11040 = -7540
+    let result = engine.eval("debt_alex - tom_owes");
+    assert_eq!(result.to_string().contains("₽"), true);
+    let amount = result.as_decimal().unwrap();
+    assert!(amount < d("0")); // negative (owes more than owed)
+}
