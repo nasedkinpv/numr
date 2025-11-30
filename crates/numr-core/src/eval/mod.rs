@@ -212,20 +212,35 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
                 return Value::Error(format!("Cannot convert {ru} to {lu}"));
             }
         }
-        _ => match (left.as_decimal(), right.as_decimal()) {
-            (Some(l), Some(r)) => {
-                let c = if let Value::Currency { currency, .. } = left {
-                    Some(currency)
-                } else {
-                    None
-                };
-                let u = if let Value::WithUnit { unit, .. } = left {
-                    Some(unit)
-                } else {
-                    None
-                };
-                (l, r, c, u)
+        // Unit + Currency: incompatible for add/subtract (but multiply handled above)
+        (Value::WithUnit { .. }, Value::Currency { .. })
+        | (Value::Currency { .. }, Value::WithUnit { .. }) => {
+            if matches!(op, BinaryOp::Add | BinaryOp::Subtract) {
+                return Value::Error("Cannot add/subtract units and currency".to_string());
             }
+            return Value::Error("Invalid operands".to_string());
+        }
+        // Number + Currency: propagate currency
+        (
+            Value::Number(l),
+            Value::Currency {
+                amount: r,
+                currency,
+            },
+        ) => (*l, *r, Some(*currency), None),
+        (
+            Value::Currency {
+                amount: l,
+                currency,
+            },
+            Value::Number(r),
+        ) => (*l, *r, Some(*currency), None),
+        // Number + Unit: propagate unit
+        (Value::Number(l), Value::WithUnit { amount: r, unit }) => (*l, *r, None, Some(*unit)),
+        (Value::WithUnit { amount: l, unit }, Value::Number(r)) => (*l, *r, None, Some(*unit)),
+        // Fallback for other numeric types
+        _ => match (left.as_decimal(), right.as_decimal()) {
+            (Some(l), Some(r)) => (l, r, None, None),
             _ => return Value::Error("Invalid operands".to_string()),
         },
     };
