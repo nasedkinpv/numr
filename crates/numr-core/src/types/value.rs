@@ -68,6 +68,16 @@ impl Value {
     pub fn is_error(&self) -> bool {
         matches!(self, Value::Error(_))
     }
+
+    /// Return a new value with the same type but different amount
+    /// Used for percentage operations that preserve the value type
+    pub fn with_scaled_amount(&self, new_amount: Decimal) -> Value {
+        match self {
+            Value::Currency { currency, .. } => Value::currency(new_amount, *currency),
+            Value::WithUnit { unit, .. } => Value::with_unit(new_amount, *unit),
+            _ => Value::Number(new_amount),
+        }
+    }
 }
 
 impl std::fmt::Display for Value {

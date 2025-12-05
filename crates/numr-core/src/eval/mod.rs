@@ -109,70 +109,98 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
 }
 
 fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) -> Value {
-    // Handle percentage in operations (e.g., 100 + 20% = 120)
-    if let Value::Percentage(p) = right {
-        if let Some(base) = left.as_decimal() {
-            let one = Decimal::ONE;
-            return match op {
-                BinaryOp::Add => match &left {
-                    Value::Currency { currency, .. } => {
-                        Value::currency(base * (one + p), *currency)
-                    }
-                    Value::WithUnit { unit, .. } => Value::with_unit(base * (one + p), *unit),
-                    _ => Value::Number(base * (one + p)),
-                },
-                BinaryOp::Subtract => match &left {
-                    Value::Currency { currency, .. } => {
-                        Value::currency(base * (one - p), *currency)
-                    }
-                    Value::WithUnit { unit, .. } => Value::with_unit(base * (one - p), *unit),
-                    _ => Value::Number(base * (one - p)),
-                },
-                BinaryOp::Multiply => Value::Number(base * p),
-                BinaryOp::Divide => {
-                    if p.is_zero() {
-                        Value::Error("Division by zero".to_string())
-                    } else {
-                        Value::Number(base / p)
-                    }
-                }
-                BinaryOp::Power => Value::Number(base.powd(p)),
-            };
-        }
+    // Handle percentage operations (e.g., 100 + 20% = 120)
+    if let Some(result) = try_percentage_op(op, &left, &right) {
+        return result;
     }
 
-    // Handle multiplication with mixed types (unit × currency = currency)
-    // This handles cases like "45h * 85 usd" = $3825 (hours × rate = money)
+    // Handle special multiplication cases (unit × currency, etc.)
     if op == BinaryOp::Multiply {
-        match (&left, &right) {
-            // unit × currency → currency (e.g., 45h * $85 = $3825)
-            (
-                Value::WithUnit { amount: l, .. },
-                Value::Currency {
-                    amount: r,
-                    currency,
-                },
-            )
-            | (
-                Value::Currency {
-                    amount: l,
-                    currency,
-                },
-                Value::WithUnit { amount: r, .. },
-            ) => {
-                return Value::currency(l * r, *currency);
-            }
-            // currency × number → currency (e.g., $340 * 12 = $4080)
-            (Value::Currency { amount, currency }, Value::Number(n))
-            | (Value::Number(n), Value::Currency { amount, currency }) => {
-                return Value::currency(amount * n, *currency);
-            }
-            _ => {}
+        if let Some(result) = try_multiply_mixed(&left, &right) {
+            return result;
         }
     }
 
-    // Handle currency/unit conversion
-    let (l_val, r_val, final_currency, final_unit) = match (&left, &right) {
+    // Coerce operands to compatible types
+    let (l_val, r_val, result_type) = match coerce_operands(&left, &right, op, ctx) {
+        Ok(vals) => vals,
+        Err(e) => return Value::Error(e),
+    };
+
+    // Perform the arithmetic operation
+    let result = match apply_op(op, l_val, r_val) {
+        Ok(r) => r,
+        Err(e) => return Value::Error(e),
+    };
+
+    // Wrap result in appropriate type
+    match result_type {
+        ResultType::Currency(c) => Value::currency(result, c),
+        ResultType::Unit(u) => Value::with_unit(result, u),
+        ResultType::Number => Value::Number(result),
+    }
+}
+
+/// Try to handle percentage operations (e.g., 100 + 20% = 120)
+fn try_percentage_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Value> {
+    let Value::Percentage(p) = right else {
+        return None;
+    };
+    let base = left.as_decimal()?;
+
+    Some(match op {
+        BinaryOp::Add => left.with_scaled_amount(base * (Decimal::ONE + p)),
+        BinaryOp::Subtract => left.with_scaled_amount(base * (Decimal::ONE - p)),
+        BinaryOp::Multiply => Value::Number(base * p),
+        BinaryOp::Divide if p.is_zero() => Value::Error("Division by zero".to_string()),
+        BinaryOp::Divide => Value::Number(base / p),
+        BinaryOp::Power => Value::Number(base.powd(*p)),
+    })
+}
+
+/// Try to handle mixed-type multiplication (unit × currency, currency × number)
+fn try_multiply_mixed(left: &Value, right: &Value) -> Option<Value> {
+    match (left, right) {
+        // unit × currency → currency (e.g., 45h * $85 = $3825)
+        (
+            Value::WithUnit { amount: l, .. },
+            Value::Currency {
+                amount: r,
+                currency,
+            },
+        )
+        | (
+            Value::Currency {
+                amount: l,
+                currency,
+            },
+            Value::WithUnit { amount: r, .. },
+        ) => Some(Value::currency(l * r, *currency)),
+        // currency × number → currency
+        (Value::Currency { amount, currency }, Value::Number(n))
+        | (Value::Number(n), Value::Currency { amount, currency }) => {
+            Some(Value::currency(amount * n, *currency))
+        }
+        _ => None,
+    }
+}
+
+/// Result type for binary operations
+enum ResultType {
+    Currency(Currency),
+    Unit(Unit),
+    Number,
+}
+
+/// Coerce operands to compatible decimal values, returning result type
+fn coerce_operands(
+    left: &Value,
+    right: &Value,
+    op: BinaryOp,
+    ctx: &EvalContext,
+) -> Result<(Decimal, Decimal, ResultType), String> {
+    match (left, right) {
+        // Same currency
         (
             Value::Currency {
                 amount: l,
@@ -184,16 +212,15 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
             },
         ) => {
             if lc == rc {
-                (*l, *r, Some(*lc), None)
+                Ok((*l, *r, ResultType::Currency(*lc)))
+            } else if let Some(rate) = ctx.rate_cache.get_rate(*rc, *lc) {
+                Ok((*l, *r * rate, ResultType::Currency(*lc)))
             } else {
-                // Convert right to left currency
-                if let Some(rate) = ctx.rate_cache.get_rate(*rc, *lc) {
-                    (*l, *r * rate, Some(*lc), None)
-                } else {
-                    return Value::Error(format!("No exchange rate for {rc} to {lc}"));
-                }
+                Err(format!("No exchange rate for {rc} to {lc}"))
             }
         }
+
+        // Same unit type
         (
             Value::WithUnit {
                 amount: l,
@@ -205,21 +232,24 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
             },
         ) => {
             if lu == ru {
-                (*l, *r, None, Some(*lu))
+                Ok((*l, *r, ResultType::Unit(*lu)))
             } else if let Some(converted) = unit::convert(*r, *ru, *lu) {
-                (*l, converted, None, Some(*lu))
+                Ok((*l, converted, ResultType::Unit(*lu)))
             } else {
-                return Value::Error(format!("Cannot convert {ru} to {lu}"));
+                Err(format!("Cannot convert {ru} to {lu}"))
             }
         }
-        // Unit + Currency: incompatible for add/subtract (but multiply handled above)
+
+        // Unit + Currency: incompatible
         (Value::WithUnit { .. }, Value::Currency { .. })
         | (Value::Currency { .. }, Value::WithUnit { .. }) => {
             if matches!(op, BinaryOp::Add | BinaryOp::Subtract) {
-                return Value::Error("Cannot add/subtract units and currency".to_string());
+                Err("Cannot add/subtract units and currency".to_string())
+            } else {
+                Err("Invalid operands".to_string())
             }
-            return Value::Error("Invalid operands".to_string());
         }
+
         // Number + Currency: propagate currency
         (
             Value::Number(l),
@@ -227,43 +257,38 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
                 amount: r,
                 currency,
             },
-        ) => (*l, *r, Some(*currency), None),
-        (
+        )
+        | (
             Value::Currency {
                 amount: l,
                 currency,
             },
             Value::Number(r),
-        ) => (*l, *r, Some(*currency), None),
+        ) => Ok((*l, *r, ResultType::Currency(*currency))),
+
         // Number + Unit: propagate unit
-        (Value::Number(l), Value::WithUnit { amount: r, unit }) => (*l, *r, None, Some(*unit)),
-        (Value::WithUnit { amount: l, unit }, Value::Number(r)) => (*l, *r, None, Some(*unit)),
-        // Fallback for other numeric types
-        _ => match (left.as_decimal(), right.as_decimal()) {
-            (Some(l), Some(r)) => (l, r, None, None),
-            _ => return Value::Error("Invalid operands".to_string()),
-        },
-    };
-
-    let result = match op {
-        BinaryOp::Add => l_val + r_val,
-        BinaryOp::Subtract => l_val - r_val,
-        BinaryOp::Multiply => l_val * r_val,
-        BinaryOp::Divide => {
-            if r_val.is_zero() {
-                return Value::Error("Division by zero".to_string());
-            }
-            l_val / r_val
+        (Value::Number(l), Value::WithUnit { amount: r, unit })
+        | (Value::WithUnit { amount: l, unit }, Value::Number(r)) => {
+            Ok((*l, *r, ResultType::Unit(*unit)))
         }
-        BinaryOp::Power => l_val.powd(r_val),
-    };
 
-    if let Some(c) = final_currency {
-        Value::currency(result, c)
-    } else if let Some(u) = final_unit {
-        Value::with_unit(result, u)
-    } else {
-        Value::Number(result)
+        // Plain numbers
+        _ => match (left.as_decimal(), right.as_decimal()) {
+            (Some(l), Some(r)) => Ok((l, r, ResultType::Number)),
+            _ => Err("Invalid operands".to_string()),
+        },
+    }
+}
+
+/// Apply arithmetic operation
+fn apply_op(op: BinaryOp, l: Decimal, r: Decimal) -> Result<Decimal, String> {
+    match op {
+        BinaryOp::Add => Ok(l + r),
+        BinaryOp::Subtract => Ok(l - r),
+        BinaryOp::Multiply => Ok(l * r),
+        BinaryOp::Divide if r.is_zero() => Err("Division by zero".to_string()),
+        BinaryOp::Divide => Ok(l / r),
+        BinaryOp::Power => Ok(l.powd(r)),
     }
 }
 
@@ -311,71 +336,54 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
 }
 
 fn eval_function(name: &str, args: &[Value]) -> Value {
+    // Helper for single-number functions
+    let require_number = |f: fn(Decimal) -> Value| -> Value {
+        args.first()
+            .and_then(|v| v.as_decimal())
+            .map(f)
+            .unwrap_or_else(|| Value::Error(format!("{name} requires a number")))
+    };
+
+    // Helper to get all numeric values
+    let numbers = || args.iter().filter_map(|v| v.as_decimal());
+
     match name.to_lowercase().as_str() {
-        "sum" | "total" => {
-            let sum: Decimal = args.iter().filter_map(|v| v.as_decimal()).sum();
-            Value::Number(sum)
-        }
+        // Aggregate functions
+        "sum" | "total" => Value::Number(numbers().sum()),
+
         "avg" | "average" => {
-            let values: Vec<Decimal> = args.iter().filter_map(|v| v.as_decimal()).collect();
-            if values.is_empty() {
+            let vals: Vec<_> = numbers().collect();
+            if vals.is_empty() {
                 Value::Number(Decimal::ZERO)
             } else {
-                let len = Decimal::from(values.len());
-                Value::Number(values.iter().sum::<Decimal>() / len)
+                Value::Number(vals.iter().sum::<Decimal>() / Decimal::from(vals.len()))
             }
         }
-        "min" => args
-            .iter()
-            .filter_map(|v| v.as_decimal())
+
+        "min" => numbers()
             .min()
             .map(Value::Number)
-            .unwrap_or(Value::Error("No values for min".to_string())),
-        "max" => args
-            .iter()
-            .filter_map(|v| v.as_decimal())
+            .unwrap_or_else(|| Value::Error("No values for min".to_string())),
+
+        "max" => numbers()
             .max()
             .map(Value::Number)
-            .unwrap_or(Value::Error("No values for max".to_string())),
-        "abs" => {
-            if let Some(Value::Number(n)) = args.first() {
-                Value::Number(n.abs())
+            .unwrap_or_else(|| Value::Error("No values for max".to_string())),
+
+        // Single-value math functions
+        "abs" => require_number(|n| Value::Number(n.abs())),
+        "round" => require_number(|n| Value::Number(n.round())),
+        "floor" => require_number(|n| Value::Number(n.floor())),
+        "ceil" => require_number(|n| Value::Number(n.ceil())),
+
+        "sqrt" => require_number(|n| {
+            if n.is_sign_negative() {
+                Value::Error("Cannot take sqrt of negative number".to_string())
             } else {
-                Value::Error("abs requires a number".to_string())
+                Value::Number(n.sqrt().unwrap_or(Decimal::ZERO))
             }
-        }
-        "sqrt" => {
-            if let Some(Value::Number(n)) = args.first() {
-                if !n.is_sign_negative() {
-                    Value::Number(n.sqrt().unwrap_or(Decimal::ZERO))
-                } else {
-                    Value::Error("Cannot take sqrt of negative number".to_string())
-                }
-            } else {
-                Value::Error("sqrt requires a number".to_string())
-            }
-        }
-        "round" => {
-            if let Some(Value::Number(n)) = args.first() {
-                Value::Number(n.round())
-            } else {
-                Value::Error("round requires a number".to_string())
-            }
-        }
-        "floor" => {
-            if let Some(Value::Number(n)) = args.first() {
-                Value::Number(n.floor())
-            } else {
-                Value::Error("floor requires a number".to_string())
-            }
-        }
-        "ceil" => {
-            if let Some(Value::Number(n)) = args.first() {
-                Value::Number(n.ceil())
-            } else {
-                Value::Error("ceil requires a number".to_string())
-            }
-        }
+        }),
+
         _ => Value::Error(format!("Unknown function: {name}")),
     }
 }
