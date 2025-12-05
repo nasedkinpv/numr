@@ -11,7 +11,7 @@ use pest_derive::Parser;
 #[grammar = "parser/grammar.pest"]
 pub struct NumrParser;
 
-/// Parse a single line of input
+/// Parse a single line of input (with fuzzy fallback for user input)
 pub fn parse_line(input: &str) -> Result<Ast, String> {
     // Try parsing the full line first
     if let Ok(pairs) = NumrParser::parse(Rule::line, input) {
@@ -41,6 +41,14 @@ pub fn parse_line(input: &str) -> Result<Ast, String> {
     // If all else fails, return the original error from the full line parse
     // or a generic error
     Err("Parse error: Could not understand line".to_string())
+}
+
+/// Parse a line exactly (no fuzzy fallback) - used for continuation detection
+pub fn try_parse_exact(input: &str) -> Result<Ast, String> {
+    match NumrParser::parse(Rule::line, input) {
+        Ok(pairs) => ast::build_ast(pairs),
+        Err(_) => Err("Parse error".to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -80,7 +88,7 @@ mod tests {
             .lines()
             .find(|line| line.starts_with("currency_symbol"))
             .expect("currency_symbol rule not found in grammar.pest")
-            .split(|c| c == '"' || c == '|' || c == '{' || c == '}')
+            .split(['"', '|', '{', '}'])
             .map(|s| s.trim())
             .filter(|s| !s.is_empty() && !s.contains("currency_symbol") && !s.contains("="))
             .collect();

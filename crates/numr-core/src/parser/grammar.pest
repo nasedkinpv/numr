@@ -129,7 +129,7 @@ target_unit = { identifier }
 // IDENTIFIERS AND VARIABLES
 // -----------------------------------------------------------------------------
 
-identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+identifier = @{ "_" | (ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")*) }
 variable_ref = { identifier }
 
 // -----------------------------------------------------------------------------
@@ -137,5 +137,5 @@ variable_ref = { identifier }
 // -----------------------------------------------------------------------------
 
 WHITESPACE = _{ " " | "\t" }
-COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
+COMMENT = _{ ("#" | "//") ~ (!NEWLINE ~ ANY)* }
 NEWLINE = _{ "\n" | "\r\n" }

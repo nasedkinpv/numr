@@ -30,7 +30,8 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Mouse support**: Scroll with mouse wheel or trackpad
 - **File persistence**: Auto-saves to config directory, supports custom files
 - **Syntax highlighting**: Numbers, operators, variables, units, and currencies
-- **Comments**: Lines starting with `#` are treated as comments
+- **Comments**: Lines starting with `#` or `//` are treated as comments
+- **Continuation**: Start a line with an operator (`+ 10`, `* 2`) to continue from the previous result
 - **Wrap mode**: Toggle text wrapping with bottom-aligned results
 - **Grouped totals**: Currencies and units summed separately in footer (respects exchange rates)
 
@@ -190,8 +191,18 @@ price + tax       → $108
 ### Comments
 ```
 # This is a comment
+// This is also a comment
 Groceries         $45.00
 # Comments are dimmed and ignored in calculations
+```
+
+### Continuation
+```
+$100              → $100
++ $50             → $150 (continues from previous)
+* 2               → $300
+- 10%             → $270
+total = _         → $270 (_ or ANS references previous result)
 ```
 
 ### Functions

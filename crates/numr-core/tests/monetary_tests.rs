@@ -491,7 +491,7 @@ fn test_example_cross_currency_debt() {
     // RUB - USD: converts USD to RUB first
     // 3500 - (120 * 92) = 3500 - 11040 = -7540
     let result = engine.eval("debt_alex - tom_owes");
-    assert_eq!(result.to_string().contains("₽"), true);
+    assert!(result.to_string().contains("₽"));
     let amount = result.as_decimal().unwrap();
     assert!(amount < d("0")); // negative (owes more than owed)
 }

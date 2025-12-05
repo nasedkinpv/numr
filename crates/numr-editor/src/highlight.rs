@@ -73,8 +73,8 @@ static FUNCTIONS: &[&str] = &[
 pub fn tokenize(input: &str) -> Vec<Token> {
     let trimmed = input.trim_start();
 
-    // Comment lines (starting with #)
-    if trimmed.starts_with('#') {
+    // Comment lines (starting with # or //)
+    if trimmed.starts_with('#') || trimmed.starts_with("//") {
         return vec![Token {
             text: input.to_string(),
             token_type: TokenType::Comment,
@@ -321,6 +321,13 @@ mod tests {
     #[test]
     fn test_comment() {
         let tokens = tokenize("# this is a comment");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_type, TokenType::Comment);
+    }
+
+    #[test]
+    fn test_comment_double_slash() {
+        let tokens = tokenize("// this is also a comment");
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].token_type, TokenType::Comment);
     }
