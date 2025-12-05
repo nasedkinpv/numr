@@ -15,8 +15,7 @@
 A text calculator for natural language expressions with a vim-style TUI.
 
 <p align="center">
-  <img src="screenshots/numr_1.png" width="49%" alt="numr TUI - calculations with variables, units, and currencies">
-  <img src="screenshots/numr_2.png" width="49%" alt="numr TUI - help popup with keybindings">
+  <img src="screenshots/numr_demo.gif" width="700" alt="numr TUI demo - calculations with variables, units, currencies, and continuation">
 </p>
 
 ## Features
