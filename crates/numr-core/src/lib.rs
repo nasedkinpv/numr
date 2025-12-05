@@ -96,8 +96,7 @@ impl Engine {
                 .set_variable("_".to_string(), last_value.clone());
             self.context
                 .set_variable("ANS".to_string(), last_value.clone());
-            self.context
-                .set_variable("ans".to_string(), last_value);
+            self.context.set_variable("ans".to_string(), last_value);
         }
 
         // Try continuation-first if '_' exists, otherwise normal parse
@@ -516,7 +515,8 @@ mod tests {
         engine.eval("42");
         // ANS works same as _
         assert_eq!(engine.eval("ANS + 8").as_f64(), Some(50.0));
-        assert_eq!(engine.eval("ans * 2").as_f64(), Some(100.0)); // case insensitive
+        // case insensitive
+        assert_eq!(engine.eval("ans * 2").as_f64(), Some(100.0));
         // Can assign from ANS
         engine.eval("result = ANS");
         assert_eq!(engine.eval("result").as_f64(), Some(100.0));
