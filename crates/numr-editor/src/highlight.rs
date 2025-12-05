@@ -91,6 +91,16 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     while i < chars.len() {
         let c = chars[i];
 
+        // Inline comments: # or //
+        if c == '#' || (c == '/' && i + 1 < chars.len() && chars[i + 1] == '/') {
+            let comment: String = chars[i..].iter().collect();
+            tokens.push(Token {
+                text: comment,
+                token_type: TokenType::Comment,
+            });
+            break;
+        }
+
         if c.is_ascii_digit() || (c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
         {
             // Numbers (including negative and percentages)
@@ -330,6 +340,20 @@ mod tests {
         let tokens = tokenize("// this is also a comment");
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].token_type, TokenType::Comment);
+    }
+
+    #[test]
+    fn test_inline_comment_hash() {
+        let tokens = tokenize("100 + 50 # note");
+        assert!(has_token(&tokens, "100", TokenType::Number));
+        assert!(has_token(&tokens, "# note", TokenType::Comment));
+    }
+
+    #[test]
+    fn test_inline_comment_double_slash() {
+        let tokens = tokenize("100 + 50 // note");
+        assert!(has_token(&tokens, "100", TokenType::Number));
+        assert!(has_token(&tokens, "// note", TokenType::Comment));
     }
 
     #[test]
