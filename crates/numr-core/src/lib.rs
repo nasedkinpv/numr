@@ -121,6 +121,12 @@ impl Engine {
     /// Try continuation parsing first, fall back to normal parsing
     /// Returns (result, whether_continuation_succeeded)
     fn eval_with_continuation(&mut self, input: &str) -> (Value, bool) {
+        // Skip continuation for comments
+        let trimmed = input.trim_start();
+        if trimmed.starts_with('#') || trimmed.starts_with("//") {
+            return (self.parse_and_eval(input), false);
+        }
+
         // Only try continuation if we have a previous result
         if self.context.get_variable("_").is_some() {
             let continued = format!("_ {}", input);
