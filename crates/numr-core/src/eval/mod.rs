@@ -17,6 +17,7 @@ pub struct EvalContext {
 }
 
 impl EvalContext {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             variables: HashMap::new(),
@@ -30,6 +31,7 @@ impl EvalContext {
     }
 
     /// Get a variable value
+    #[must_use]
     pub fn get_variable(&self, name: &str) -> Option<&Value> {
         self.variables.get(name)
     }

@@ -38,7 +38,10 @@ fn spawn_rate_fetch(
     app.fetch_start = Some(std::time::Instant::now());
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let Ok(rt) = tokio::runtime::Runtime::new() else {
+            let _ = tx.send(Err("Failed to create async runtime".to_string()));
+            return;
+        };
         rt.block_on(async {
             let result = numr_core::fetch_rates().await;
             let _ = tx.send(result);

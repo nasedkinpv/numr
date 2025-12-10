@@ -198,8 +198,8 @@ fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, St
         return Err("Empty expression".to_string());
     }
 
-    // Pass 1: Power
-    process_ops(&mut terms, &mut ops, &[BinaryOp::Power]);
+    // Pass 1: Power (right-associative: 2^3^2 = 2^(3^2) = 512)
+    process_ops_right_assoc(&mut terms, &mut ops, &[BinaryOp::Power]);
 
     // Pass 2: Multiply, Divide
     process_ops(
@@ -236,6 +236,34 @@ fn process_ops(terms: &mut Vec<Expr>, ops: &mut Vec<BinaryOp>, target_ops: &[Bin
             );
         } else {
             i += 1;
+        }
+    }
+}
+
+/// Process operators right-to-left for right-associative operators like power
+/// e.g., 2^3^2 should be 2^(3^2) = 2^9 = 512, not (2^3)^2 = 64
+fn process_ops_right_assoc(
+    terms: &mut Vec<Expr>,
+    ops: &mut Vec<BinaryOp>,
+    target_ops: &[BinaryOp],
+) {
+    // Process from right to left
+    let mut i = ops.len();
+    while i > 0 {
+        i -= 1;
+        if target_ops.contains(&ops[i]) {
+            let op = ops.remove(i);
+            let left = terms.remove(i);
+            let right = terms.remove(i);
+
+            terms.insert(
+                i,
+                Expr::BinaryOp {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+            );
         }
     }
 }
