@@ -32,6 +32,7 @@ pub struct RateCache {
 }
 
 impl RateCache {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             rates: HashMap::new(),
@@ -48,6 +49,7 @@ impl RateCache {
     }
 
     /// Get an exchange rate (uses BFS to find conversion path)
+    #[must_use]
     pub fn get_rate(&self, from: Currency, to: Currency) -> Option<Decimal> {
         if from == to {
             return Some(Decimal::ONE);
@@ -67,7 +69,9 @@ impl RateCache {
                 return distances.get(&to).copied();
             }
 
-            let current_rate = *distances.get(&current).unwrap();
+            let Some(&current_rate) = distances.get(&current) else {
+                continue; // Should never happen, but handle gracefully
+            };
 
             for ((start, end), rate) in &self.rates {
                 if *start == current && !visited.contains(end) {
@@ -137,6 +141,7 @@ impl RateCache {
     }
 
     /// Check if cache file exists and is not expired
+    #[must_use]
     pub fn is_cache_valid() -> bool {
         let Some(path) = Self::cache_path() else {
             return false;

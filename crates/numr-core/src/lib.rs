@@ -81,6 +81,7 @@ pub struct LineResult {
 
 impl Engine {
     /// Create a new engine instance
+    #[must_use]
     pub fn new() -> Self {
         Self {
             context: EvalContext::new(),
@@ -177,6 +178,7 @@ impl Engine {
     }
 
     /// Evaluate without storing the result (for previews)
+    #[must_use]
     pub fn eval_preview(&self, input: &str) -> Value {
         let mut ctx = self.context.clone();
 
@@ -206,6 +208,7 @@ impl Engine {
 
     /// Get the sum of all computed values (as plain number)
     /// Excludes lines that were consumed by continuations
+    #[must_use]
     pub fn sum(&self) -> Value {
         let total: Decimal = self
             .lines
@@ -221,6 +224,7 @@ impl Engine {
     /// - Units of the same type are converted to the last used unit
     /// - Plain numbers and percentages are summed separately
     /// - Excludes lines that were consumed by continuations
+    #[must_use]
     pub fn grouped_totals(&self) -> Vec<Value> {
         use std::collections::HashMap;
 
@@ -260,9 +264,11 @@ impl Engine {
         let mut result = Vec::new();
 
         // Sum all currencies, converting to the last used currency
+        // Currencies that can't be converted are kept separate
         if !currency_amounts.is_empty() {
             let target_currency = currency_amounts.last().unwrap().0;
             let mut total_in_target = Decimal::ZERO;
+            let mut unconverted: HashMap<Currency, Decimal> = HashMap::new();
 
             for (currency, amount) in &currency_amounts {
                 if *currency == target_currency {
@@ -272,8 +278,8 @@ impl Engine {
                 {
                     total_in_target += amount * rate;
                 } else {
-                    // Fallback: can't convert, just add the amount (not ideal but better than losing it)
-                    total_in_target += amount;
+                    // Can't convert - keep this currency separate instead of corrupting totals
+                    *unconverted.entry(*currency).or_insert(Decimal::ZERO) += amount;
                 }
             }
 
@@ -282,6 +288,13 @@ impl Engine {
                     amount: total_in_target,
                     currency: target_currency,
                 });
+            }
+
+            // Add unconverted currencies as separate totals
+            for (currency, amount) in unconverted {
+                if !amount.is_zero() {
+                    result.push(Value::Currency { amount, currency });
+                }
             }
         }
 
@@ -367,6 +380,7 @@ impl Engine {
     }
 
     /// Get all line results
+    #[must_use]
     pub fn lines(&self) -> &[LineResult] {
         &self.lines
     }
@@ -378,6 +392,7 @@ impl Engine {
     }
 
     /// Get all user-defined variables (excludes 'total', '_', 'ANS', and 'ans')
+    #[must_use]
     pub fn variables(&self) -> Vec<(String, Value)> {
         self.context
             .variables
@@ -412,6 +427,7 @@ impl Engine {
     }
 
     /// Check if rate cache file is valid (not expired)
+    #[must_use]
     pub fn is_rate_cache_valid() -> bool {
         cache::RateCache::is_cache_valid()
     }
