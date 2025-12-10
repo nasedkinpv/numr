@@ -72,6 +72,7 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
         Expr::Percentage(p) => Value::Percentage(*p),
         Expr::Currency { amount, currency } => Value::currency(*amount, *currency),
         Expr::WithUnit { amount, unit } => Value::with_unit(*amount, *unit),
+        Expr::WithCompoundUnit { amount, unit } => Value::with_compound_unit(*amount, unit.clone()),
 
         Expr::Variable(name) => ctx
             .get_variable(name)
@@ -119,6 +120,12 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
         if let Some(result) = try_multiply_mixed(&left, &right) {
             return result;
         }
+    }
+
+    // Handle compound unit operations (multiply, divide, add, subtract)
+    // e.g., 5m * 10m = 50 m², 100km / 2h = 50 km/h, 12 m² + 15 m² = 27 m²
+    if let Some(result) = try_unit_compound_op(op, &left, &right) {
+        return result;
     }
 
     // Coerce operands to compatible types
@@ -176,12 +183,142 @@ fn try_multiply_mixed(left: &Value, right: &Value) -> Option<Value> {
             },
             Value::WithUnit { amount: r, .. },
         ) => Some(Value::currency(l * r, *currency)),
+        // compound unit × currency → currency
+        (
+            Value::WithCompoundUnit { amount: l, .. },
+            Value::Currency {
+                amount: r,
+                currency,
+            },
+        )
+        | (
+            Value::Currency {
+                amount: l,
+                currency,
+            },
+            Value::WithCompoundUnit { amount: r, .. },
+        ) => Some(Value::currency(l * r, *currency)),
         // currency × number → currency
         (Value::Currency { amount, currency }, Value::Number(n))
         | (Value::Number(n), Value::Currency { amount, currency }) => {
             Some(Value::currency(amount * n, *currency))
         }
         _ => None,
+    }
+}
+
+/// Try to handle unit operations to create/manipulate compound units
+/// e.g., 5m * 10m = 50 m², 100km / 2h = 50 km/h, 12 m² + 15 m² = 27 m²
+fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Value> {
+    // Extract compound units from either simple or compound unit values
+    let (l_amount, l_unit) = match left {
+        Value::WithUnit { amount, unit } => (*amount, unit.to_compound()),
+        Value::WithCompoundUnit { amount, unit } => (*amount, unit.clone()),
+        Value::Number(n) => {
+            // Number × Unit → preserve unit
+            if let Value::WithUnit { amount, unit } = right {
+                return match op {
+                    BinaryOp::Multiply => Some(Value::with_unit(*n * *amount, *unit)),
+                    _ => None,
+                };
+            }
+            if let Value::WithCompoundUnit { amount, unit } = right {
+                return match op {
+                    BinaryOp::Multiply => {
+                        Some(Value::with_compound_unit(*n * *amount, unit.clone()))
+                    }
+                    _ => None,
+                };
+            }
+            return None;
+        }
+        _ => return None,
+    };
+
+    let (r_amount, r_unit) = match right {
+        Value::WithUnit { amount, unit } => (*amount, unit.to_compound()),
+        Value::WithCompoundUnit { amount, unit } => (*amount, unit.clone()),
+        Value::Number(n) => {
+            // Unit × Number → preserve unit
+            return match op {
+                BinaryOp::Multiply => {
+                    if matches!(left, Value::WithUnit { .. }) {
+                        let Value::WithUnit { amount, unit } = left else {
+                            unreachable!()
+                        };
+                        Some(Value::with_unit(*amount * *n, *unit))
+                    } else {
+                        Some(Value::with_compound_unit(l_amount * *n, l_unit))
+                    }
+                }
+                BinaryOp::Divide if n.is_zero() => {
+                    Some(Value::Error("Division by zero".to_string()))
+                }
+                BinaryOp::Divide => {
+                    if matches!(left, Value::WithUnit { .. }) {
+                        let Value::WithUnit { amount, unit } = left else {
+                            unreachable!()
+                        };
+                        Some(Value::with_unit(*amount / *n, *unit))
+                    } else {
+                        Some(Value::with_compound_unit(l_amount / *n, l_unit))
+                    }
+                }
+                _ => None,
+            };
+        }
+        _ => return None,
+    };
+
+    match op {
+        BinaryOp::Add | BinaryOp::Subtract => {
+            // Can only add/subtract compound units with same dimensions
+            if l_unit.dimensions != r_unit.dimensions {
+                return Some(Value::Error(format!(
+                    "Cannot {} {} and {} (incompatible dimensions)",
+                    if op == BinaryOp::Add {
+                        "add"
+                    } else {
+                        "subtract"
+                    },
+                    l_unit.symbol,
+                    r_unit.symbol
+                )));
+            }
+            // Convert right to left's unit scale
+            let r_converted = if l_unit.symbol == r_unit.symbol {
+                r_amount
+            } else {
+                // Convert through SI base
+                let r_si = r_unit.to_si(r_amount);
+                l_unit.from_si(r_si)
+            };
+            let result_amount = match op {
+                BinaryOp::Add => l_amount + r_converted,
+                BinaryOp::Subtract => l_amount - r_converted,
+                _ => unreachable!(),
+            };
+            Some(Value::with_compound_unit(result_amount, l_unit))
+        }
+        BinaryOp::Multiply => {
+            let result_amount = l_amount * r_amount;
+            let result_unit = l_unit.multiply(&r_unit);
+            Some(Value::with_compound_unit(result_amount, result_unit))
+        }
+        BinaryOp::Divide => {
+            if r_amount.is_zero() {
+                return Some(Value::Error("Division by zero".to_string()));
+            }
+            let result_amount = l_amount / r_amount;
+            let result_unit = l_unit.divide(&r_unit);
+            // If the result is dimensionless, return a plain number
+            if result_unit.dimensions.is_dimensionless() {
+                Some(Value::Number(result_amount))
+            } else {
+                Some(Value::with_compound_unit(result_amount, result_unit))
+            }
+        }
+        BinaryOp::Power => None, // Power not supported for compound units
     }
 }
 
@@ -233,7 +370,8 @@ fn coerce_operands(
         ) => {
             if lu == ru {
                 Ok((*l, *r, ResultType::Unit(*lu)))
-            } else if let Some(converted) = unit::convert(*r, *ru, *lu) {
+            } else if let Some(converted) = unit::convert(*r, &ru.to_compound(), &lu.to_compound())
+            {
                 Ok((*l, converted, ResultType::Unit(*lu)))
             } else {
                 Err(format!("Cannot convert {ru} to {lu}"))
@@ -308,25 +446,56 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
         }
     }
 
-    // Try as unit
-    if let Some(target_unit) = Unit::parse(target) {
+    // Try as unit (simple or compound)
+    if let Some(target_compound) = unit::parse_unit(target) {
         match value {
             Value::WithUnit {
                 amount,
                 unit: from_unit,
             } => {
-                if let Some(converted) = unit::convert(amount, from_unit, target_unit) {
-                    return Value::with_unit(converted, target_unit);
+                if let Some(converted) =
+                    unit::convert(amount, &from_unit.to_compound(), &target_compound)
+                {
+                    // If target is a simple unit, return WithUnit for backward compat
+                    if let Some(target_unit) = Unit::parse(target) {
+                        return Value::with_unit(converted, target_unit);
+                    }
+                    return Value::with_compound_unit(converted, target_compound);
                 }
-                return Value::Error(format!("Cannot convert {from_unit} to {target_unit}"));
+                return Value::Error(format!(
+                    "Cannot convert {from_unit} to {}",
+                    target_compound.symbol
+                ));
+            }
+            Value::WithCompoundUnit {
+                amount,
+                unit: from_unit,
+            } => {
+                if let Some(converted) = unit::convert(amount, &from_unit, &target_compound) {
+                    // If target is a simple unit, return WithUnit for backward compat
+                    if let Some(target_unit) = Unit::parse(target) {
+                        return Value::with_unit(converted, target_unit);
+                    }
+                    return Value::with_compound_unit(converted, target_compound);
+                }
+                return Value::Error(format!(
+                    "Cannot convert {} to {}",
+                    from_unit.symbol, target_compound.symbol
+                ));
             }
             // Plain number → attach unit (e.g., "18.39 in months" → "18.39 months")
             Value::Number(n) => {
-                return Value::with_unit(n, target_unit);
+                if let Some(target_unit) = Unit::parse(target) {
+                    return Value::with_unit(n, target_unit);
+                }
+                return Value::with_compound_unit(n, target_compound);
             }
             // Currency ratio → attach unit (e.g., "usd/usd in months" → dimensionless with unit)
             Value::Currency { amount, .. } => {
-                return Value::with_unit(amount, target_unit);
+                if let Some(target_unit) = Unit::parse(target) {
+                    return Value::with_unit(amount, target_unit);
+                }
+                return Value::with_compound_unit(amount, target_compound);
             }
             _ => {}
         }

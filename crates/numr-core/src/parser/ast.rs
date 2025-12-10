@@ -1,6 +1,6 @@
 //! Abstract Syntax Tree definitions
 
-use crate::types::{Currency, Unit};
+use crate::types::{unit, CompoundUnit, Currency, Unit};
 use pest::iterators::Pairs;
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -33,8 +33,10 @@ pub enum Expr {
     Percentage(Decimal),
     /// Currency value
     Currency { amount: Decimal, currency: Currency },
-    /// Value with unit
+    /// Value with simple unit
     WithUnit { amount: Decimal, unit: Unit },
+    /// Value with compound unit (e.g., 50 km/h, 100 m²)
+    WithCompoundUnit { amount: Decimal, unit: CompoundUnit },
     /// Variable reference
     Variable(String),
     /// Binary operation
@@ -270,7 +272,14 @@ fn parse_suffixed_number(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, 
     if let Some(currency) = Currency::parse(suffix) {
         Ok(Expr::Currency { amount, currency })
     } else if let Some(unit) = Unit::parse(suffix) {
+        // Simple unit from legacy enum
         Ok(Expr::WithUnit { amount, unit })
+    } else if let Some(compound_unit) = unit::parse_unit(suffix) {
+        // Compound unit from new registry (e.g., kph, m2, mps)
+        Ok(Expr::WithCompoundUnit {
+            amount,
+            unit: compound_unit,
+        })
     } else {
         // Treat as implicit multiplication with variable
         Ok(Expr::BinaryOp {
