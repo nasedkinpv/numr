@@ -1,0 +1,236 @@
+# ============================================
+# Compound Units Test Suite
+# ============================================
+# Testing dimensional analysis and compound unit operations
+# Expected results noted in comments
+
+# ============================================
+# AREA CALCULATIONS
+# ============================================
+
+# Simple square area: length × length = area
+room_length = 5 m
+room_width = 4 m
+room_area = room_length * room_width    // = 20 m²
+
+# Larger areas
+plot_length = 100 m
+plot_width = 50 m
+plot_area = plot_length * plot_width    // = 5000 m²
+
+# Mixed length units (result keeps both)
+wall_height = 3 m
+wall_width = 12 ft
+wall_area = wall_height * wall_width    // = 36 m·ft
+
+# ============================================
+# SPEED CALCULATIONS
+# ============================================
+
+# Distance / Time = Speed
+marathon = 42 km
+finish_time = 4 h
+marathon_pace = marathon / finish_time   // = 10.5 km/h
+
+# Commute speed
+commute_dist = 30 km
+commute_time = 45 min
+commute_speed = commute_dist / commute_time  // = 0.67 km/min (need better display)
+
+# Sprint analysis
+sprint_100m = 100 m
+sprint_time = 10 s
+sprint_speed = sprint_100m / sprint_time  // = 10 m/s
+
+# Car trip
+trip_distance = 450 km
+trip_time = 5 h
+average_speed = trip_distance / trip_time  // = 90 km/h
+
+# ============================================
+# DIMENSIONLESS RESULTS
+# ============================================
+
+# Same units cancel out
+total_distance = 100 km
+partial_distance = 25 km
+progress_ratio = partial_distance / total_distance  // = 0.25 (plain number)
+
+# Time ratios
+work_hours = 8 h
+total_day = 24 h
+work_ratio = work_hours / total_day      // = 0.33 (plain number)
+
+# Data ratios
+downloaded = 750 MB
+total_size = 1000 MB
+download_progress = downloaded / total_size  // = 0.75 (plain number)
+
+# ============================================
+# UNIT × NUMBER (preserves unit)
+# ============================================
+
+base_speed = 60 km
+doubled_distance = base_speed * 2        // = 120 km
+tripled = 3 * base_speed                 // = 180 km
+
+# Scale time
+base_time = 30 min
+extended = base_time * 4                 // = 120 min
+halved = base_time / 2                   // = 15 min
+
+# ============================================
+# VOLUME (from area × length)
+# ============================================
+
+# Pool volume
+pool_length = 25 m
+pool_width = 10 m
+pool_depth = 2 m
+pool_surface = pool_length * pool_width   // = 250 m²
+pool_volume = pool_surface * pool_depth   // = 500 m²·m (compound)
+
+# ============================================
+# REAL-WORLD SCENARIOS
+# ============================================
+
+# --- Home Improvement ---
+
+# Painting a room (wall area calculation)
+wall1 = 4 m * 3 m                        // = 12 m²
+wall2 = 5 m * 3 m                        // = 15 m²
+total_paint_area = wall1 + wall2         // = 27 m² (compound unit addition works!)
+
+# Flooring calculation
+floor_l = 6 m
+floor_w = 4 m
+floor_area = floor_l * floor_w           // = 24 m²
+
+# --- Travel Planning ---
+
+# Road trip segments
+segment1 = 120 km / 2 h                  // = 60 km/h
+segment2 = 180 km / 2 h                  // = 90 km/h
+# Note: can't average speeds by addition (need weighted average)
+
+# Flight speed
+flight_dist = 8500 km
+flight_time = 10 h
+flight_speed = flight_dist / flight_time  // = 850 km/h
+
+# --- Data & Bandwidth ---
+
+# Download time estimation
+file_size = 4 GB
+bandwidth = 100 MB                       // per second (implied)
+# Note: Need compound unit parsing for "100 MB/s"
+
+# Transfer rate
+transferred = 500 MB
+transfer_time = 50 s
+transfer_rate = transferred / transfer_time  // = 10 MB/s
+
+# ============================================
+# PHYSICS EXAMPLES
+# ============================================
+
+# Acceleration (change in speed / time)
+initial_speed = 0 m
+final_speed = 100 m                      // (really 100 m/s but we can't parse that yet)
+accel_time = 10 s
+
+# Force = mass × acceleration (F = ma)
+# Note: Need compound unit support for m/s²
+
+# Energy = Force × Distance (W = F·d)
+# Note: Need to build up from base units
+
+# ============================================
+# EDGE CASES
+# ============================================
+
+# Zero handling
+zero_dist = 0 km
+some_time = 5 h
+# zero_speed = zero_dist / some_time      // = 0 km/h
+
+# Very small values
+tiny_dist = 1 mm
+tiny_area = tiny_dist * tiny_dist        // = 1 mm²
+
+# Very large values
+earth_radius = 6371 km
+earth_diameter = earth_radius * 2        // = 12742 km
+
+# ============================================
+# COMPOUND UNIT CHAINS
+# ============================================
+
+# Building up compound units step by step
+length1 = 10 m
+length2 = 10 m
+area_step = length1 * length2            // = 100 m²
+length3 = 10 m
+# volume_step = area_step * length3       // = 1000 m²·m (need to handle compound × simple)
+
+# ============================================
+# PARSED COMPOUND UNITS (Phase 3)
+# ============================================
+
+# Speed units can be entered directly
+car_speed = 120 kph                      // = 120 km/h
+runner = 10 mps                          // = 10 m/s
+highway = 65 mph                         // = 65 mph
+
+# Convert between speed units
+car_speed in mps                         // = 33.33 m/s
+runner in kph                            // = 36 km/h
+
+# Area units
+room = 25 m2                             // = 25 m²
+field = 2 ha                             // = 2 ha
+field in m2                              // = 20000 m²
+
+# Power/Energy units
+power = 5 kW                             // = 5 kW
+energy = 100 kWh                         // = 100 kWh
+
+# Pressure
+tire = 32 psi                            // = 32 psi
+tire in bar                              // = 2.21 bar
+
+# Mix different unit scales
+fast_car = 200 kph
+slow_car = 50 mph
+speed_diff = fast_car - slow_car         // = 119.53 km/h
+
+# ============================================
+# SUMMARY
+# ============================================
+
+# Key compound unit operations demonstrated:
+# 1. m × m = m² (area)
+# 2. km / h = km/h (speed)
+# 3. km / km = number (dimensionless)
+# 4. unit × number = unit (scaling)
+# 5. number × unit = unit (scaling)
+# 6. m² × m = m²·m (volume-ish)
+
+# Features working:
+# - Basic multiplication creates compound units
+# - Basic division creates compound units
+# - Same unit division cancels to dimensionless
+# - Scaling preserves original unit type
+# - Display shows m², km/h, etc.
+
+# Features working (new):
+# - Add/subtract compound units of same dimension
+# - Conversion from compound units (e.g., "(1 km + 500 m) in m")
+# - Different unit scales auto-convert (1 km + 500 m = 1.5 km)
+# - Parse compound units from input: 50 kph, 10 mps, 100 m2, 50 mph
+# - Convert between compound units: 50 kph in mps = 13.89 m/s
+# - Mix speeds: 50 kmh + 10 mph = 66.09 km/h
+
+# All features complete!
+# - Smart symbol: 50 kph * 2 h = 100 km (not km/h·h)
+# - Matches units from registry for clean output

@@ -38,7 +38,10 @@ pub mod fetch;
 
 pub use eval::EvalContext;
 pub use parser::{parse_line, try_parse_exact, Ast, BinaryOp, Expr};
-pub use types::{Currency, CurrencyDef, Unit, UnitDef, UnitType, Value, CURRENCIES, UNITS};
+pub use types::{
+    CompoundUnit, Currency, CurrencyDef, Dimensions, RuntimeUnitDef, Unit, UnitType, Value,
+    CURRENCIES, UNITS,
+};
 
 // Re-export Decimal for tests and external use
 pub use rust_decimal::Decimal;
@@ -225,6 +228,10 @@ impl Engine {
         let mut unit_totals: HashMap<Unit, Decimal> = HashMap::new();
         let mut last_unit_by_type: HashMap<types::UnitType, Unit> = HashMap::new();
 
+        // Track compound units by their dimensions
+        let mut compound_totals: HashMap<types::Dimensions, (Decimal, types::CompoundUnit)> =
+            HashMap::new();
+
         // Collect all values, tracking last used currency/unit
         // Skip lines that were consumed by continuations
         for lr in self.lines.iter().filter(|lr| !lr.is_continuation_source) {
@@ -235,6 +242,16 @@ impl Engine {
                 Value::WithUnit { amount, unit } => {
                     *unit_totals.entry(*unit).or_insert(Decimal::ZERO) += amount;
                     last_unit_by_type.insert(unit.unit_type(), *unit);
+                }
+                Value::WithCompoundUnit { amount, unit } => {
+                    // Group by dimensions, convert to SI for summing
+                    let si_amount = unit.to_si(*amount);
+                    let entry = compound_totals
+                        .entry(unit.dimensions)
+                        .or_insert_with(|| (Decimal::ZERO, unit.clone()));
+                    entry.0 += si_amount;
+                    // Keep the last unit for display
+                    entry.1 = unit.clone();
                 }
                 Value::Number(_) | Value::Percentage(_) | Value::Empty | Value::Error(_) => {}
             }
@@ -277,7 +294,7 @@ impl Engine {
             let converted = if unit == target_unit {
                 *amount
             } else if let Some(converted_amount) =
-                types::unit::convert(*amount, *unit, *target_unit)
+                types::unit::convert(*amount, &unit.to_compound(), &target_unit.to_compound())
             {
                 converted_amount
             } else {
@@ -296,13 +313,53 @@ impl Engine {
             }
         }
 
-        // Sort results for consistent display order (currencies first, then units by type)
+        // Add compound unit totals (one per dimension type)
+        for (_dims, (si_total, last_unit)) in compound_totals {
+            if !si_total.is_zero() {
+                // Convert from SI back to the last used unit
+                let display_amount = last_unit.from_si(si_total);
+                result.push(Value::WithCompoundUnit {
+                    amount: display_amount,
+                    unit: last_unit,
+                });
+            }
+        }
+
+        // Sort results for consistent display order:
+        // 1. Currencies first (by code)
+        // 2. Simple units (by unit type)
+        // 3. Compound units (by dimensions: length, mass, time, temp, data)
         result.sort_by(|a, b| match (a, b) {
-            (Value::Currency { .. }, Value::WithUnit { .. }) => std::cmp::Ordering::Less,
-            (Value::WithUnit { .. }, Value::Currency { .. }) => std::cmp::Ordering::Greater,
+            // Currencies come first
+            (Value::Currency { currency: c1, .. }, Value::Currency { currency: c2, .. }) => {
+                c1.code().cmp(c2.code())
+            }
+            (Value::Currency { .. }, _) => std::cmp::Ordering::Less,
+            (_, Value::Currency { .. }) => std::cmp::Ordering::Greater,
+
+            // Simple units come before compound units
             (Value::WithUnit { unit: u1, .. }, Value::WithUnit { unit: u2, .. }) => {
                 u1.unit_type().cmp(&u2.unit_type())
             }
+            (Value::WithUnit { .. }, Value::WithCompoundUnit { .. }) => std::cmp::Ordering::Less,
+            (Value::WithCompoundUnit { .. }, Value::WithUnit { .. }) => std::cmp::Ordering::Greater,
+
+            // Compound units sorted by dimensions (length, mass, time, temp, data)
+            (
+                Value::WithCompoundUnit { unit: u1, .. },
+                Value::WithCompoundUnit { unit: u2, .. },
+            ) => {
+                let d1 = &u1.dimensions;
+                let d2 = &u2.dimensions;
+                d1.length
+                    .cmp(&d2.length)
+                    .then(d1.mass.cmp(&d2.mass))
+                    .then(d1.time.cmp(&d2.time))
+                    .then(d1.temperature.cmp(&d2.temperature))
+                    .then(d1.data.cmp(&d2.data))
+                    .then(u1.symbol.cmp(&u2.symbol)) // Final tiebreaker
+            }
+
             _ => std::cmp::Ordering::Equal,
         });
 

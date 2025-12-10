@@ -1,6 +1,6 @@
 //! Core value representation
 
-use super::{Currency, Unit};
+use super::{CompoundUnit, Currency, Unit};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -13,8 +13,10 @@ pub enum Value {
     Percentage(Decimal),
     /// Value with currency
     Currency { amount: Decimal, currency: Currency },
-    /// Value with unit
+    /// Value with simple unit (from parser)
     WithUnit { amount: Decimal, unit: Unit },
+    /// Value with compound unit (from computation, e.g., m², km/h)
+    WithCompoundUnit { amount: Decimal, unit: CompoundUnit },
     /// No value (empty line or comment)
     Empty,
     /// Error during evaluation
@@ -37,9 +39,14 @@ impl Value {
         Value::Currency { amount, currency }
     }
 
-    /// Create a value with unit
+    /// Create a value with simple unit
     pub fn with_unit(amount: Decimal, unit: Unit) -> Self {
         Value::WithUnit { amount, unit }
+    }
+
+    /// Create a value with compound unit
+    pub fn with_compound_unit(amount: Decimal, unit: CompoundUnit) -> Self {
+        Value::WithCompoundUnit { amount, unit }
     }
 
     /// Get the numeric value as Decimal, ignoring units
@@ -49,6 +56,7 @@ impl Value {
             Value::Percentage(p) => Some(*p),
             Value::Currency { amount, .. } => Some(*amount),
             Value::WithUnit { amount, .. } => Some(*amount),
+            Value::WithCompoundUnit { amount, .. } => Some(*amount),
             Value::Empty | Value::Error(_) => None,
         }
     }
@@ -75,6 +83,9 @@ impl Value {
         match self {
             Value::Currency { currency, .. } => Value::currency(new_amount, *currency),
             Value::WithUnit { unit, .. } => Value::with_unit(new_amount, *unit),
+            Value::WithCompoundUnit { unit, .. } => {
+                Value::with_compound_unit(new_amount, unit.clone())
+            }
             _ => Value::Number(new_amount),
         }
     }
@@ -94,6 +105,9 @@ impl std::fmt::Display for Value {
                 }
             }
             Value::WithUnit { amount, unit } => {
+                write!(f, "{} {}", format_number(*amount), unit)
+            }
+            Value::WithCompoundUnit { amount, unit } => {
                 write!(f, "{} {}", format_number(*amount), unit)
             }
             Value::Empty => Ok(()),

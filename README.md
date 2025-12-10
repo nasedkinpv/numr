@@ -23,6 +23,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Natural language expressions**: `20% of 150`, `$100 in euros`, `2 hours + 30 min`
 - **Variables**: `tax = 15%` then `100 + tax`
 - **Unit conversions**: Length, weight, time, temperature, data sizes
+- **Compound units**: `5 m * 10 m = 50 m²`, `100 km / 2 h = 50 km/h`
 - **Currency conversions**: USD, EUR, GBP, JPY, CHF, CNY, CAD, AUD, INR, KRW, RUB, ILS, PLN, UAH + crypto (BTC, ETH, SOL, and more)
 - **Live exchange rates**: Fetched automatically on startup
 - **Vim-style editing**: Normal and Insert modes with familiar keybindings
@@ -217,19 +218,54 @@ floor(3.7)        → 3
 ceil(3.2)         → 4
 ```
 
+### Compound Units
+```
+# Area from multiplication
+5 m * 10 m        → 50 m²
+
+# Speed from division
+100 km / 2 h      → 50 km/h
+
+# Distance from speed × time
+50 kph * 2 h      → 100 km
+
+# Unit conversions
+50 kph in mps     → 13.89 m/s
+
+# Mixed operations
+25 km / 100 km    → 0.25 (dimensionless)
+```
+
+**Compound unit aliases**: `kph` (km/h), `mph` (mi/h), `mps` (m/s), `m2` (m²), `km2` (km²), `ft2` (ft²)
+
 ## Supported Units
 
 ### Length
-`km`, `m`, `cm`, `mm`, `mi`/`miles`, `ft`/`feet`, `inches`
+`km`, `m`, `cm`, `mm`, `mi`/`miles`, `ft`/`feet`, `in`/`inches`
+
+### Area
+`m²`/`m2`, `km²`/`km2`, `ft²`/`ft2`, `acre`, `hectare`/`ha`
+
+### Speed
+`m/s`/`mps`, `km/h`/`kph`, `mph`, `knot`
 
 ### Weight
-`kg`, `g`, `mg`, `lb`/`lbs`, `oz`
+`kg`, `g`, `mg`, `lb`/`lbs`, `oz`, `ton`
+
+### Volume
+`L`, `mL`, `gal`, `m³`/`m3`
 
 ### Time
 `months`/`mo`, `weeks`/`wk`, `days`/`d`, `hours`/`hr`/`h`, `minutes`/`min`, `seconds`/`sec`/`s`
 
+### Energy
+`J`, `kJ`, `cal`, `kcal`, `kWh`
+
+### Power
+`W`, `kW`
+
 ### Temperature
-`C`/`Celsius`, `F`/`Fahrenheit`
+`K`/`Kelvin`, `C`/`Celsius`, `F`/`Fahrenheit`
 
 ### Data
 `TB`, `GB`, `MB`, `KB`, `bytes`

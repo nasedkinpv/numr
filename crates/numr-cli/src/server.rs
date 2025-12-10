@@ -128,6 +128,13 @@ fn value_to_result(value: &Value) -> EvalResult {
             message: None,
             display: value.to_string(),
         },
+        Value::WithCompoundUnit { amount, unit } => EvalResult {
+            result_type: "unit",
+            value: Some(amount.to_string()),
+            unit: Some(unit.symbol.clone()),
+            message: None,
+            display: value.to_string(),
+        },
         Value::Empty => EvalResult {
             result_type: "empty",
             value: None,
