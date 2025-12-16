@@ -495,3 +495,62 @@ fn test_example_cross_currency_debt() {
     let amount = result.as_decimal().unwrap();
     assert!(amount < d("0")); // negative (owes more than owed)
 }
+
+#[test]
+fn test_complex_rub_calculation_with_percentage() {
+    let mut engine = Engine::new();
+    engine.set_exchange_rate(Currency::RUB, Currency::ILS, d("0.039")); // ~1 RUB = 0.039 ILS
+
+    // Test: (525000 rub + (75 000 rub * 1)) - 7%
+    // Do arithmetic in same currency first, convert at end if needed
+    // 1. 525000 + 75000 = 600000 RUB
+    // 2. 600000 - 7% = 600000 * 0.93 = 558000 RUB
+
+    // Test number with space (75 000)
+    let result = engine.eval("75 000 rub");
+    assert!(!result.is_error(), "75 000 rub failed: {result}");
+    assert_eq!(result.as_decimal(), Some(d("75000")));
+
+    // Test multiplication with 'x' operator
+    let result = engine.eval("75000 rub x 1");
+    assert!(!result.is_error(), "75000 rub x 1 failed: {result}");
+    assert_eq!(result.as_decimal(), Some(d("75000")));
+
+    // Test multiplication with '*' operator and space-separated number
+    let result = engine.eval("75 000 rub * 1");
+    assert!(!result.is_error(), "75 000 rub * 1 failed: {result}");
+    assert_eq!(result.as_decimal(), Some(d("75000")));
+
+    // Test parenthesized inner expression with space-separated number
+    let result = engine.eval("(75 000 rub x 1)");
+    assert!(!result.is_error(), "(75 000 rub x 1) failed: {result}");
+    assert_eq!(result.as_decimal(), Some(d("75000")));
+
+    // Test addition of same currency
+    let result = engine.eval("525000 rub + 75000 rub");
+    assert!(!result.is_error(), "addition failed: {result}");
+    assert_eq!(result.as_decimal(), Some(d("600000")));
+
+    // Test full expression: (525000 rub + (75 000 rub * 1)) - 7%
+    let result = engine.eval("(525000 rub + (75 000 rub * 1)) - 7%");
+    assert!(!result.is_error(), "Full expression failed: {result}");
+    // 525000 + 75000 = 600000
+    // 600000 - 7% = 558000
+    assert_eq!(result.as_decimal(), Some(d("558000")));
+    assert_eq!(result.to_string(), "558000.00₽");
+
+    // Test with 'x' operator
+    let result = engine.eval("(525 000 rub + (75 000 rub x 1)) - 7%");
+    assert!(
+        !result.is_error(),
+        "Full expression with x failed: {result}"
+    );
+    assert_eq!(result.as_decimal(), Some(d("558000")));
+
+    // Then convert to ILS at the end if needed
+    let result = engine.eval("558000 rub in ils");
+    assert!(!result.is_error(), "conversion failed: {result}");
+    // 558000 * 0.039 = 21762
+    assert_eq!(result.as_decimal(), Some(d("21762")));
+    assert_eq!(result.to_string(), "₪21762.00");
+}

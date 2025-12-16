@@ -5,9 +5,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [features]
 default = []
 fetch = ["reqwest"]
+wasm = ["dep:wasm-bindgen", "dep:console_error_panic_hook"]
 
 [dependencies]
 serde.workspace = true
@@ -15,10 +22,19 @@ serde_json.workspace = true
 pest.workspace = true
 pest_derive.workspace = true
 rust_decimal.workspace = true
-directories = "6.0"
 
-# Optional: for fetching exchange rates (not available in WASM)
-reqwest = { workspace = true, optional = true }
+# WASM support (optional)
+wasm-bindgen = { version = "0.2", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+# Filesystem caching (not available in WASM)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+directories = "6"
+
+# Optional: for fetching exchange rates
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.reqwest]
+workspace = true
+optional = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

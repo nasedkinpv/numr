@@ -73,6 +73,7 @@ const PARSE_ERROR: i32 = -32700;
 const INVALID_REQUEST: i32 = -32600;
 const METHOD_NOT_FOUND: i32 = -32601;
 const INVALID_PARAMS: i32 = -32602;
+const INTERNAL_ERROR: i32 = -32603;
 
 impl Response {
     fn success(id: serde_json::Value, result: serde_json::Value) -> Self {
@@ -203,7 +204,10 @@ fn handle_eval(
 
     let value = engine.eval(&params.expr);
     let result = value_to_result(&value);
-    Response::success(id, serde_json::to_value(result).unwrap())
+    match serde_json::to_value(result) {
+        Ok(v) => Response::success(id, v),
+        Err(e) => Response::error(id, INTERNAL_ERROR, format!("Serialization failed: {e}")),
+    }
 }
 
 /// Handle eval_lines method - evaluate multiple lines (preserves variables)
@@ -229,7 +233,10 @@ fn handle_eval_lines(
         })
         .collect();
 
-    Response::success(id, serde_json::to_value(results).unwrap())
+    match serde_json::to_value(results) {
+        Ok(v) => Response::success(id, v),
+        Err(e) => Response::error(id, INTERNAL_ERROR, format!("Serialization failed: {e}")),
+    }
 }
 
 /// Handle clear method - clear variables and history
@@ -242,7 +249,10 @@ fn handle_clear(engine: &mut Engine, id: serde_json::Value) -> Response {
 fn handle_get_totals(engine: &mut Engine, id: serde_json::Value) -> Response {
     let totals = engine.grouped_totals();
     let results: Vec<EvalResult> = totals.iter().map(value_to_result).collect();
-    Response::success(id, serde_json::to_value(results).unwrap())
+    match serde_json::to_value(results) {
+        Ok(v) => Response::success(id, v),
+        Err(e) => Response::error(id, INTERNAL_ERROR, format!("Serialization failed: {e}")),
+    }
 }
 
 /// Handle get_variables method - list defined variables
@@ -255,7 +265,10 @@ fn handle_get_variables(engine: &mut Engine, id: serde_json::Value) -> Response 
             value: value_to_result(value),
         })
         .collect();
-    Response::success(id, serde_json::to_value(results).unwrap())
+    match serde_json::to_value(results) {
+        Ok(v) => Response::success(id, v),
+        Err(e) => Response::error(id, INTERNAL_ERROR, format!("Serialization failed: {e}")),
+    }
 }
 
 /// Handle reload_rates method - fetch fresh exchange rates

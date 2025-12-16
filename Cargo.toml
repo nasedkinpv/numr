@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/nasedkinpv/numr"
@@ -21,15 +21,23 @@ pest = "2"
 pest_derive = "2"
 
 # Async/HTTP (for currency rates)
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
 reqwest = { version = "0.12", features = ["json"] }
 
 # TUI
 ratatui = "0.29"
-crossterm = "0.29"
+crossterm = "0.28"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
 
 # Testing
 pretty_assertions = "1"
+
+# Optimized release profile (especially for WASM)
+[profile.release]
+panic = "abort"
+codegen-units = 1
+opt-level = "z"
+lto = true
+strip = true

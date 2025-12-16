@@ -1,19 +1,26 @@
 //! Rate caching for currency exchange rates
 //!
-//! Rates are cached to `~/.config/numr/rates.json` (or platform equivalent).
+//! On native platforms, rates are cached to `~/.config/numr/rates.json`.
 //! Cache expires after 1 hour, after which fresh rates should be fetched.
+//! On WASM, filesystem caching is not available - use defaults only.
 
 use crate::types::Currency;
-use directories::ProjectDirs;
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[cfg(not(target_arch = "wasm32"))]
+use directories::ProjectDirs;
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Cache expiry time in seconds (1 hour)
+#[cfg(not(target_arch = "wasm32"))]
 const CACHE_EXPIRY_SECS: u64 = 3600;
 
 /// Cached rates file format
@@ -90,13 +97,15 @@ impl RateCache {
         self.rates.clear();
     }
 
-    /// Get the cache file path
+    /// Get the cache file path (native only)
+    #[cfg(not(target_arch = "wasm32"))]
     fn cache_path() -> Option<PathBuf> {
         ProjectDirs::from("", "", "numr").map(|dirs| dirs.config_dir().join("rates.json"))
     }
 
-    /// Load rates from file cache if not expired
+    /// Load rates from file cache if not expired (native only)
     /// Returns Some(()) if cache was loaded, None if expired or missing
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_from_file(&mut self) -> Option<()> {
         let path = Self::cache_path()?;
         let content = fs::read_to_string(&path).ok()?;
@@ -114,7 +123,14 @@ impl RateCache {
         Some(())
     }
 
-    /// Save current rates to file cache
+    /// Load rates from file cache (WASM stub - always returns None)
+    #[cfg(target_arch = "wasm32")]
+    pub fn load_from_file(&mut self) -> Option<()> {
+        None
+    }
+
+    /// Save current rates to file cache (native only)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save_to_file(&self, raw_rates: &HashMap<String, f64>) {
         let Some(path) = Self::cache_path() else {
             return;
@@ -140,7 +156,14 @@ impl RateCache {
         }
     }
 
-    /// Check if cache file exists and is not expired
+    /// Save current rates to file cache (WASM stub - no-op)
+    #[cfg(target_arch = "wasm32")]
+    pub fn save_to_file(&self, _raw_rates: &HashMap<String, f64>) {
+        // No filesystem in WASM
+    }
+
+    /// Check if cache file exists and is not expired (native only)
+    #[cfg(not(target_arch = "wasm32"))]
     #[must_use]
     pub fn is_cache_valid() -> bool {
         let Some(path) = Self::cache_path() else {
@@ -161,6 +184,13 @@ impl RateCache {
             .unwrap_or(0);
 
         now - cached.timestamp <= CACHE_EXPIRY_SECS
+    }
+
+    /// Check if cache file exists and is not expired (WASM stub - always false)
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub fn is_cache_valid() -> bool {
+        false
     }
 
     /// Apply raw rates from API response
