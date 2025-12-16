@@ -15,6 +15,10 @@
 A text calculator for natural language expressions with a vim-style TUI.
 
 <p align="center">
+  <strong><a href="https://numr.cc">Try it online →</a></strong>
+</p>
+
+<p align="center">
   <img src="screenshots/numr_demo.gif" width="700" alt="numr TUI demo - calculations with variables, units, currencies, and continuation">
 </p>
 
@@ -321,13 +325,13 @@ graph TB
 ```
 numr/
 ├── crates/
-│   ├── numr-core/     # Core evaluation engine (WASM-compatible by default)
+│   ├── numr-core/     # Core evaluation engine (WASM-compatible)
 │   │   ├── parser/    # Pest PEG grammar and AST builder
 │   │   ├── eval/      # Expression evaluation with unit/currency handling
 │   │   ├── types/     # Value, Currency, Unit registries
 │   │   ├── cache/     # Exchange rate caching with BFS path finding
 │   │   └── fetch/     # HTTP fetching (optional "fetch" feature)
-│   ├── numr-editor/   # Shared editor logic (syntax highlighting)
+│   ├── numr-editor/   # Syntax highlighting (WASM-compatible)
 │   ├── numr-tui/      # Terminal UI (Ratatui) with vim modes
 │   └── numr-cli/      # Command-line interface and REPL
 ```

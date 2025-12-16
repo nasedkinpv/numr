@@ -1,6 +1,10 @@
 # Build artifacts
 /target/
+/.cargo/
 **/*.rs.bk
+
+# Separate repo (not a submodule)
+/numr-web/
 
 # IDE
 .idea/

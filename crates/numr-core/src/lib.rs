@@ -36,6 +36,9 @@ pub mod types;
 #[cfg(feature = "fetch")]
 pub mod fetch;
 
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 pub use eval::EvalContext;
 pub use parser::{parse_line, try_parse_exact, Ast, BinaryOp, Expr};
 pub use types::{
@@ -125,9 +128,9 @@ impl Engine {
     /// Try continuation parsing first, fall back to normal parsing
     /// Returns (result, whether_continuation_succeeded)
     fn eval_with_continuation(&mut self, input: &str) -> (Value, bool) {
-        // Skip continuation for comments
-        let trimmed = input.trim_start();
-        if trimmed.starts_with('#') || trimmed.starts_with("//") {
+        // Skip continuation for empty lines and comments
+        let trimmed = input.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
             return (self.parse_and_eval(input), false);
         }
 
@@ -265,8 +268,7 @@ impl Engine {
 
         // Sum all currencies, converting to the last used currency
         // Currencies that can't be converted are kept separate
-        if !currency_amounts.is_empty() {
-            let target_currency = currency_amounts.last().unwrap().0;
+        if let Some(&(target_currency, _)) = currency_amounts.last() {
             let mut total_in_target = Decimal::ZERO;
             let mut unconverted: HashMap<Currency, Decimal> = HashMap::new();
 
@@ -626,6 +628,25 @@ mod tests {
         engine.eval(""); // Empty line
         engine.eval("# comment"); // Comment (evaluates to Empty)
         assert_eq!(engine.eval("+ 50").as_f64(), Some(150.0));
+    }
+
+    #[test]
+    fn test_empty_line_returns_empty() {
+        let mut engine = Engine::new();
+        engine.eval("100");
+        let result = engine.eval(""); // Empty line should return Empty, not 100
+        assert!(
+            result.is_empty(),
+            "Empty line should return Value::Empty, got {:?}",
+            result
+        );
+
+        let result2 = engine.eval("   "); // Whitespace-only line
+        assert!(
+            result2.is_empty(),
+            "Whitespace line should return Value::Empty, got {:?}",
+            result2
+        );
     }
 
     #[test]

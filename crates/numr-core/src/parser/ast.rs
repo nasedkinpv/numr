@@ -7,9 +7,9 @@ use std::str::FromStr;
 
 use super::Rule;
 
-/// Parse a number string, stripping comma separators (e.g., "1,234" -> 1234)
+/// Parse a number string, stripping comma/space separators (e.g., "1,234" or "75 000" -> 75000)
 fn parse_number_str(s: &str) -> Result<Decimal, String> {
-    let cleaned = s.replace(',', "");
+    let cleaned = s.replace([',', ' '], "");
     Decimal::from_str(&cleaned).map_err(|e| format!("{e}"))
 }
 

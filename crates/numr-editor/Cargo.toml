@@ -1,8 +1,25 @@
 [package]
 name = "numr-editor"
+description = "Syntax highlighting and text buffer for numr calculator"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+wasm = ["dep:wasm-bindgen", "dep:serde", "dep:serde_json", "dep:console_error_panic_hook"]
+
 [dependencies]
 numr-core = { path = "../numr-core" }
+
+# WASM support (optional)
+wasm-bindgen = { version = "0.2", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
