@@ -1,25 +1,7 @@
-// =============================================================================
-// numr grammar - Natural language calculator expressions
-// =============================================================================
-//
-// ADDING NEW CURRENCIES OR UNITS:
-// 1. Add to the registry in types/currency.rs or types/unit.rs (source of truth)
-// 2. Update the corresponding rules below (currency_symbol, currency_code, unit)
-// 3. Update target_unit rule to include the new conversion target
-//
-// The registries in types/ are the source of truth for:
-// - Parsing (Currency::parse, Unit::parse)
-// - Display (symbol(), short_name())
-// - Syntax highlighting (ui.rs reads from registries)
-//
-// This grammar file must be kept in sync with the registries manually.
-// =============================================================================
+line = { SOI ~ (assignment | expression)? ~ trailing_text? ~ EOI }
 
-// -----------------------------------------------------------------------------
-// ENTRY POINT
-// -----------------------------------------------------------------------------
-
-line = { SOI ~ (assignment | expression)? ~ EOI }
+// Exact line match without trailing prose - used for continuation detection
+line_no_prose = { SOI ~ (assignment | expression)? ~ trailing_text? ~ EOI }
 
 // -----------------------------------------------------------------------------
 // STATEMENTS
@@ -28,19 +10,15 @@ line = { SOI ~ (assignment | expression)? ~ EOI }
 // Assignment: variable = expression
 assignment = { identifier ~ "=" ~ expression }
 
-// Expression: calculation optionally followed by conversion (e.g., "in usd")
-expression = { calculation ~ conversion_suffix? }
+// Expression: calculation
+expression = { calculation }
 
 // Calculation: terms connected by operators
 calculation = { term ~ (operation ~ term)* }
 
-// Conversion suffix: "in euros", "to km"
-// Allows trailing prose text after the target unit (e.g., "in eur and some note here")
-conversion_suffix = { ("in" | "to") ~ target_unit ~ trailing_text? }
-
 // Trailing text after conversion - anything that doesn't look like an operator or continuation
 // Must start with a non-operator, non-digit character sequence
-trailing_text = _{ &ASCII_ALPHA ~ (!EOI ~ ANY)* }
+trailing_text = { &ASCII_ALPHA ~ (!EOI ~ ANY)* }
 
 // -----------------------------------------------------------------------------
 // TERMS (atoms)
@@ -65,12 +43,13 @@ parenthesized = { "(" ~ expression ~ ")" }
 // OPERATORS (precedence handled in AST building)
 // -----------------------------------------------------------------------------
 
-operation = _{ add | subtract | multiply | divide | power }
+operation = _{ add | subtract | multiply | divide | power | conversion_op }
 add      = { "+" }
 subtract = { "-" }
 multiply = { "*" | "x" | "×" }
 divide   = { "/" | "÷" }
 power    = { "^" | "**" }
+conversion_op = { "in" | "to" }
 
 // -----------------------------------------------------------------------------
 // SPECIAL EXPRESSIONS
@@ -109,8 +88,13 @@ currency_value = {
     | (number ~ currency_symbol)
 }
 
-// Suffixed number: "100 USD", "5 km", "100 x" (implicit multiplication)
-suffixed_number = { number ~ identifier }
+// Suffixed number: "100 USD", "5 km", "100 x" (implicit multiplication), "20 in" (inches)
+// Must not match conversion keywords ("in", "to") followed by identifier to avoid ambiguity
+suffixed_number = { number ~ !keyword_with_target ~ identifier }
+
+// Helper to identify when "in" or "to" are used as conversion operators
+// Must be a standalone word followed by an identifier to be a conversion
+keyword_with_target = @{ ("in" | "to") ~ !(ASCII_ALPHANUMERIC | "_") ~ WHITESPACE+ ~ identifier }
 
 // -----------------------------------------------------------------------------
 // CURRENCIES

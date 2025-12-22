@@ -42,8 +42,8 @@ pub mod wasm;
 pub use eval::EvalContext;
 pub use parser::{parse_line, try_parse_exact, Ast, BinaryOp, Expr};
 pub use types::{
-    CompoundUnit, Currency, CurrencyDef, Dimensions, RuntimeUnitDef, Unit, UnitType, Value,
-    CURRENCIES, UNITS,
+    format_currency, format_number, CompoundUnit, Currency, CurrencyDef, Dimensions,
+    RuntimeUnitDef, Unit, UnitType, Value, CURRENCIES, UNITS,
 };
 
 // Re-export Decimal for tests and external use
@@ -134,8 +134,8 @@ impl Engine {
             return (self.parse_and_eval(input), false);
         }
 
-        // Only try continuation if we have a previous result
-        if self.context.get_variable("_").is_some() {
+        // Only try continuation if it looks like one and we have a previous result
+        if self.looks_like_continuation(input) && self.context.get_variable("_").is_some() {
             let continued = format!("_ {}", input);
             // Use exact parsing to avoid fuzzy suffix matching
             if let Ok(ast) = try_parse_exact(&continued) {
@@ -147,6 +147,46 @@ impl Engine {
         }
         // Fall back to normal parsing
         (self.parse_and_eval(input), false)
+    }
+
+    /// Check if input looks like it's continuing a previous expression
+    /// (e.g., starts with an operator or "in"/"to")
+    fn looks_like_continuation(&self, input: &str) -> bool {
+        let trimmed = input.trim_start();
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        // Starts with a single-character operator
+        let first = trimmed.chars().next().unwrap();
+        if "+-*/÷^".contains(first) {
+            return true;
+        }
+
+        // Special handling for 'x' and '×' to avoid matching variable names
+        if first == 'x' || first == '×' {
+            let next = trimmed.chars().nth(1);
+            if next.is_none() || next.unwrap().is_whitespace() || next.unwrap().is_ascii_digit() {
+                return true;
+            }
+        }
+
+        // Starts with "in" or "to" (multi-character operators)
+        // Check for boundary to avoid matching "interest" as "in"
+        if trimmed.starts_with("in") {
+            let next = trimmed.chars().nth(2);
+            if next.is_none() || next.unwrap().is_whitespace() {
+                return true;
+            }
+        }
+        if trimmed.starts_with("to") {
+            let next = trimmed.chars().nth(2);
+            if next.is_none() || next.unwrap().is_whitespace() {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Check if input contains a standalone `_` or `ANS` reference (not part of another identifier)
@@ -193,7 +233,7 @@ impl Engine {
         }
 
         // Try continuation-first if we have a previous value
-        if ctx.get_variable("_").is_some() {
+        if self.looks_like_continuation(input) && ctx.get_variable("_").is_some() {
             if let Ok(ast) = try_parse_exact(&format!("_ {}", input)) {
                 let result = eval::evaluate(&ast, &mut ctx);
                 if !result.is_error() {

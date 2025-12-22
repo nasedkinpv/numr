@@ -117,7 +117,7 @@ impl std::fmt::Display for Value {
 }
 
 /// Format a number nicely (max 2 decimal places, remove trailing zeros only if integer)
-fn format_number(n: Decimal) -> String {
+pub fn format_number(n: Decimal) -> String {
     let rounded = n.round_dp(2);
     if rounded.fract().is_zero() {
         format!("{}", rounded.trunc())
@@ -127,7 +127,7 @@ fn format_number(n: Decimal) -> String {
 }
 
 /// Format currency amount (always 2 decimal places)
-fn format_currency(n: Decimal) -> String {
+pub fn format_currency(n: Decimal) -> String {
     format!("{:.2}", n.round_dp(2))
 }
 

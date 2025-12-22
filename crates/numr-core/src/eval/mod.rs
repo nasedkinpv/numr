@@ -164,6 +164,7 @@ fn try_percentage_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Value>
         BinaryOp::Divide if p.is_zero() => Value::Error("Division by zero".to_string()),
         BinaryOp::Divide => Value::Number(base / p),
         BinaryOp::Power => Value::Number(base.powd(*p)),
+        BinaryOp::Conversion => return None,
     })
 }
 
@@ -321,6 +322,7 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
             }
         }
         BinaryOp::Power => None, // Power not supported for compound units
+        BinaryOp::Conversion => None,
     }
 }
 
@@ -429,6 +431,7 @@ fn apply_op(op: BinaryOp, l: Decimal, r: Decimal) -> Result<Decimal, String> {
         BinaryOp::Divide if r.is_zero() => Err("Division by zero".to_string()),
         BinaryOp::Divide => Ok(l / r),
         BinaryOp::Power => Ok(l.powd(r)),
+        BinaryOp::Conversion => Err("Internal error: Unhandled conversion op".to_string()),
     }
 }
 
