@@ -3,7 +3,7 @@
 //! Enables external tools to use numr as a calculation backend.
 //! Reads JSON-RPC requests from stdin, writes responses to stdout.
 
-use numr_core::{Engine, Value};
+use numr_core::{format_currency, format_number, Decimal, Engine, Value};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
 
@@ -103,35 +103,35 @@ fn value_to_result(value: &Value) -> EvalResult {
     match value {
         Value::Number(n) => EvalResult {
             result_type: "number",
-            value: Some(n.to_string()),
+            value: Some(format_number(*n)),
             unit: None,
             message: None,
             display: value.to_string(),
         },
         Value::Percentage(p) => EvalResult {
             result_type: "percentage",
-            value: Some(p.to_string()),
+            value: Some(format_number(*p * Decimal::from(100))),
             unit: None,
             message: None,
             display: value.to_string(),
         },
         Value::Currency { amount, currency } => EvalResult {
             result_type: "currency",
-            value: Some(amount.to_string()),
+            value: Some(format_currency(*amount)),
             unit: Some(currency.code().to_string()),
             message: None,
             display: value.to_string(),
         },
         Value::WithUnit { amount, unit } => EvalResult {
             result_type: "unit",
-            value: Some(amount.to_string()),
+            value: Some(format_number(*amount)),
             unit: Some(unit.to_string()),
             message: None,
             display: value.to_string(),
         },
         Value::WithCompoundUnit { amount, unit } => EvalResult {
             result_type: "unit",
-            value: Some(amount.to_string()),
+            value: Some(format_number(*amount)),
             unit: Some(unit.symbol.clone()),
             message: None,
             display: value.to_string(),

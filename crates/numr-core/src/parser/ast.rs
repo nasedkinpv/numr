@@ -67,23 +67,48 @@ pub enum BinaryOp {
     Multiply,
     Divide,
     Power,
+    Conversion,
 }
 
 /// Build AST from parsed pairs
 pub fn build_ast(pairs: Pairs<'_, Rule>) -> Result<Ast, String> {
     for pair in pairs {
-        if pair.as_rule() == Rule::line {
+        if pair.as_rule() == Rule::line || pair.as_rule() == Rule::line_no_prose {
             let inner = pair.into_inner();
+            let mut assignment = None;
+            let mut expression = None;
+            let mut has_trailing = false;
+
             for inner_pair in inner {
                 match inner_pair.as_rule() {
-                    Rule::assignment => return build_assignment(inner_pair.into_inner()),
+                    Rule::assignment => {
+                        assignment = Some(build_assignment(inner_pair.into_inner())?);
+                    }
                     Rule::expression => {
-                        return Ok(Ast::Expression(build_expression(inner_pair.into_inner())?))
+                        expression = Some(build_expression(inner_pair.into_inner())?);
+                    }
+                    Rule::trailing_text => {
+                        has_trailing = true;
                     }
                     Rule::EOI => continue,
                     _ => {}
                 }
             }
+
+            if let Some(a) = assignment {
+                return Ok(a);
+            }
+
+            if let Some(e) = expression {
+                // Heuristic: If we matched just a single variable followed by prose,
+                // it's likely leading junk (e.g., "string here before 1 + 2").
+                // Returning an error forces fuzzy parsing to try suffixes.
+                if has_trailing && matches!(e, Expr::Variable(_)) {
+                    return Err("Ambiguous leading prose".to_string());
+                }
+                return Ok(Ast::Expression(e));
+            }
+
             return Ok(Ast::Empty);
         }
     }
@@ -108,41 +133,14 @@ fn build_assignment(mut pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Ast, 
 
 fn build_expression(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, String> {
     let mut calculation_expr = None;
-    let mut conversion_target = None;
 
     for pair in pairs {
-        match pair.as_rule() {
-            Rule::calculation => {
-                calculation_expr = Some(build_calculation(pair.into_inner())?);
-            }
-            Rule::conversion_suffix => {
-                let inner = pair.into_inner();
-                // Skip "in"/"to"
-                // inner.next(); // "in" | "to" is part of the rule but maybe not a capture?
-                // grammar: conversion_suffix = { ("in" | "to") ~ target_unit }
-                // "in" | "to" are literals/rules.
-                // target_unit is the capture we want.
-                // Let's check inner pairs.
-                for p in inner {
-                    if p.as_rule() == Rule::target_unit {
-                        conversion_target = Some(p.as_str().to_string());
-                    }
-                }
-            }
-            _ => {}
+        if pair.as_rule() == Rule::calculation {
+            calculation_expr = Some(build_calculation(pair.into_inner())?);
         }
     }
 
-    let expr = calculation_expr.ok_or("Expected calculation")?;
-
-    if let Some(target) = conversion_target {
-        Ok(Expr::Conversion {
-            value: Box::new(expr),
-            target_unit: target,
-        })
-    } else {
-        Ok(expr)
-    }
+    calculation_expr.ok_or("Expected calculation".to_string())
 }
 
 fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, String> {
@@ -189,6 +187,7 @@ fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, St
             Rule::multiply => ops.push(BinaryOp::Multiply),
             Rule::divide => ops.push(BinaryOp::Divide),
             Rule::power => ops.push(BinaryOp::Power),
+            Rule::conversion_op => ops.push(BinaryOp::Conversion),
             _ => {}
         }
     }
@@ -208,14 +207,60 @@ fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, St
         &[BinaryOp::Multiply, BinaryOp::Divide],
     );
 
-    // Pass 3: Add, Subtract
-    process_ops(&mut terms, &mut ops, &[BinaryOp::Add, BinaryOp::Subtract]);
+    // Pass 3: Add, Subtract, Conversion (same precedence, left-to-right)
+    process_ops_with_conversions(&mut terms, &mut ops)?;
 
     if terms.len() != 1 {
         return Err("Failed to reduce expression".to_string());
     }
 
     Ok(terms.remove(0))
+}
+
+fn process_ops_with_conversions(
+    terms: &mut Vec<Expr>,
+    ops: &mut Vec<BinaryOp>,
+) -> Result<(), String> {
+    let mut i = 0;
+    while i < ops.len() {
+        match ops[i] {
+            BinaryOp::Conversion => {
+                ops.remove(i);
+                let left = terms.remove(i);
+                let right = terms.remove(i);
+
+                // Right operand MUST be a variable (identifier) for the target unit
+                let target_unit = match right {
+                    Expr::Variable(name) => name,
+                    _ => return Err("Conversion target must be a unit identifier".to_string()),
+                };
+
+                terms.insert(
+                    i,
+                    Expr::Conversion {
+                        value: Box::new(left),
+                        target_unit,
+                    },
+                );
+            }
+            BinaryOp::Add | BinaryOp::Subtract => {
+                let op = ops.remove(i);
+                let left = terms.remove(i);
+                let right = terms.remove(i);
+
+                terms.insert(
+                    i,
+                    Expr::BinaryOp {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                );
+            }
+            _ => i += 1,
+        }
+    }
+    Ok(())
 }
 
 fn process_ops(terms: &mut Vec<Expr>, ops: &mut Vec<BinaryOp>, target_ops: &[BinaryOp]) {

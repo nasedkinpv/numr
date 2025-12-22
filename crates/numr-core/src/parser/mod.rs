@@ -15,26 +15,26 @@ pub struct NumrParser;
 pub fn parse_line(input: &str) -> Result<Ast, String> {
     // Try parsing the full line first
     if let Ok(pairs) = NumrParser::parse(Rule::line, input) {
-        return ast::build_ast(pairs);
+        if let Ok(ast) = ast::build_ast(pairs) {
+            return Ok(ast);
+        }
     }
 
     // Fuzzy parsing: Try to find a valid suffix
-    // We iterate through char indices to find a start position
     for (i, _) in input.char_indices() {
         if i == 0 {
             continue;
         } // Already tried full line
 
         let suffix = &input[i..];
-        // Optimization: Only try if it looks like start of something (digit, variable, etc)
-        // For now, just try everything to be safe, or maybe skip whitespace
         if suffix.trim().is_empty() {
             continue;
         }
 
         if let Ok(pairs) = NumrParser::parse(Rule::line, suffix) {
-            // println!("Found valid suffix: {}", suffix);
-            return ast::build_ast(pairs);
+            if let Ok(ast) = ast::build_ast(pairs) {
+                return Ok(ast);
+            }
         }
     }
 
@@ -45,7 +45,7 @@ pub fn parse_line(input: &str) -> Result<Ast, String> {
 
 /// Parse a line exactly (no fuzzy fallback) - used for continuation detection
 pub fn try_parse_exact(input: &str) -> Result<Ast, String> {
-    match NumrParser::parse(Rule::line, input) {
+    match NumrParser::parse(Rule::line_no_prose, input) {
         Ok(pairs) => ast::build_ast(pairs),
         Err(_) => Err("Parse error".to_string()),
     }
