@@ -346,6 +346,10 @@ Rate sources:
 - **Fiat currencies**: [open.er-api.com](https://open.er-api.com) (152 currencies, free)
 - **Cryptocurrency**: [CoinGecko](https://www.coingecko.com/en/api) (15 tokens, free)
 
+## Integrations
+
+- [elephant-numr](https://github.com/nasedkinpv/elephant-numr) — Provider for [Walker/Elephant](https://github.com/abenz1267/walker) launcher
+
 ## License
 
 MIT
