@@ -32,9 +32,24 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  # Create GitHub Release first (before uploading binaries)
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+
   # Build and upload binaries for all platforms
   upload-binaries:
-    needs: build
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -58,23 +73,9 @@ jobs:
           archive: numr-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # Create GitHub Release (after binaries are uploaded)
-  github-release:
-    needs: upload-binaries
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Update GitHub Release notes
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-
   # Update AUR package (binary)
   aur:
-    needs: github-release
+    needs: upload-binaries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -121,7 +122,7 @@ jobs:
 
   # Update Homebrew tap
   homebrew:
-    needs: github-release
+    needs: upload-binaries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
