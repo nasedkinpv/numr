@@ -32,21 +32,47 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-  # Create GitHub Release
-  github-release:
+  # Build and upload binaries for all platforms
+  upload-binaries:
     needs: build
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: numr,numr-cli
+          target: ${{ matrix.target }}
+          archive: numr-$tag-$target
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Create GitHub Release (after binaries are uploaded)
+  github-release:
+    needs: upload-binaries
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create GitHub Release
+      - name: Update GitHub Release notes
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
 
-  # Update AUR package
+  # Update AUR package (binary)
   aur:
     needs: github-release
     runs-on: ubuntu-latest
@@ -57,11 +83,11 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Download release tarball and get sha256
+      - name: Download binary and get sha256
         id: sha256
         run: |
-          curl -sL "https://github.com/${{ github.repository }}/archive/refs/tags/v${{ steps.version.outputs.version }}.tar.gz" -o release.tar.gz
-          echo "sha256=$(sha256sum release.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/numr-v${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz" -o binary.tar.gz
+          echo "sha256=$(sha256sum binary.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Update PKGBUILD
         run: |
@@ -104,16 +130,21 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Download release tarball and get sha256
+      - name: Download binaries and get sha256
         id: sha256
         run: |
-          curl -sL "https://github.com/${{ github.repository }}/archive/refs/tags/v${{ steps.version.outputs.version }}.tar.gz" -o release.tar.gz
-          echo "sha256=$(sha256sum release.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/numr-v${{ steps.version.outputs.version }}-aarch64-apple-darwin.tar.gz" -o arm.tar.gz
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/numr-v${{ steps.version.outputs.version }}-x86_64-apple-darwin.tar.gz" -o intel.tar.gz
+          echo "sha256_arm=$(sha256sum arm.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "sha256_intel=$(sha256sum intel.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Update formula
         run: |
-          sed -i 's|url ".*"|url "https://github.com/${{ github.repository }}/archive/v${{ steps.version.outputs.version }}.tar.gz"|' homebrew/numr.rb
-          sed -i 's/sha256 ".*"/sha256 "${{ steps.sha256.outputs.sha256 }}"/' homebrew/numr.rb
+          sed -i 's/version ".*"/version "${{ steps.version.outputs.version }}"/' homebrew/numr.rb
+          # Update ARM sha256 (line after on_arm do)
+          sed -i '/on_arm do/{n;n;s/sha256 ".*"/sha256 "${{ steps.sha256.outputs.sha256_arm }}"/}' homebrew/numr.rb
+          # Update Intel sha256 (line after on_intel do)
+          sed -i '/on_intel do/{n;n;s/sha256 ".*"/sha256 "${{ steps.sha256.outputs.sha256_intel }}"/}' homebrew/numr.rb
 
       - name: Push to Homebrew tap
         uses: cpina/github-action-push-to-another-repository@v1.7.2

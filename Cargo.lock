@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "numr-cli"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "numr-core"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "console_error_panic_hook",
  "directories",
@@ -1085,7 +1085,7 @@ dependencies = [
 
 [[package]]
 name = "numr-editor"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "console_error_panic_hook",
  "numr-core",
@@ -1096,7 +1096,7 @@ dependencies = [
 
 [[package]]
 name = "numr-tui"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
