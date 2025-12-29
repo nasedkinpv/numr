@@ -1,5 +1,127 @@
 use numr_core::{decimal as d, Currency, Engine};
 
+// =============================================================================
+// Shopping & Discounts
+// =============================================================================
+
+#[test]
+fn test_discount_calculation() {
+    let mut engine = Engine::new();
+    // "20% off $150"
+    let result = engine.eval("$150 - 20% of $150");
+    assert_eq!(result.as_decimal(), Some(d("120")));
+}
+
+#[test]
+fn test_tip_calculation() {
+    let mut engine = Engine::new();
+    // "15% tip on $85 bill"
+    let result = engine.eval("15% of $85");
+    assert_eq!(result.as_decimal(), Some(d("12.75")));
+}
+
+#[test]
+fn test_split_bill() {
+    let mut engine = Engine::new();
+    // "Split $120 bill 4 ways"
+    let result = engine.eval("$120 / 4");
+    assert_eq!(result.as_decimal(), Some(d("30")));
+}
+
+#[test]
+fn test_tax_inclusive_price() {
+    let mut engine = Engine::new();
+    // "Price with 8% tax"
+    let result = engine.eval("$100 + 8%");
+    assert_eq!(result.as_decimal(), Some(d("108")));
+}
+
+// =============================================================================
+// Unit Conversions (Cooking, Travel)
+// =============================================================================
+
+#[test]
+fn test_cooking_conversion() {
+    let mut engine = Engine::new();
+    // "500ml in cups" (1 cup ≈ 236.588ml)
+    let result = engine.eval("500 ml to cups");
+    assert!(!result.is_error(), "Got: {:?}", result);
+    let amount = result.as_decimal().unwrap();
+    assert!(amount > d("2") && amount < d("2.2")); // ~2.11 cups
+}
+
+#[test]
+fn test_temperature_conversion() {
+    let mut engine = Engine::new();
+    // "350°F in Celsius" (common oven temp)
+    let result = engine.eval("350 fahrenheit to celsius");
+    assert!(!result.is_error(), "Got: {:?}", result);
+    let amount = result.as_decimal().unwrap();
+    assert!(amount > d("175") && amount < d("178")); // ~176.67°C
+}
+
+#[test]
+fn test_distance_for_travel() {
+    let mut engine = Engine::new();
+    // "Marathon distance in miles"
+    let result = engine.eval("42.195 km to miles");
+    assert!(!result.is_error(), "Got: {:?}", result);
+    let amount = result.as_decimal().unwrap();
+    assert!(amount > d("26.1") && amount < d("26.3")); // ~26.22 miles
+}
+
+// =============================================================================
+// Financial Calculations
+// =============================================================================
+
+#[test]
+fn test_hourly_to_annual() {
+    let mut engine = Engine::new();
+    // "$25/hour * 40 hours * 52 weeks"
+    let result = engine.eval("25 * 40 * 52");
+    assert_eq!(result.as_decimal(), Some(d("52000")));
+}
+
+#[test]
+fn test_monthly_savings() {
+    let mut engine = Engine::new();
+    // Track monthly budget
+    engine.eval("income = 5000");
+    engine.eval("rent = 1500");
+    engine.eval("utilities = 200");
+    engine.eval("food = 600");
+    let result = engine.eval("income - rent - utilities - food");
+    assert_eq!(result.as_decimal(), Some(d("2700")));
+}
+
+#[test]
+fn test_loan_monthly_payment_simple() {
+    let mut engine = Engine::new();
+    // Simple interest: $10000 loan at 5% over 12 months
+    // Monthly = (principal + interest) / months
+    let result = engine.eval("(10000 + 5% of 10000) / 12");
+    assert_eq!(result.as_decimal(), Some(d("875")));
+}
+
+// =============================================================================
+// Time Calculations
+// =============================================================================
+
+#[test]
+fn test_hours_to_minutes() {
+    let mut engine = Engine::new();
+    let result = engine.eval("2.5 hours to minutes");
+    assert_eq!(result.as_decimal(), Some(d("150")));
+}
+
+#[test]
+fn test_work_hours() {
+    let mut engine = Engine::new();
+    // "8 hours * 5 days"
+    let result = engine.eval("8 * 5");
+    assert_eq!(result.as_decimal(), Some(d("40")));
+}
+
 #[test]
 fn test_real_life_scenario() {
     let mut engine = Engine::new();
