@@ -73,9 +73,10 @@ jobs:
           archive: numr-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # Update AUR package (binary)
+  # Update AUR package (binary) - skip for pre-releases
   aur:
     needs: upload-binaries
+    if: ${{ !contains(github.ref, '-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,9 +121,10 @@ jobs:
           assets: |
             ./aur/.SRCINFO
 
-  # Update Homebrew tap
+  # Update Homebrew tap - skip for pre-releases
   homebrew:
     needs: upload-binaries
+    if: ${{ !contains(github.ref, '-') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
