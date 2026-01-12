@@ -24,12 +24,21 @@ pub enum FetchStatus {
     Error(String),
 }
 
-/// Pending command for multi-key sequences (like dd, yy)
+/// Pending command for multi-key sequences (like dd, gg)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PendingCommand {
     #[default]
     None,
     Delete, // Waiting for second 'd' to complete 'dd'
+    Go,     // Waiting for second 'g' to complete 'gg'
+}
+
+/// Keybinding mode (Vim vs Standard)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeybindingMode {
+    #[default]
+    Vim, // Modal editing with Normal/Insert modes
+    Standard, // Direct input like traditional editors
 }
 
 pub struct App {
@@ -43,7 +52,8 @@ pub struct App {
     pub viewport_height: usize, // Visible lines count
     pub engine: Engine,
     pub mode: InputMode,
-    pub pending: PendingCommand, // For multi-key commands like dd
+    pub keybinding_mode: KeybindingMode,
+    pub pending: PendingCommand, // For multi-key commands like dd, gg
     pub path: Option<PathBuf>,
     pub dirty: bool,
     pub debug_mode: bool,
@@ -452,6 +462,165 @@ impl App {
         self.ensure_cursor_visible();
     }
 
+    /// Move to first line (gg in vim)
+    pub fn move_to_first_line(&mut self) {
+        self.cursor_y = 0;
+        self.cursor_x = 0;
+        self.ensure_cursor_visible();
+    }
+
+    /// Move to last line (G in vim)
+    pub fn move_to_last_line(&mut self) {
+        self.cursor_y = self.lines.len().saturating_sub(1);
+        self.cursor_x = 0;
+        self.ensure_cursor_visible();
+    }
+
+    /// Delete from cursor to end of line (D in vim)
+    pub fn delete_to_line_end(&mut self) {
+        let line = self.cursor_y;
+        if line < self.lines.len() {
+            let byte_idx = char_to_byte_idx(&self.lines[line], self.cursor_x);
+            self.lines[line].truncate(byte_idx);
+            self.recalculate();
+        }
+    }
+
+    /// Move to next word start (w in vim)
+    pub fn move_word_forward(&mut self) {
+        let line = &self.lines[self.cursor_y];
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+
+        if self.cursor_x >= len {
+            // Move to next line if possible
+            if self.cursor_y < self.lines.len() - 1 {
+                self.cursor_y += 1;
+                self.cursor_x = 0;
+                // Skip leading whitespace on new line
+                let next_line: Vec<char> = self.lines[self.cursor_y].chars().collect();
+                while self.cursor_x < next_line.len() && next_line[self.cursor_x].is_whitespace() {
+                    self.cursor_x += 1;
+                }
+            }
+            self.ensure_cursor_visible();
+            return;
+        }
+
+        let mut pos = self.cursor_x;
+
+        // Skip current word (non-whitespace)
+        while pos < len && !chars[pos].is_whitespace() {
+            pos += 1;
+        }
+        // Skip whitespace
+        while pos < len && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        if pos >= len && self.cursor_y < self.lines.len() - 1 {
+            // Move to next line
+            self.cursor_y += 1;
+            self.cursor_x = 0;
+            let next_line: Vec<char> = self.lines[self.cursor_y].chars().collect();
+            while self.cursor_x < next_line.len() && next_line[self.cursor_x].is_whitespace() {
+                self.cursor_x += 1;
+            }
+        } else {
+            self.cursor_x = pos.min(len);
+        }
+        self.ensure_cursor_visible();
+    }
+
+    /// Move to previous word start (b in vim)
+    pub fn move_word_backward(&mut self) {
+        if self.cursor_x == 0 {
+            if self.cursor_y > 0 {
+                self.cursor_y -= 1;
+                self.cursor_x = char_count(&self.lines[self.cursor_y]);
+            } else {
+                return;
+            }
+        }
+
+        let line = &self.lines[self.cursor_y];
+        let chars: Vec<char> = line.chars().collect();
+
+        if chars.is_empty() {
+            self.cursor_x = 0;
+            self.ensure_cursor_visible();
+            return;
+        }
+
+        let mut pos = self.cursor_x.saturating_sub(1);
+
+        // Skip whitespace backwards
+        while pos > 0 && chars[pos].is_whitespace() {
+            pos -= 1;
+        }
+        // Skip word backwards
+        while pos > 0 && !chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+
+        self.cursor_x = pos;
+        self.ensure_cursor_visible();
+    }
+
+    /// Move to end of word (e in vim)
+    pub fn move_word_end(&mut self) {
+        let line = &self.lines[self.cursor_y];
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+
+        if self.cursor_x >= len.saturating_sub(1) {
+            if self.cursor_y < self.lines.len() - 1 {
+                self.cursor_y += 1;
+                self.cursor_x = 0;
+                let next_line: Vec<char> = self.lines[self.cursor_y].chars().collect();
+                // Skip whitespace, then find end of word
+                while self.cursor_x < next_line.len() && next_line[self.cursor_x].is_whitespace() {
+                    self.cursor_x += 1;
+                }
+                while self.cursor_x < next_line.len().saturating_sub(1)
+                    && !next_line[self.cursor_x + 1].is_whitespace()
+                {
+                    self.cursor_x += 1;
+                }
+            }
+            self.ensure_cursor_visible();
+            return;
+        }
+
+        let mut pos = self.cursor_x + 1;
+
+        // Skip whitespace
+        while pos < len && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+        // Move to end of word
+        while pos < len.saturating_sub(1) && !chars[pos + 1].is_whitespace() {
+            pos += 1;
+        }
+
+        self.cursor_x = pos.min(len.saturating_sub(1).max(0));
+        self.ensure_cursor_visible();
+    }
+
+    /// Toggle keybinding mode between Vim and Standard
+    pub fn toggle_keybinding_mode(&mut self) {
+        self.keybinding_mode = match self.keybinding_mode {
+            KeybindingMode::Vim => {
+                self.mode = InputMode::Insert; // Standard mode is always "insert"
+                KeybindingMode::Standard
+            }
+            KeybindingMode::Standard => {
+                self.mode = InputMode::Normal;
+                KeybindingMode::Vim
+            }
+        };
+    }
+
     /// Get totals grouped by type (currency, unit, etc.)
     pub fn grouped_totals(&self) -> Vec<Value> {
         self.engine.grouped_totals()
@@ -515,6 +684,7 @@ impl Default for App {
             viewport_height: 20, // Will be updated by UI
             engine: Engine::new(),
             mode: InputMode::Normal,
+            keybinding_mode: KeybindingMode::Vim,
             pending: PendingCommand::None,
             path: None,
             dirty: false,
