@@ -1,6 +1,6 @@
 # Maintainer: nasedkinpv <nasedkinpv@users.noreply.github.com>
 pkgname=numr
-pkgver=0.4.0
+pkgver=0.4.1
 pkgrel=1
 pkgdesc="A text calculator for natural language expressions with a vim-style TUI"
 arch=('x86_64')

@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, InputMode};
+use crate::app::{App, InputMode, KeybindingMode};
 use crate::popups::{draw_help_popup, draw_quit_popup};
 use numr_editor::{tokenize, TokenType};
 
@@ -104,7 +104,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_footer(frame, footer_area, app, max_result_width + 4);
 
     if app.show_help {
-        draw_help_popup(frame, area, app.help_scroll);
+        draw_help_popup(frame, area, app.help_scroll, app.keybinding_mode);
     }
 
     if app.show_quit_confirmation {
@@ -494,22 +494,33 @@ fn build_hints_parts(app: &App) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
         left.push(" •".fg(palette::NUMBER));
     }
 
-    // Right part: keybindings
+    // Right part: keybindings (different for each mode)
     let mut right: Vec<Span<'static>> = Vec::new();
 
-    match app.mode {
-        InputMode::Normal => {
-            right.push("?".fg(palette::ACCENT));
-            right.push(" help ".dim());
+    match app.keybinding_mode {
+        KeybindingMode::Vim => {
+            match app.mode {
+                InputMode::Normal => {
+                    right.push("?".fg(palette::ACCENT));
+                    right.push(" help ".dim());
+                }
+                InputMode::Insert => {
+                    right.push("esc".fg(palette::ACCENT));
+                    right.push(" normal ".dim());
+                }
+            }
+            right.push("^s".fg(palette::ACCENT));
+            right.push(" save ".dim());
         }
-        InputMode::Insert => {
-            right.push("esc".fg(palette::ACCENT));
-            right.push(" normal ".dim());
+        KeybindingMode::Standard => {
+            right.push("F1".fg(palette::ACCENT));
+            right.push(" help ".dim());
+            right.push("^s".fg(palette::ACCENT));
+            right.push(" save ".dim());
+            right.push("^q".fg(palette::ACCENT));
+            right.push(" quit ".dim());
         }
     }
-
-    right.push("^s".fg(palette::ACCENT));
-    right.push(" save ".dim());
 
     if app.debug_mode {
         right.push("F12".fg(palette::ACCENT));
@@ -541,7 +552,10 @@ fn build_mode_indicator(app: &App) -> Span<'static> {
                 .map(saved_pulse_color)
                 .unwrap_or(palette::VARIABLE)
         } else {
-            palette::ACCENT
+            // Animated cyan↔magenta gradient for other status messages
+            app.status_start
+                .map(loading_pulse_color)
+                .unwrap_or(palette::ACCENT)
         };
         Span::styled(
             format!(" {} ", msg.to_uppercase()),
@@ -557,9 +571,12 @@ fn build_mode_indicator(app: &App) -> Span<'static> {
             Style::new().fg(Color::Black).bg(bg_color).bold(),
         )
     } else {
-        match app.mode {
-            InputMode::Normal => " NORMAL ".fg(Color::Black).bg(palette::ACCENT).bold(),
-            InputMode::Insert => " INSERT ".fg(Color::Black).bg(palette::VARIABLE).bold(),
+        match app.keybinding_mode {
+            KeybindingMode::Standard => " STANDARD ".fg(Color::Black).bg(palette::OPERATOR).bold(),
+            KeybindingMode::Vim => match app.mode {
+                InputMode::Normal => " NORMAL ".fg(Color::Black).bg(palette::ACCENT).bold(),
+                InputMode::Insert => " INSERT ".fg(Color::Black).bg(palette::VARIABLE).bold(),
+            },
         }
     }
 }

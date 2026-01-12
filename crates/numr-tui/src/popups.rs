@@ -11,10 +11,8 @@ use ratatui::{
     Frame,
 };
 
+use crate::app::KeybindingMode;
 use crate::ui::palette;
-
-/// Number of rows in the help table (for scroll calculations)
-pub const HELP_ROWS_COUNT: usize = 21;
 
 /// Draw the quit confirmation popup
 pub fn draw_quit_popup(frame: &mut Frame, area: Rect) {
@@ -56,30 +54,17 @@ pub fn draw_quit_popup(frame: &mut Frame, area: Rect) {
 }
 
 /// Draw the help popup with scroll support
-pub fn draw_help_popup(frame: &mut Frame, area: Rect, scroll_offset: usize) {
-    let all_rows = vec![
-        Row::new(vec!["Navigation", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
-        Row::new(vec!["Arrows / hjkl", "Move cursor"]),
-        Row::new(vec!["Home / 0", "Start of line"]),
-        Row::new(vec!["End / $", "End of line"]),
-        Row::new(vec!["PageUp / PageDown", "Scroll page"]),
-        Row::new(vec!["", ""]),
-        Row::new(vec!["Editing", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
-        Row::new(vec!["i / a", "Insert mode"]),
-        Row::new(vec!["o", "New line below"]),
-        Row::new(vec!["dd", "Delete line"]),
-        Row::new(vec!["x", "Delete char"]),
-        Row::new(vec!["", ""]),
-        Row::new(vec!["General", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
-        Row::new(vec!["W", "Toggle wrap mode"]),
-        Row::new(vec!["N", "Toggle line numbers"]),
-        Row::new(vec!["H", "Toggle header"]),
-        Row::new(vec!["Ctrl+s", "Save file"]),
-        Row::new(vec!["Ctrl+r", "Refresh rates"]),
-        Row::new(vec!["F12", "Toggle debug"]),
-        Row::new(vec!["? / F1", "Toggle help"]),
-        Row::new(vec!["q / Esc", "Quit / Close help"]),
-    ];
+pub fn draw_help_popup(
+    frame: &mut Frame,
+    area: Rect,
+    scroll_offset: usize,
+    keybinding_mode: KeybindingMode,
+) {
+    let (all_rows, title) = match keybinding_mode {
+        KeybindingMode::Vim => (vim_help_rows(), " Help (Vim) "),
+        KeybindingMode::Standard => (standard_help_rows(), " Help (Standard) "),
+    };
+    let help_rows_count = all_rows.len();
 
     // Calculate dimensions: visible rows + header (2) + borders (2) + padding (2)
     let max_visible_rows = area.height.saturating_sub(8) as usize;
@@ -97,7 +82,7 @@ pub fn draw_help_popup(frame: &mut Frame, area: Rect, scroll_offset: usize) {
         .take(max_visible_rows)
         .collect();
 
-    let needs_scroll = HELP_ROWS_COUNT > max_visible_rows;
+    let needs_scroll = help_rows_count > max_visible_rows;
 
     let table = Table::new(
         visible_rows,
@@ -105,7 +90,7 @@ pub fn draw_help_popup(frame: &mut Frame, area: Rect, scroll_offset: usize) {
     )
     .block(
         Block::bordered()
-            .title(" Help ")
+            .title(title)
             .title_style(Style::new().bold().fg(palette::ACCENT))
             .style(Style::new().bg(Color::Black))
             .padding(Padding::horizontal(1)),
@@ -127,7 +112,7 @@ pub fn draw_help_popup(frame: &mut Frame, area: Rect, scroll_offset: usize) {
             .track_symbol(Some("│"))
             .thumb_symbol("█");
 
-        let max_scroll = HELP_ROWS_COUNT.saturating_sub(max_visible_rows);
+        let max_scroll = help_rows_count.saturating_sub(max_visible_rows);
         let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
 
         // Scrollbar area inside the popup border
@@ -142,10 +127,75 @@ pub fn draw_help_popup(frame: &mut Frame, area: Rect, scroll_offset: usize) {
     }
 }
 
+/// Help rows for Vim mode
+fn vim_help_rows() -> Vec<Row<'static>> {
+    vec![
+        Row::new(vec!["Navigation", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["h/j/k/l", "Move cursor"]),
+        Row::new(vec!["w / b / e", "Word forward/back/end"]),
+        Row::new(vec!["0 / $", "Line start/end"]),
+        Row::new(vec!["gg / G", "First/last line"]),
+        Row::new(vec!["PageUp / PageDown", "Scroll page"]),
+        Row::new(vec!["", ""]),
+        Row::new(vec!["Insert Mode", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["i / a", "Insert at/after cursor"]),
+        Row::new(vec!["I / A", "Insert at line start/end"]),
+        Row::new(vec!["o / O", "New line below/above"]),
+        Row::new(vec!["s", "Substitute char"]),
+        Row::new(vec!["C", "Change to end of line"]),
+        Row::new(vec!["Esc", "Back to normal mode"]),
+        Row::new(vec!["", ""]),
+        Row::new(vec!["Editing", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["x / X", "Delete char fwd/back"]),
+        Row::new(vec!["dd", "Delete line"]),
+        Row::new(vec!["D", "Delete to end of line"]),
+        Row::new(vec!["J", "Join lines"]),
+        Row::new(vec!["", ""]),
+        Row::new(vec!["General", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["W / N / H", "Toggle wrap/numbers/header"]),
+        Row::new(vec!["Ctrl+s", "Save file"]),
+        Row::new(vec!["Ctrl+r", "Refresh rates"]),
+        Row::new(vec!["F12", "Toggle debug"]),
+        Row::new(vec!["? / F1", "Toggle help"]),
+        Row::new(vec!["Shift+Tab", "Switch to Standard mode"]),
+        Row::new(vec!["q", "Quit"]),
+    ]
+}
+
+/// Help rows for Standard mode
+fn standard_help_rows() -> Vec<Row<'static>> {
+    vec![
+        Row::new(vec!["Navigation", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["Arrow keys", "Move cursor"]),
+        Row::new(vec!["Home / End", "Line start/end"]),
+        Row::new(vec!["PageUp / PageDown", "Scroll page"]),
+        Row::new(vec!["Ctrl+g", "Go to first line"]),
+        Row::new(vec!["Ctrl+a / Ctrl+e", "Line start/end"]),
+        Row::new(vec!["", ""]),
+        Row::new(vec!["Editing", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["Type directly", "Insert text"]),
+        Row::new(vec!["Backspace / Delete", "Delete char"]),
+        Row::new(vec!["Ctrl+k", "Delete line"]),
+        Row::new(vec!["Enter", "New line"]),
+        Row::new(vec!["", ""]),
+        Row::new(vec!["General", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
+        Row::new(vec!["? / F1", "Toggle help"]),
+        Row::new(vec!["Ctrl+w/l/h", "Toggle wrap/numbers/header"]),
+        Row::new(vec!["Ctrl+s", "Save file"]),
+        Row::new(vec!["Ctrl+r", "Refresh rates"]),
+        Row::new(vec!["Shift+Tab", "Switch to Vim mode"]),
+        Row::new(vec!["Ctrl+q", "Quit"]),
+    ]
+}
+
 /// Calculate max scroll offset for help popup
-pub fn help_max_scroll(area_height: u16) -> usize {
+pub fn help_max_scroll(area_height: u16, keybinding_mode: KeybindingMode) -> usize {
     let max_visible = area_height.saturating_sub(8) as usize;
-    HELP_ROWS_COUNT.saturating_sub(max_visible)
+    let rows_count = match keybinding_mode {
+        KeybindingMode::Vim => vim_help_rows().len(),
+        KeybindingMode::Standard => standard_help_rows().len(),
+    };
+    rows_count.saturating_sub(max_visible)
 }
 
 /// Center a rect with fixed width and height (modern ratatui approach)

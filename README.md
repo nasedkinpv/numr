@@ -30,7 +30,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Compound units**: `5 m * 10 m = 50 m²`, `100 km / 2 h = 50 km/h`
 - **Currency conversions**: USD, EUR, GBP, JPY, CHF, CNY, CAD, AUD, INR, KRW, RUB, ILS, PLN, UAH + crypto (BTC, ETH, SOL, and more)
 - **Live exchange rates**: Fetched automatically on startup
-- **Vim-style editing**: Normal and Insert modes with familiar keybindings
+- **Dual keybinding modes**: Vim (modal) or Standard (direct input) - toggle with `Shift+Tab`
 - **Mouse support**: Scroll with mouse wheel or trackpad
 - **File persistence**: Auto-saves to config directory, supports custom files
 - **Syntax highlighting**: Numbers, operators, variables, units, and currencies
@@ -126,46 +126,70 @@ echo '{"jsonrpc":"2.0","method":"eval","params":{"expr":"20% of 150"},"id":1}' |
 
 ## Keybindings (TUI)
 
-### Normal Mode
+The TUI supports two keybinding modes: **Vim** (default) and **Standard**. Press `Shift+Tab` to toggle between them.
+
+### Vim Mode
+
+#### Normal Mode
 
 | Key | Action |
 |-----|--------|
-| `i` | Enter Insert mode |
-| `a` | Enter Insert mode after cursor |
-| `A` | Enter Insert mode at end of line |
-| `o` | New line below and enter Insert mode |
-| `h` / `←` | Move left |
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
-| `l` / `→` | Move right |
-| `PageUp` | Scroll page up |
-| `PageDown` | Scroll page down |
-| `0` / `Home` | Move to start of line |
-| `$` / `End` | Move to end of line |
-| `x` | Delete character under cursor |
-| `dd` | Delete current line |
-| `W` | Toggle wrap mode |
-| `N` | Toggle line numbers |
-| `H` | Toggle header (hidden by default) |
-| `?` / `F1` | Toggle help popup |
+| `i` / `a` | Enter Insert mode at/after cursor |
+| `I` / `A` | Enter Insert mode at line start/end |
+| `o` / `O` | New line below/above and enter Insert mode |
+| `s` | Substitute character (delete and insert) |
+| `C` | Change to end of line |
+| `h` / `j` / `k` / `l` | Move left/down/up/right |
+| `w` / `b` / `e` | Word forward/backward/end |
+| `0` / `$` | Line start/end |
+| `gg` / `G` | First/last line |
+| `Space` | Move right |
+| `PageUp/Down` | Scroll page |
+| `x` / `X` | Delete char forward/backward |
+| `dd` | Delete line |
+| `D` | Delete to end of line |
+| `J` | Join lines |
+| `W` / `N` / `H` | Toggle wrap/line numbers/header |
+| `?` / `F1` | Toggle help |
+| `Ctrl+s` | Save |
+| `Ctrl+r` | Refresh rates |
+| `F12` | Toggle debug |
+| `Shift+Tab` | Switch to Standard mode |
 | `q` | Quit |
-| `Ctrl+s` | Save file |
-| `Ctrl+r` | Refresh exchange rates |
-| `F12` | Toggle debug mode |
 
-### Insert Mode
+#### Insert Mode
 
 | Key | Action |
 |-----|--------|
 | `Esc` | Return to Normal mode |
+| Type | Insert text |
+| `Backspace` / `Delete` | Delete char backward/forward |
 | `Enter` | New line |
-| `Backspace` | Delete character before cursor |
-| `Delete` | Delete character after cursor |
-| `Arrows` | Move cursor |
+| `Arrows` / `PageUp/Down` | Navigate |
+| `Home` / `End` | Line start/end |
+| `Ctrl+s` | Save |
+
+### Standard Mode
+
+Direct input like traditional editors - no modal switching required.
+
+| Key | Action |
+|-----|--------|
+| Type | Insert text directly |
+| `Arrow keys` | Move cursor |
+| `Home` / `End` | Line start/end |
 | `PageUp/Down` | Scroll page |
-| `Home/End` | Move to start/end of line |
-| `Ctrl+s` | Save file |
-| `F12` | Toggle debug mode |
+| `Ctrl+a` / `Ctrl+e` | Line start/end |
+| `Ctrl+g` | Go to first line |
+| `Backspace` / `Delete` | Delete char |
+| `Ctrl+k` | Delete line |
+| `Enter` | New line |
+| `Ctrl+w/l/h` | Toggle wrap/line numbers/header |
+| `?` / `F1` | Toggle help |
+| `Ctrl+s` | Save |
+| `Ctrl+r` | Refresh rates |
+| `Shift+Tab` | Switch to Vim mode |
+| `Ctrl+q` | Quit |
 
 ## Supported Operations
 
