@@ -362,6 +362,29 @@ numr/
 
 The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, GUI, or WASM contexts. The `fetch` feature flag enables HTTP fetching (adds reqwest dependency, not WASM-compatible).
 
+User preferences are stored in `~/.config/numr/config.toml` (created on first run). Toggle settings persist automatically.
+
+Example configuration:
+
+```toml
+[preferences]
+keybinding_mode = "standard"
+wrap_mode = true
+show_line_numbers = true
+
+[files]
+default_path = "~/Documents/default.numr"
+
+[api]
+fiat_rates_url = "https://open.er-api.com/v6/latest/USD"
+crypto_rates_url = "https://api.coingecko.com/api/v3/simple/price"
+
+[api.keys]
+coingecko_api_key = "your-key-here"
+```
+
+If `crypto_rates_url` points to CoinGecko, `numr` automatically uses the correct demo/pro API key header based on the host.
+
 Exchange rates are cached to `~/.config/numr/rates.json` with 1-hour expiry. Both TUI and CLI share this cache:
 - **TUI**: Fetches fresh rates on startup
 - **CLI**: Fetches only if cache is expired
@@ -377,4 +400,3 @@ Rate sources:
 ## License
 
 MIT
-

@@ -1,7 +1,7 @@
 class Numr < Formula
   desc "Text calculator for natural language expressions with a vim-style TUI"
   homepage "https://github.com/nasedkinpv/numr"
-  version "0.4.0"
+  version "0.5.0"
   license "MIT"
 
   on_macos do
