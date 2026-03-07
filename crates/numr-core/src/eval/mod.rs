@@ -7,7 +7,7 @@ use rust_decimal::MathematicalOps;
 
 use crate::cache::RateCache;
 use crate::parser::{Ast, BinaryOp, Expr};
-use crate::types::{unit, Currency, Unit, Value};
+use crate::types::{unit, Currency, NumberBase, Unit, Value};
 
 /// Evaluation context with variables and rates
 #[derive(Clone)]
@@ -203,7 +203,9 @@ fn try_multiply_mixed(left: &Value, right: &Value) -> Option<Value> {
         ) => Some(Value::currency(l * r, *currency)),
         // currency × number → currency
         (Value::Currency { amount, currency }, Value::Number(n))
-        | (Value::Number(n), Value::Currency { amount, currency }) => {
+        | (Value::Currency { amount, currency }, Value::BaseNumber { amount: n, .. })
+        | (Value::Number(n), Value::Currency { amount, currency })
+        | (Value::BaseNumber { amount: n, .. }, Value::Currency { amount, currency }) => {
             Some(Value::currency(amount * n, *currency))
         }
         _ => None,
@@ -217,7 +219,7 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
     let (l_amount, l_unit) = match left {
         Value::WithUnit { amount, unit } => (*amount, unit.to_compound()),
         Value::WithCompoundUnit { amount, unit } => (*amount, unit.clone()),
-        Value::Number(n) => {
+        Value::Number(n) | Value::BaseNumber { amount: n, .. } => {
             // Number × Unit → preserve unit
             if let Value::WithUnit { amount, unit } = right {
                 return match op {
@@ -241,7 +243,7 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
     let (r_amount, r_unit) = match right {
         Value::WithUnit { amount, unit } => (*amount, unit.to_compound()),
         Value::WithCompoundUnit { amount, unit } => (*amount, unit.clone()),
-        Value::Number(n) => {
+        Value::Number(n) | Value::BaseNumber { amount: n, .. } => {
             // Unit × Number → preserve unit
             return match op {
                 BinaryOp::Multiply => {
@@ -401,16 +403,34 @@ fn coerce_operands(
             },
         )
         | (
+            Value::BaseNumber { amount: l, .. },
+            Value::Currency {
+                amount: r,
+                currency,
+            },
+        )
+        | (
             Value::Currency {
                 amount: l,
                 currency,
             },
             Value::Number(r),
         ) => Ok((*l, *r, ResultType::Currency(*currency))),
+        (
+            Value::Currency {
+                amount: l,
+                currency,
+            },
+            Value::BaseNumber { amount: r, .. },
+        ) => Ok((*l, *r, ResultType::Currency(*currency))),
 
         // Number + Unit: propagate unit
         (Value::Number(l), Value::WithUnit { amount: r, unit })
+        | (Value::BaseNumber { amount: l, .. }, Value::WithUnit { amount: r, unit })
         | (Value::WithUnit { amount: l, unit }, Value::Number(r)) => {
+            Ok((*l, *r, ResultType::Unit(*unit)))
+        }
+        (Value::WithUnit { amount: l, unit }, Value::BaseNumber { amount: r, .. }) => {
             Ok((*l, *r, ResultType::Unit(*unit)))
         }
 
@@ -436,6 +456,10 @@ fn apply_op(op: BinaryOp, l: Decimal, r: Decimal) -> Result<Decimal, String> {
 }
 
 fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
+    if let Some(base) = NumberBase::parse(target) {
+        return eval_number_base_conversion(value, base);
+    }
+
     // Try as currency first
     if let Some(target_currency) = Currency::parse(target) {
         if let Value::Currency { amount, currency } = value {
@@ -507,6 +531,19 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
     }
 
     Value::Error(format!("Unknown target unit: {target}"))
+}
+
+fn eval_number_base_conversion(value: Value, base: NumberBase) -> Value {
+    let amount = match value {
+        Value::Number(n) | Value::BaseNumber { amount: n, .. } => n,
+        _ => return Value::Error("Base conversion requires a plain integer number".to_string()),
+    };
+
+    if !amount.fract().is_zero() {
+        return Value::Error("Base conversion requires an integer".to_string());
+    }
+
+    Value::with_base(amount, base)
 }
 
 fn eval_function(name: &str, args: &[Value]) -> Value {

@@ -108,6 +108,13 @@ fn value_to_result(value: &Value) -> EvalResult {
             message: None,
             display: value.to_string(),
         },
+        Value::BaseNumber { amount, .. } => EvalResult {
+            result_type: "number",
+            value: Some(format_number(*amount)),
+            unit: None,
+            message: None,
+            display: value.to_string(),
+        },
         Value::Percentage(p) => EvalResult {
             result_type: "percentage",
             value: Some(format_number(*p * Decimal::from(100))),

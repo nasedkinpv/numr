@@ -7,11 +7,29 @@ use serde::{Deserialize, Serialize};
 /// Number of decimal places for display formatting
 const DISPLAY_PRECISION: u32 = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NumberBase {
+    Binary,
+    Hexadecimal,
+}
+
+impl NumberBase {
+    pub fn parse(target: &str) -> Option<Self> {
+        match target.to_ascii_lowercase().as_str() {
+            "bin" | "binary" => Some(Self::Binary),
+            "hex" | "hexadecimal" => Some(Self::Hexadecimal),
+            _ => None,
+        }
+    }
+}
+
 /// A computed value with optional unit/currency
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     /// Plain number
     Number(Decimal),
+    /// Plain number displayed in a specific numeric base
+    BaseNumber { amount: Decimal, base: NumberBase },
     /// Percentage (stored as decimal, e.g., 0.20 for 20%)
     Percentage(Decimal),
     /// Value with currency
@@ -30,6 +48,11 @@ impl Value {
     /// Create a new number value
     pub fn number(n: Decimal) -> Self {
         Value::Number(n)
+    }
+
+    /// Create a new number value displayed in a specific numeric base
+    pub fn with_base(amount: Decimal, base: NumberBase) -> Self {
+        Value::BaseNumber { amount, base }
     }
 
     /// Create a new percentage value (input as decimal, e.g., 0.20 for 20%)
@@ -56,6 +79,7 @@ impl Value {
     pub fn as_decimal(&self) -> Option<Decimal> {
         match self {
             Value::Number(n) => Some(*n),
+            Value::BaseNumber { amount, .. } => Some(*amount),
             Value::Percentage(p) => Some(*p),
             Value::Currency { amount, .. } => Some(*amount),
             Value::WithUnit { amount, .. } => Some(*amount),
@@ -98,6 +122,9 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Number(n) => write!(f, "{}", format_number(*n)),
+            Value::BaseNumber { amount, base } => {
+                write!(f, "{}", format_number_base(*amount, *base))
+            }
             Value::Percentage(p) => write!(f, "{}%", format_number(*p * Decimal::from(100))),
             Value::Currency { amount, currency } => {
                 let formatted = format_currency(*amount);
@@ -129,6 +156,30 @@ pub fn format_number(n: Decimal) -> String {
     }
 }
 
+fn format_number_base(n: Decimal, base: NumberBase) -> String {
+    use rust_decimal::prelude::ToPrimitive;
+
+    let Some(as_i128) = n.to_i128() else {
+        return format_number(n);
+    };
+
+    let prefix = match base {
+        NumberBase::Binary => "0b",
+        NumberBase::Hexadecimal => "0x",
+    };
+    let magnitude = as_i128.unsigned_abs();
+    let digits = match base {
+        NumberBase::Binary => format!("{magnitude:b}"),
+        NumberBase::Hexadecimal => format!("{magnitude:x}"),
+    };
+
+    if as_i128.is_negative() {
+        format!("-{prefix}{digits}")
+    } else {
+        format!("{prefix}{digits}")
+    }
+}
+
 /// Format currency amount (always DISPLAY_PRECISION decimal places)
 pub fn format_currency(n: Decimal) -> String {
     format!(
@@ -150,6 +201,22 @@ mod tests {
         assert_eq!(
             format_number(Decimal::from_str("100.500").unwrap()),
             "100.50"
+        );
+    }
+
+    #[test]
+    fn test_format_number_base() {
+        assert_eq!(
+            Value::with_base(Decimal::from(22), NumberBase::Hexadecimal).to_string(),
+            "0x16"
+        );
+        assert_eq!(
+            Value::with_base(Decimal::from(22), NumberBase::Binary).to_string(),
+            "0b10110"
+        );
+        assert_eq!(
+            Value::with_base(Decimal::from(-10), NumberBase::Hexadecimal).to_string(),
+            "-0xa"
         );
     }
 }

@@ -29,6 +29,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Unit conversions**: Length, weight, time, temperature, data sizes
 - **Compound units**: `5 m * 10 m = 50 m²`, `100 km / 2 h = 50 km/h`
 - **Currency conversions**: USD, EUR, GBP, JPY, CHF, CNY, CAD, AUD, INR, KRW, RUB, ILS, PLN, UAH + crypto (BTC, ETH, SOL, and more)
+- **Number base conversions**: `22 to hex`, `22 to bin`
 - **Live exchange rates**: Fetched automatically on startup
 - **Dual keybinding modes**: Vim (modal) or Standard (direct input) - toggle with `Shift+Tab`
 - **Mouse support**: Scroll with mouse wheel or trackpad
@@ -200,6 +201,13 @@ Direct input like traditional editors - no modal switching required.
 6 * 7             → 42
 100 / 4           → 25
 2 ^ 8             → 256
+```
+
+### Number Base Conversions
+```
+22 to hex         → 0x16
+22 to bin         → 0b10110
+-42 to hex        → -0x2a
 ```
 
 ### Percentages

@@ -42,7 +42,7 @@ pub mod wasm;
 pub use eval::EvalContext;
 pub use parser::{parse_line, try_parse_exact, Ast, BinaryOp, Expr};
 pub use types::{
-    format_currency, format_number, CompoundUnit, Currency, CurrencyDef, Dimensions,
+    format_currency, format_number, CompoundUnit, Currency, CurrencyDef, Dimensions, NumberBase,
     RuntimeUnitDef, Unit, UnitType, Value, CURRENCIES, UNITS,
 };
 
@@ -303,7 +303,11 @@ impl Engine {
                     // Keep the last unit for display
                     entry.1 = unit.clone();
                 }
-                Value::Number(_) | Value::Percentage(_) | Value::Empty | Value::Error(_) => {}
+                Value::Number(_)
+                | Value::BaseNumber { .. }
+                | Value::Percentage(_)
+                | Value::Empty
+                | Value::Error(_) => {}
             }
         }
 
