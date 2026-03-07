@@ -19,3 +19,5 @@ clap.workspace = true
 directories = "6"
 tokio.workspace = true
 textwrap = "0.16"
+toml = "0.8"
+serde.workspace = true

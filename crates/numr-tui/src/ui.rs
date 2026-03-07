@@ -12,6 +12,16 @@ use crate::app::{App, InputMode, KeybindingMode};
 use crate::popups::{draw_help_popup, draw_quit_popup};
 use numr_editor::{tokenize, TokenType};
 
+// ========================================
+// Layout Constants
+// ========================================
+
+/// Maximum width for the results column (characters)
+const MAX_RESULT_WIDTH: u16 = 40;
+
+/// Estimated width of hints section for layout calculations
+const HINTS_WIDTH_ESTIMATE: u16 = 45;
+
 /// Color palette - minimal and elegant (TTY 16-color compatible)
 pub mod palette {
     use ratatui::style::Color;
@@ -25,6 +35,15 @@ pub mod palette {
     pub const ERROR: Color = Color::Red;
     pub const KEYWORD: Color = Color::Cyan; // "in", "of", "to"
     pub const TEXT: Color = Color::Gray; // unrecognized prose (neutral)
+    pub const POPUP_BG: Color = Color::Black;
+
+    /// Generate gradient color at position t (0.0 to 1.0)
+    /// Flows from Cyan (80, 180, 220) -> Magenta (180, 100, 220)
+    pub fn gradient(t: f32) -> Color {
+        let r = (80.0 + t * 100.0) as u8;
+        let g = (180.0 - t * 80.0) as u8;
+        Color::Rgb(r, g, 220)
+    }
 }
 
 /// Main draw function
@@ -41,9 +60,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .unwrap_or(0)
         .max(8);
 
-    // Clamp width: max 40 chars or 50% of screen width (whichever is smaller)
+    // Clamp width: max MAX_RESULT_WIDTH chars or 50% of screen width (whichever is smaller)
     // But ensure at least 8 chars if possible (unless screen is extremely small)
-    let max_allowed = (area.width as usize / 2).min(40);
+    let max_allowed = (area.width as usize / 2).min(MAX_RESULT_WIDTH as usize);
     let max_result_width = content_width.min(max_allowed) as u16;
 
     // Reserve space for debug panel if in debug mode and there's an error
@@ -97,9 +116,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.debug_mode && has_error {
         draw_debug_panel(frame, debug_area, app);
     }
-
-    // Check status expiry
-    app.clear_status_if_expired();
 
     draw_footer(frame, footer_area, app, max_result_width + 4);
 
@@ -420,7 +436,7 @@ pub fn footer_height(app: &App, area_width: u16) -> u16 {
     }
 
     // Estimate hints width (mode + filename + hints ≈ 40-50 chars typically)
-    let hints_width_estimate = 45_u16;
+    let hints_width_estimate = HINTS_WIDTH_ESTIMATE;
     // "total: " prefix + values
     let totals_width = (totals_str.len() + 7) as u16;
 

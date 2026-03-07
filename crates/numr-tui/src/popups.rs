@@ -3,7 +3,7 @@
 use ratatui::{
     layout::{Constraint, Flex, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::Line,
+    text::{Line, Span},
     widgets::{
         Block, Clear, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         Table,
@@ -14,10 +14,133 @@ use ratatui::{
 use crate::app::KeybindingMode;
 use crate::ui::palette;
 
+/// Reusable popup frame with builder pattern.
+///
+/// Handles the common popup rendering: clearing, centering, background,
+/// optional title, and optional gradient separator.
+///
+/// # Example
+/// ```ignore
+/// let content_area = Popup::new(40, 10)
+///     .title("My Popup")
+///     .with_separator()
+///     .render_frame(frame, area);
+/// // Render your content in content_area
+/// ```
+pub struct Popup<'a> {
+    width: u16,
+    height: u16,
+    title: Option<&'a str>,
+    show_separator: bool,
+}
+
+impl<'a> Popup<'a> {
+    /// Create a new popup with the given dimensions.
+    pub fn new(width: u16, height: u16) -> Self {
+        Self {
+            width,
+            height,
+            title: None,
+            show_separator: false,
+        }
+    }
+
+    /// Set the popup title (displayed top-left with accent color).
+    pub fn title(mut self, title: &'a str) -> Self {
+        self.title = Some(title);
+        self
+    }
+
+    /// Enable the gradient separator below the title.
+    pub fn with_separator(mut self) -> Self {
+        self.show_separator = true;
+        self
+    }
+
+    /// Render the popup frame and return the content area.
+    ///
+    /// This renders:
+    /// - Clear widget (prevents artifacts)
+    /// - Background block
+    /// - Title (if set)
+    /// - Gradient separator (if enabled)
+    ///
+    /// Returns the `Rect` where content should be rendered.
+    pub fn render_frame(self, frame: &mut Frame, area: Rect) -> Rect {
+        let popup_area = centered_rect(area, self.width, self.height);
+
+        // Clear and background
+        frame.render_widget(Clear, popup_area);
+        frame.render_widget(
+            Block::new().style(Style::new().bg(palette::POPUP_BG)),
+            popup_area,
+        );
+
+        let mut content_start_y: u16 = 0;
+
+        // Title
+        if let Some(title_text) = self.title {
+            let title_area = Rect {
+                x: popup_area.x,
+                y: popup_area.y,
+                width: popup_area.width,
+                height: 2,
+            };
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        "  ".into(),
+                        Span::styled(title_text, Style::new().fg(palette::ACCENT).bold()),
+                    ]),
+                ]),
+                title_area,
+            );
+            content_start_y = 2;
+        }
+
+        // Gradient separator
+        if self.show_separator && self.title.is_some() {
+            draw_separator(frame, popup_area, content_start_y);
+            content_start_y += 1;
+        }
+
+        // Return content area
+        Rect {
+            x: popup_area.x,
+            y: popup_area.y + content_start_y,
+            width: popup_area.width,
+            height: popup_area.height.saturating_sub(content_start_y),
+        }
+    }
+}
+
+/// Draw gradient separator line
+fn draw_separator(frame: &mut Frame, area: Rect, y_offset: u16) {
+    let width = area.width.saturating_sub(4) as usize; // padding
+    let spans: Vec<Span> = (0..width)
+        .map(|i| {
+            let t = i as f32 / (width - 1).max(1) as f32;
+            Span::styled("─", Style::new().fg(palette::gradient(t)))
+        })
+        .collect();
+
+    let sep_area = Rect {
+        x: area.x + 2,
+        y: area.y + y_offset,
+        width: area.width.saturating_sub(4),
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(Line::from(spans)), sep_area);
+}
+
 /// Draw the quit confirmation popup
 pub fn draw_quit_popup(frame: &mut Frame, area: Rect) {
+    let content_area = Popup::new(34, 8).render_frame(frame, area);
+
     let text = vec![
-        Line::from("You have unsaved changes."),
+        Line::from(""),
+        Line::from("You have unsaved changes.").bold(),
         Line::from(""),
         Line::from("Save before quitting?"),
         Line::from(""),
@@ -31,26 +154,11 @@ pub fn draw_quit_popup(frame: &mut Frame, area: Rect) {
         ]),
     ];
 
-    // Calculate dimensions: content + borders (2) + padding (top:1 + bottom:1)
-    let content_height = text.len() as u16 + 4;
-    let content_width = 36_u16; // Fixed width for this dialog
-
-    let popup_area = centered_rect(area, content_width, content_height);
-
-    frame.render_widget(Clear, popup_area);
-
-    let block = Block::bordered()
-        .title(" Unsaved Changes ")
-        .title_style(Style::new().bold().fg(palette::ERROR))
-        .style(Style::new().bg(Color::Black))
-        .border_style(Style::new().fg(palette::ERROR))
-        .padding(Padding::vertical(1));
-
     let paragraph = Paragraph::new(text)
-        .block(block)
+        .block(Block::new().padding(Padding::horizontal(2)))
         .alignment(ratatui::layout::Alignment::Center);
 
-    frame.render_widget(paragraph, popup_area);
+    frame.render_widget(paragraph, content_area);
 }
 
 /// Draw the help popup with scroll support
@@ -61,19 +169,20 @@ pub fn draw_help_popup(
     keybinding_mode: KeybindingMode,
 ) {
     let (all_rows, title) = match keybinding_mode {
-        KeybindingMode::Vim => (vim_help_rows(), " Help (Vim) "),
-        KeybindingMode::Standard => (standard_help_rows(), " Help (Standard) "),
+        KeybindingMode::Vim => (vim_help_rows(), "Help (Vim)"),
+        KeybindingMode::Standard => (standard_help_rows(), "Help (Standard)"),
     };
     let help_rows_count = all_rows.len();
 
-    // Calculate dimensions: visible rows + header (2) + borders (2) + padding (2)
-    let max_visible_rows = area.height.saturating_sub(8) as usize;
-    let content_height = (max_visible_rows + 6).min(area.height.saturating_sub(4) as usize) as u16;
-    let content_width = 50_u16.min(area.width.saturating_sub(4));
+    let max_visible_rows = area.height.saturating_sub(6) as usize;
+    let content_height = (max_visible_rows + 5).min(area.height.saturating_sub(4) as usize) as u16;
+    let content_width = 46_u16.min(area.width.saturating_sub(6));
 
-    let popup_area = centered_rect(area, content_width, content_height);
-
-    frame.render_widget(Clear, popup_area);
+    // Render popup frame (clear, background, title, separator)
+    let content_area = Popup::new(content_width, content_height)
+        .title(title)
+        .with_separator()
+        .render_frame(frame, area);
 
     // Slice rows based on scroll offset
     let visible_rows: Vec<Row> = all_rows
@@ -84,25 +193,15 @@ pub fn draw_help_popup(
 
     let needs_scroll = help_rows_count > max_visible_rows;
 
+    // Render table in content area
     let table = Table::new(
         visible_rows,
         [Constraint::Percentage(45), Constraint::Percentage(55)],
     )
-    .block(
-        Block::bordered()
-            .title(title)
-            .title_style(Style::new().bold().fg(palette::ACCENT))
-            .style(Style::new().bg(Color::Black))
-            .padding(Padding::horizontal(1)),
-    )
-    .header(
-        Row::new(vec!["Key", "Action"])
-            .style(Style::new().bold().fg(palette::ACCENT).bg(Color::DarkGray))
-            .bottom_margin(1),
-    )
+    .block(Block::new().padding(Padding::horizontal(2)))
     .column_spacing(1);
 
-    frame.render_widget(table, popup_area);
+    frame.render_widget(table, content_area);
 
     // Draw scrollbar if content overflows
     if needs_scroll {
@@ -110,17 +209,18 @@ pub fn draw_help_popup(
             .begin_symbol(None)
             .end_symbol(None)
             .track_symbol(Some("│"))
-            .thumb_symbol("█");
+            .track_style(Style::new().fg(Color::DarkGray))
+            .thumb_symbol("┃")
+            .thumb_style(Style::new().fg(palette::DIM));
 
         let max_scroll = help_rows_count.saturating_sub(max_visible_rows);
         let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
 
-        // Scrollbar area inside the popup border
         let scrollbar_area = Rect {
-            x: popup_area.x + popup_area.width - 2,
-            y: popup_area.y + 3, // After header
+            x: content_area.x + content_area.width - 2,
+            y: content_area.y,
             width: 1,
-            height: popup_area.height.saturating_sub(4),
+            height: content_area.height.saturating_sub(1),
         };
 
         frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
@@ -130,6 +230,8 @@ pub fn draw_help_popup(
 /// Help rows for Vim mode
 fn vim_help_rows() -> Vec<Row<'static>> {
     vec![
+        Row::new(vec!["Shift+Tab", "Switch to Standard mode"]),
+        Row::new(vec!["", ""]),
         Row::new(vec!["Navigation", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
         Row::new(vec!["h/j/k/l", "Move cursor"]),
         Row::new(vec!["w / b / e", "Word forward/back/end"]),
@@ -157,7 +259,6 @@ fn vim_help_rows() -> Vec<Row<'static>> {
         Row::new(vec!["Ctrl+r", "Refresh rates"]),
         Row::new(vec!["F12", "Toggle debug"]),
         Row::new(vec!["? / F1", "Toggle help"]),
-        Row::new(vec!["Shift+Tab", "Switch to Standard mode"]),
         Row::new(vec!["q", "Quit"]),
     ]
 }
@@ -165,6 +266,8 @@ fn vim_help_rows() -> Vec<Row<'static>> {
 /// Help rows for Standard mode
 fn standard_help_rows() -> Vec<Row<'static>> {
     vec![
+        Row::new(vec!["Shift+Tab", "Switch to Vim mode"]),
+        Row::new(vec!["", ""]),
         Row::new(vec!["Navigation", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
         Row::new(vec!["Arrow keys", "Move cursor"]),
         Row::new(vec!["Home / End", "Line start/end"]),
@@ -183,14 +286,13 @@ fn standard_help_rows() -> Vec<Row<'static>> {
         Row::new(vec!["Ctrl+w/l/h", "Toggle wrap/numbers/header"]),
         Row::new(vec!["Ctrl+s", "Save file"]),
         Row::new(vec!["Ctrl+r", "Refresh rates"]),
-        Row::new(vec!["Shift+Tab", "Switch to Vim mode"]),
         Row::new(vec!["Ctrl+q", "Quit"]),
     ]
 }
 
 /// Calculate max scroll offset for help popup
 pub fn help_max_scroll(area_height: u16, keybinding_mode: KeybindingMode) -> usize {
-    let max_visible = area_height.saturating_sub(8) as usize;
+    let max_visible = area_height.saturating_sub(6) as usize;
     let rows_count = match keybinding_mode {
         KeybindingMode::Vim => vim_help_rows().len(),
         KeybindingMode::Standard => standard_help_rows().len(),
@@ -198,8 +300,7 @@ pub fn help_max_scroll(area_height: u16, keybinding_mode: KeybindingMode) -> usi
     rows_count.saturating_sub(max_visible)
 }
 
-/// Center a rect with fixed width and height (modern ratatui approach)
-/// See: https://ratatui.rs/recipes/layout/center-a-widget/
+/// Center a rect with fixed width and height
 fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     let [area] = Layout::vertical([Constraint::Length(height)])
         .flex(Flex::Center)

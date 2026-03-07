@@ -65,7 +65,10 @@ pub fn decimal(s: &str) -> Decimal {
 }
 
 #[cfg(feature = "fetch")]
-pub use fetch::fetch_rates;
+pub use fetch::{
+    fetch_rates, fetch_rates_with_config, FetchConfig, DEFAULT_CRYPTO_RATES_URL,
+    DEFAULT_FIAT_RATES_URL,
+};
 
 /// Main engine for evaluating expressions
 pub struct Engine {
@@ -103,7 +106,7 @@ impl Engine {
                 .set_variable("_".to_string(), last_value.clone());
             self.context
                 .set_variable("ANS".to_string(), last_value.clone());
-            self.context.set_variable("ans".to_string(), last_value);
+            self.context.set_variable("ans".to_string(), last_value); // Move on last use
         }
 
         // Try continuation-first if '_' exists, otherwise normal parse
@@ -158,7 +161,7 @@ impl Engine {
         }
 
         // Starts with a single-character operator
-        let first = trimmed.chars().next().unwrap();
+        let first = trimmed.chars().next().expect("checked non-empty above");
         if "+-*/÷^".contains(first) {
             return true;
         }

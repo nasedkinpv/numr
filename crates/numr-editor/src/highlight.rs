@@ -1,3 +1,31 @@
+//! Syntax highlighting for numr expressions.
+//!
+//! This module provides tokenization of calculator input with semantic token types,
+//! enabling syntax highlighting in the TUI and web interfaces.
+//!
+//! # Token Types
+//!
+//! The tokenizer recognizes several semantic categories:
+//!
+//! - **Numbers**: Numeric literals including decimals and percentages
+//! - **Operators**: Arithmetic operators (+, -, *, /, ^, =)
+//! - **Variables**: User-defined variable names (in assignment context)
+//! - **Units**: Physical units (km, kg, m, etc.)
+//! - **Currencies**: Currency symbols ($, €) and codes (USD, EUR)
+//! - **Keywords**: Conversion keywords (in, to, of)
+//! - **Functions**: Built-in functions (sum, avg, sqrt, etc.)
+//! - **Comments**: Lines or inline text starting with # or //
+//!
+//! # Example
+//!
+//! ```
+//! use numr_editor::{tokenize, TokenType};
+//!
+//! let tokens = tokenize("$100 + 20%");
+//! assert!(tokens.iter().any(|t| t.token_type == TokenType::Currency));
+//! assert!(tokens.iter().any(|t| t.token_type == TokenType::Number));
+//! ```
+
 use numr_core::{Currency, Unit};
 use std::collections::HashSet;
 use std::sync::LazyLock;

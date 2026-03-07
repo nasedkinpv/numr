@@ -191,8 +191,9 @@ impl TextBuffer {
     }
 }
 
-/// Convert character index to byte index in a string
-fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
+/// Convert character index to byte index in a string.
+/// This is useful for handling UTF-8 strings where characters may be multi-byte.
+pub fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
     s.char_indices()
         .nth(char_idx)
         .map(|(i, _)| i)

@@ -1,6 +1,8 @@
 //! Application state and logic
 
-use numr_core::{Engine, Value};
+use crate::config::Config;
+use numr_core::{Engine, FetchConfig, Value};
+use numr_editor::char_to_byte_idx;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
@@ -8,6 +10,19 @@ use std::path::PathBuf;
 use textwrap::{wrap, Options, WordSplitter};
 
 use std::time::Instant;
+
+// ========================================
+// Status Display Constants
+// ========================================
+
+/// Timeout for "Saved" status message (milliseconds)
+const STATUS_SAVED_TIMEOUT_MS: u128 = 1500;
+
+/// Timeout for general status messages (milliseconds)
+const STATUS_TIMEOUT_MS: u128 = 3000;
+
+/// Horizontal scroll margin (keep cursor this many chars from edge)
+const CURSOR_MARGIN: usize = 5;
 
 /// Application state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,13 +48,8 @@ pub enum PendingCommand {
     Go,     // Waiting for second 'g' to complete 'gg'
 }
 
-/// Keybinding mode (Vim vs Standard)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum KeybindingMode {
-    #[default]
-    Vim, // Modal editing with Normal/Insert modes
-    Standard, // Direct input like traditional editors
-}
+// Re-export KeybindingMode so main.rs can use it
+pub use crate::config::KeybindingMode;
 
 pub struct App {
     pub lines: Vec<String>,
@@ -67,14 +77,7 @@ pub struct App {
     pub show_line_numbers: bool,
     pub show_header: bool,
     pub show_quit_confirmation: bool,
-}
-
-/// Convert character index to byte index in a string
-fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
-    s.char_indices()
-        .nth(char_idx)
-        .map(|(i, _)| i)
-        .unwrap_or(s.len())
+    config: Config, // Persistent user configuration
 }
 
 /// Get character count of a string (not byte count)
@@ -83,11 +86,35 @@ fn char_count(s: &str) -> usize {
 }
 
 impl App {
-    pub fn new(path: Option<PathBuf>) -> Self {
+    pub fn new(path: Option<PathBuf>, config: Config) -> Self {
+        // Apply config preferences
+        let keybinding_mode = config.preferences.keybinding_mode;
+        let mode = match keybinding_mode {
+            KeybindingMode::Standard => InputMode::Insert,
+            KeybindingMode::Vim => InputMode::Normal,
+        };
+        let wrap_mode = config.preferences.wrap_mode;
+        let show_line_numbers = config.preferences.show_line_numbers;
+        let show_header = config.preferences.show_header;
+        let debug_mode = config.preferences.debug_mode;
+
         let mut app = Self {
             path,
+            config,
+            keybinding_mode,
+            mode,
+            wrap_mode,
+            show_line_numbers,
+            show_header,
+            debug_mode,
             ..Self::default()
         };
+
+        // Save config (creates file on first run, updates with new defaults on subsequent runs)
+        if let Err(e) = app.config.save() {
+            app.set_status(&format!("Config save failed: {e}"));
+        }
+
         if let Some(p) = &app.path {
             if p.exists() {
                 if let Err(e) = app.load() {
@@ -132,9 +159,27 @@ impl App {
         Ok(())
     }
 
+    /// Save current preferences to config file
+    fn save_config(&mut self) {
+        self.config.preferences.keybinding_mode = self.keybinding_mode;
+        self.config.preferences.wrap_mode = self.wrap_mode;
+        self.config.preferences.show_line_numbers = self.show_line_numbers;
+        self.config.preferences.show_header = self.show_header;
+        self.config.preferences.debug_mode = self.debug_mode;
+        if let Err(e) = self.config.save() {
+            self.set_status(&format!("Config save failed: {e}"));
+        }
+    }
+
+    /// Build fetch configuration for exchange-rate APIs from persisted settings.
+    pub fn fetch_config(&self) -> FetchConfig {
+        (&self.config.api).into()
+    }
+
     /// Toggle debug mode
     pub fn toggle_debug(&mut self) {
         self.debug_mode = !self.debug_mode;
+        self.save_config();
     }
 
     /// Toggle wrap mode
@@ -150,6 +195,7 @@ impl App {
             self.viewport_y = self.cursor_y.saturating_sub(self.viewport_height / 2);
             self.ensure_cursor_visible();
         }
+        self.save_config();
     }
 
     /// Set a temporary status message
@@ -159,10 +205,14 @@ impl App {
     }
 
     /// Clear status message if it has expired
-    /// "Saved" expires after 1.5s, others after 3s
+    /// "Saved" expires after STATUS_SAVED_TIMEOUT_MS, others after STATUS_TIMEOUT_MS
     pub fn clear_status_if_expired(&mut self) {
         if let (Some(start), Some(msg)) = (self.status_start, &self.status_message) {
-            let timeout_ms = if msg == "Saved" { 1500 } else { 3000 };
+            let timeout_ms = if msg == "Saved" {
+                STATUS_SAVED_TIMEOUT_MS
+            } else {
+                STATUS_TIMEOUT_MS
+            };
             if start.elapsed().as_millis() >= timeout_ms {
                 self.status_message = None;
                 self.status_start = None;
@@ -193,11 +243,13 @@ impl App {
     /// Toggle line numbers
     pub fn toggle_line_numbers(&mut self) {
         self.show_line_numbers = !self.show_line_numbers;
+        self.save_config();
     }
 
     /// Toggle header visibility
     pub fn toggle_header(&mut self) {
         self.show_header = !self.show_header;
+        self.save_config();
     }
 
     /// Page up
@@ -414,7 +466,7 @@ impl App {
             }
 
             // Horizontal scrolling (keep some margin)
-            let margin = 5.min(self.viewport_width / 4);
+            let margin = CURSOR_MARGIN.min(self.viewport_width / 4);
             if self.cursor_x < self.viewport_x + margin {
                 self.viewport_x = self.cursor_x.saturating_sub(margin);
             } else if self.cursor_x >= self.viewport_x + self.viewport_width.saturating_sub(margin)
@@ -619,6 +671,7 @@ impl App {
                 KeybindingMode::Vim
             }
         };
+        self.save_config();
     }
 
     /// Get totals grouped by type (currency, unit, etc.)
@@ -699,6 +752,7 @@ impl Default for App {
             show_line_numbers: false,
             show_header: false,
             show_quit_confirmation: false,
+            config: Config::default(),
         };
         app.recalculate();
         app

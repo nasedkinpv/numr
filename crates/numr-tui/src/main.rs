@@ -1,6 +1,8 @@
 //! numr TUI - Terminal User Interface for the numr calculator
 
 mod app;
+mod config;
+mod handlers;
 mod popups;
 mod ui;
 
@@ -14,12 +16,15 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 use app::{App, InputMode, KeybindingMode, PendingCommand};
 use clap::Parser;
 use directories::ProjectDirs;
+use handlers::{
+    handle_help_standard, handle_help_vim, handle_keybinding_toggle, handle_quit,
+    handle_quit_confirmation, handle_save, spawn_rate_fetch, QuitConfirmResult, QuitResult,
+};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -30,34 +35,34 @@ struct Args {
     file: Option<PathBuf>,
 }
 
-/// Spawn a background thread to fetch exchange rates
-fn spawn_rate_fetch(
-    app: &mut App,
-) -> mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>> {
-    app.fetch_status = app::FetchStatus::Fetching;
-    app.fetch_start = Some(std::time::Instant::now());
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let Ok(rt) = tokio::runtime::Runtime::new() else {
-            let _ = tx.send(Err("Failed to create async runtime".to_string()));
-            return;
-        };
-        rt.block_on(async {
-            let result = numr_core::fetch_rates().await;
-            let _ = tx.send(result);
-        });
-    });
-    rx
+/// Expand ~ to home directory (cross-platform)
+fn expand_tilde(path: &str) -> PathBuf {
+    if let Some(stripped) = path.strip_prefix("~/") {
+        if let Some(base) = directories::BaseDirs::new() {
+            return base.home_dir().join(stripped);
+        }
+    }
+    PathBuf::from(path)
 }
 
 fn main() -> Result<()> {
     // Parse args first - handles --help/--version before terminal setup
     let args = Args::parse();
 
-    // Determine path
+    // Load config
+    let (config, config_warning) = config::Config::load();
+
+    // Determine path: CLI arg > config.files.default_path > default location
     let path = args.file.or_else(|| {
-        ProjectDirs::from("com", "numr", "numr")
-            .map(|proj_dirs| proj_dirs.config_dir().join("default.numr"))
+        config
+            .files
+            .default_path
+            .as_ref()
+            .map(|s| expand_tilde(s))
+            .or_else(|| {
+                ProjectDirs::from("com", "numr", "numr")
+                    .map(|proj_dirs| proj_dirs.config_dir().join("default.numr"))
+            })
     });
 
     // Setup terminal (only after arg parsing to avoid breaking terminal on --help)
@@ -73,7 +78,12 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run
-    let mut app = App::new(path);
+    let mut app = App::new(path, config);
+
+    // Show config warning if any
+    if let Some(warning) = config_warning {
+        app.set_status(&warning);
+    }
 
     // Initial rate fetch
     let rx = spawn_rate_fetch(&mut app);
@@ -106,18 +116,13 @@ fn run_app<B: ratatui::backend::Backend>(
     let mut rate_rx = Some(initial_rx);
 
     loop {
+        // Clear expired status messages before drawing
+        app.clear_status_if_expired();
+
         terminal.draw(|f| ui::draw(f, app))?;
 
         // Update cursor style based on mode
-        match (app.keybinding_mode, app.mode) {
-            (KeybindingMode::Standard, _) => execute!(stdout, SetCursorStyle::BlinkingBar)?,
-            (KeybindingMode::Vim, InputMode::Normal) => {
-                execute!(stdout, SetCursorStyle::DefaultUserShape)?
-            }
-            (KeybindingMode::Vim, InputMode::Insert) => {
-                execute!(stdout, SetCursorStyle::BlinkingBar)?
-            }
-        }
+        update_cursor_style(&mut stdout, app)?;
 
         // Check for rate updates
         if let Some(ref rx) = rate_rx {
@@ -125,273 +130,37 @@ fn run_app<B: ratatui::backend::Backend>(
                 app.update_rates(result);
             }
         }
+
         // Poll for events
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => {
-                    // Handle quit confirmation popup
+                    // Handle quit confirmation popup first
                     if app.show_quit_confirmation {
-                        match key.code {
-                            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                // Save and quit
-                                if let Err(e) = app.save() {
-                                    app.set_status(&format!("Error saving: {e}"));
-                                    app.show_quit_confirmation = false;
-                                } else {
-                                    return Ok(());
-                                }
+                        match handle_quit_confirmation(key.code, app) {
+                            QuitConfirmResult::SaveAndExit | QuitConfirmResult::ExitWithoutSave => {
+                                return Ok(())
                             }
-                            KeyCode::Char('n') | KeyCode::Char('N') => {
-                                // Quit without saving
-                                return Ok(());
-                            }
-                            KeyCode::Esc | KeyCode::Char('q') => {
-                                // Cancel
-                                app.show_quit_confirmation = false;
-                            }
-                            _ => {}
+                            QuitConfirmResult::Cancel | QuitConfirmResult::Unhandled => continue,
                         }
-                        continue;
                     }
 
                     // Handle keybinding mode toggle (Shift+Tab works in both modes)
                     if key.code == KeyCode::BackTab {
-                        app.toggle_keybinding_mode();
-                        let mode_name = match app.keybinding_mode {
-                            KeybindingMode::Vim => "Vim",
-                            KeybindingMode::Standard => "Standard",
-                        };
-                        app.set_status(mode_name);
+                        handle_keybinding_toggle(app);
                         continue;
                     }
 
-                    // Standard mode: direct input like traditional editors
-                    if app.keybinding_mode == KeybindingMode::Standard {
-                        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
-                        // Help popup handling
-                        if app.show_help {
-                            let max_scroll = popups::help_max_scroll(
-                                terminal.size()?.height,
-                                app.keybinding_mode,
-                            );
-                            match key.code {
-                                KeyCode::Char('?') | KeyCode::Esc | KeyCode::F(1) => {
-                                    app.toggle_help()
-                                }
-                                KeyCode::Down => app.help_scroll_down(max_scroll),
-                                KeyCode::Up => app.help_scroll_up(),
-                                _ => {}
-                            }
-                            continue;
+                    // Route to mode-specific handler
+                    let result = match app.keybinding_mode {
+                        KeybindingMode::Standard => {
+                            handle_standard_mode(key, app, terminal, &mut rate_rx)?
                         }
+                        KeybindingMode::Vim => handle_vim_mode(key, app, terminal, &mut rate_rx)?,
+                    };
 
-                        match key.code {
-                            KeyCode::Char('q') if ctrl => {
-                                if app.dirty {
-                                    app.show_quit_confirmation = true;
-                                } else {
-                                    return Ok(());
-                                }
-                            }
-                            KeyCode::Char('s') if ctrl => {
-                                if let Err(e) = app.save() {
-                                    app.set_status(&format!("Error: {e}"));
-                                } else {
-                                    app.set_status("Saved");
-                                }
-                            }
-                            KeyCode::Char('r') if ctrl => {
-                                rate_rx = Some(spawn_rate_fetch(app));
-                            }
-                            KeyCode::Char('k') if ctrl => app.delete_line(),
-                            KeyCode::Char('a') if ctrl => app.move_to_line_start(),
-                            KeyCode::Char('e') if ctrl => app.move_to_line_end(),
-                            KeyCode::Char('g') if ctrl => app.move_to_first_line(),
-                            KeyCode::Char('l') if ctrl => app.toggle_line_numbers(),
-                            KeyCode::Char('w') if ctrl => app.toggle_wrap(),
-                            KeyCode::Char('h') if ctrl => app.toggle_header(),
-                            KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
-                            KeyCode::F(12) => app.toggle_debug(),
-                            KeyCode::Char(c) => app.insert_char(c),
-                            KeyCode::Backspace => app.delete_char(),
-                            KeyCode::Delete => app.delete_char_forward(),
-                            KeyCode::Enter => app.new_line(),
-                            KeyCode::Up => app.move_up(),
-                            KeyCode::Down => app.move_down(),
-                            KeyCode::Left => app.move_left(),
-                            KeyCode::Right => app.move_right(),
-                            KeyCode::Home => app.move_to_line_start(),
-                            KeyCode::End => app.move_to_line_end(),
-                            KeyCode::PageUp => app.page_up(),
-                            KeyCode::PageDown => app.page_down(),
-                            _ => {}
-                        }
-                        continue;
-                    }
-
-                    // Vim mode: modal editing
-                    match app.mode {
-                        InputMode::Normal => {
-                            // Handle pending commands first
-                            match app.pending {
-                                PendingCommand::Delete => {
-                                    if key.code == KeyCode::Char('d') {
-                                        app.delete_line();
-                                    }
-                                    app.pending = PendingCommand::None;
-                                    continue;
-                                }
-                                PendingCommand::Go => {
-                                    if key.code == KeyCode::Char('g') {
-                                        app.move_to_first_line();
-                                    }
-                                    app.pending = PendingCommand::None;
-                                    continue;
-                                }
-                                PendingCommand::None => {}
-                            }
-
-                            match key.code {
-                                KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
-                                KeyCode::Esc => {
-                                    if app.show_help {
-                                        app.toggle_help();
-                                    }
-                                }
-                                _ if app.show_help => {
-                                    // Handle help popup navigation
-                                    let max_scroll = popups::help_max_scroll(
-                                        terminal.size()?.height,
-                                        app.keybinding_mode,
-                                    );
-                                    match key.code {
-                                        KeyCode::Char('q') => app.toggle_help(),
-                                        KeyCode::Char('j') | KeyCode::Down => {
-                                            app.help_scroll_down(max_scroll)
-                                        }
-                                        KeyCode::Char('k') | KeyCode::Up => app.help_scroll_up(),
-                                        _ => {}
-                                    }
-                                }
-                                KeyCode::Char('q') => {
-                                    if app.dirty {
-                                        app.show_quit_confirmation = true;
-                                    } else {
-                                        return Ok(());
-                                    }
-                                }
-                                KeyCode::Char('s')
-                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
-                                    if let Err(e) = app.save() {
-                                        app.set_status(&format!("Error: {e}"));
-                                    } else {
-                                        app.set_status("Saved");
-                                    }
-                                }
-                                KeyCode::Char('r')
-                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
-                                    rate_rx = Some(spawn_rate_fetch(app));
-                                }
-                                // Enter insert mode
-                                KeyCode::Char('i') => app.mode = InputMode::Insert,
-                                KeyCode::Char('a') => {
-                                    app.move_right();
-                                    app.mode = InputMode::Insert;
-                                }
-                                KeyCode::Char('A') => {
-                                    app.move_to_line_end();
-                                    app.mode = InputMode::Insert;
-                                }
-                                KeyCode::Char('I') => {
-                                    app.move_to_line_start();
-                                    app.mode = InputMode::Insert;
-                                }
-                                KeyCode::Char('o') => {
-                                    app.move_to_line_end();
-                                    app.new_line();
-                                    app.mode = InputMode::Insert;
-                                }
-                                KeyCode::Char('O') => {
-                                    app.move_to_line_start();
-                                    app.new_line();
-                                    app.move_up();
-                                    app.mode = InputMode::Insert;
-                                }
-                                KeyCode::Char('C') => {
-                                    app.delete_to_line_end();
-                                    app.mode = InputMode::Insert;
-                                }
-                                KeyCode::Char('s') => {
-                                    app.delete_char_forward();
-                                    app.mode = InputMode::Insert;
-                                }
-                                // Movement
-                                KeyCode::Char(' ') => app.move_right(),
-                                KeyCode::Char('h') | KeyCode::Left => app.move_left(),
-                                KeyCode::Char('j') | KeyCode::Down => app.move_down(),
-                                KeyCode::Char('k') | KeyCode::Up => app.move_up(),
-                                KeyCode::Char('l') | KeyCode::Right => app.move_right(),
-                                KeyCode::Char('w') => app.move_word_forward(),
-                                KeyCode::Char('b') => app.move_word_backward(),
-                                KeyCode::Char('e') => app.move_word_end(),
-                                KeyCode::Char('G') => app.move_to_last_line(),
-                                KeyCode::Char('g') => app.pending = PendingCommand::Go,
-                                KeyCode::PageUp => app.page_up(),
-                                KeyCode::PageDown => app.page_down(),
-                                KeyCode::Home | KeyCode::Char('0') => app.move_to_line_start(),
-                                KeyCode::End | KeyCode::Char('$') => app.move_to_line_end(),
-                                KeyCode::Char('^') => app.move_to_line_start(),
-                                // Editing
-                                KeyCode::Char('x') => app.delete_char_forward(),
-                                KeyCode::Char('X') => app.delete_char(),
-                                KeyCode::Char('d') => app.pending = PendingCommand::Delete,
-                                KeyCode::Char('D') => app.delete_to_line_end(),
-                                KeyCode::Char('J') => {
-                                    app.move_to_line_end();
-                                    app.delete_char_forward();
-                                    let line = &app.lines[app.cursor_y];
-                                    if !line.is_empty() && !line.ends_with(' ') {
-                                        app.insert_char(' ');
-                                    }
-                                }
-                                // Toggles
-                                KeyCode::Char('W') => app.toggle_wrap(),
-                                KeyCode::Char('N') => app.toggle_line_numbers(),
-                                KeyCode::Char('H') => app.toggle_header(),
-                                KeyCode::F(12) => app.toggle_debug(),
-                                _ => {}
-                            }
-                        }
-                        InputMode::Insert => match key.code {
-                            KeyCode::Esc => app.mode = InputMode::Normal,
-                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                if let Err(e) = app.save() {
-                                    app.set_status(&format!("Error: {e}"));
-                                } else {
-                                    app.set_status("Saved");
-                                }
-                            }
-                            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                rate_rx = Some(spawn_rate_fetch(app));
-                            }
-                            KeyCode::Char(c) => app.insert_char(c),
-                            KeyCode::Backspace => app.delete_char(),
-                            KeyCode::Enter => app.new_line(),
-                            KeyCode::Up => app.move_up(),
-                            KeyCode::Down => app.move_down(),
-                            KeyCode::Left => app.move_left(),
-                            KeyCode::Right => app.move_right(),
-                            KeyCode::PageUp => app.page_up(),
-                            KeyCode::PageDown => app.page_down(),
-                            KeyCode::Home => app.move_to_line_start(),
-                            KeyCode::End => app.move_to_line_end(),
-                            KeyCode::Delete => app.delete_char_forward(),
-                            KeyCode::F(12) => app.toggle_debug(),
-                            _ => {}
-                        },
+                    if result == ControlFlow::Exit {
+                        return Ok(());
                     }
                 }
                 Event::Mouse(mouse) => match mouse.kind {
@@ -403,4 +172,265 @@ fn run_app<B: ratatui::backend::Backend>(
             }
         }
     }
+}
+
+/// Control flow result from key handlers
+#[derive(PartialEq, Eq)]
+enum ControlFlow {
+    Continue,
+    Exit,
+}
+
+/// Update cursor style based on current mode
+fn update_cursor_style(stdout: &mut io::Stdout, app: &App) -> Result<()> {
+    match (app.keybinding_mode, app.mode) {
+        (KeybindingMode::Standard, _) => execute!(stdout, SetCursorStyle::BlinkingBar)?,
+        (KeybindingMode::Vim, InputMode::Normal) => {
+            execute!(stdout, SetCursorStyle::DefaultUserShape)?
+        }
+        (KeybindingMode::Vim, InputMode::Insert) => execute!(stdout, SetCursorStyle::BlinkingBar)?,
+    }
+    Ok(())
+}
+
+/// Handle Standard mode keys (direct input like traditional editors)
+fn handle_standard_mode<B: ratatui::backend::Backend>(
+    key: crossterm::event::KeyEvent,
+    app: &mut App,
+    terminal: &Terminal<B>,
+    rate_rx: &mut Option<mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>>,
+) -> Result<ControlFlow> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    // Help popup handling
+    if handle_help_standard(key.code, app, terminal.size()?.height) {
+        return Ok(ControlFlow::Continue);
+    }
+
+    match key.code {
+        KeyCode::Char('q') if ctrl => match handle_quit(app) {
+            QuitResult::Exit => return Ok(ControlFlow::Exit),
+            QuitResult::ShowConfirmation => app.show_quit_confirmation = true,
+        },
+        KeyCode::Char('s') if ctrl => {
+            if let Err(e) = handle_save(app) {
+                app.set_status(&e);
+            } else {
+                app.set_status("Saved");
+            }
+        }
+        KeyCode::Char('r') if ctrl => {
+            *rate_rx = Some(spawn_rate_fetch(app));
+        }
+        KeyCode::Char('k') if ctrl => app.delete_line(),
+        KeyCode::Char('a') if ctrl => app.move_to_line_start(),
+        KeyCode::Char('e') if ctrl => app.move_to_line_end(),
+        KeyCode::Char('g') if ctrl => app.move_to_first_line(),
+        KeyCode::Char('l') if ctrl => app.toggle_line_numbers(),
+        KeyCode::Char('w') if ctrl => app.toggle_wrap(),
+        KeyCode::Char('h') if ctrl => app.toggle_header(),
+        KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
+        KeyCode::F(12) => app.toggle_debug(),
+        KeyCode::Char(c) => app.insert_char(c),
+        KeyCode::Backspace => app.delete_char(),
+        KeyCode::Delete => app.delete_char_forward(),
+        KeyCode::Enter => app.new_line(),
+        KeyCode::Up => app.move_up(),
+        KeyCode::Down => app.move_down(),
+        KeyCode::Left => app.move_left(),
+        KeyCode::Right => app.move_right(),
+        KeyCode::Home => app.move_to_line_start(),
+        KeyCode::End => app.move_to_line_end(),
+        KeyCode::PageUp => app.page_up(),
+        KeyCode::PageDown => app.page_down(),
+        _ => {}
+    }
+
+    Ok(ControlFlow::Continue)
+}
+
+/// Handle Vim mode keys (modal editing)
+fn handle_vim_mode<B: ratatui::backend::Backend>(
+    key: crossterm::event::KeyEvent,
+    app: &mut App,
+    terminal: &Terminal<B>,
+    rate_rx: &mut Option<mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>>,
+) -> Result<ControlFlow> {
+    match app.mode {
+        InputMode::Normal => handle_vim_normal_mode(key, app, terminal, rate_rx),
+        InputMode::Insert => handle_vim_insert_mode(key, app, rate_rx),
+    }
+}
+
+/// Handle Vim Normal mode keys
+fn handle_vim_normal_mode<B: ratatui::backend::Backend>(
+    key: crossterm::event::KeyEvent,
+    app: &mut App,
+    terminal: &Terminal<B>,
+    rate_rx: &mut Option<mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>>,
+) -> Result<ControlFlow> {
+    // Handle pending commands first
+    match app.pending {
+        PendingCommand::Delete => {
+            if key.code == KeyCode::Char('d') {
+                app.delete_line();
+            }
+            app.pending = PendingCommand::None;
+            return Ok(ControlFlow::Continue);
+        }
+        PendingCommand::Go => {
+            if key.code == KeyCode::Char('g') {
+                app.move_to_first_line();
+            }
+            app.pending = PendingCommand::None;
+            return Ok(ControlFlow::Continue);
+        }
+        PendingCommand::None => {}
+    }
+
+    // Toggle help or close it with Esc
+    match key.code {
+        KeyCode::Char('?') | KeyCode::F(1) => {
+            app.toggle_help();
+            return Ok(ControlFlow::Continue);
+        }
+        KeyCode::Esc if app.show_help => {
+            app.toggle_help();
+            return Ok(ControlFlow::Continue);
+        }
+        _ => {}
+    }
+
+    // Handle help navigation if open
+    if handle_help_vim(key.code, app, terminal.size()?.height) {
+        return Ok(ControlFlow::Continue);
+    }
+
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    match key.code {
+        KeyCode::Char('q') => match handle_quit(app) {
+            QuitResult::Exit => return Ok(ControlFlow::Exit),
+            QuitResult::ShowConfirmation => app.show_quit_confirmation = true,
+        },
+        KeyCode::Char('s') if ctrl => {
+            if let Err(e) = handle_save(app) {
+                app.set_status(&e);
+            } else {
+                app.set_status("Saved");
+            }
+        }
+        KeyCode::Char('r') if ctrl => {
+            *rate_rx = Some(spawn_rate_fetch(app));
+        }
+        // Enter insert mode
+        KeyCode::Char('i') => app.mode = InputMode::Insert,
+        KeyCode::Char('a') => {
+            app.move_right();
+            app.mode = InputMode::Insert;
+        }
+        KeyCode::Char('A') => {
+            app.move_to_line_end();
+            app.mode = InputMode::Insert;
+        }
+        KeyCode::Char('I') => {
+            app.move_to_line_start();
+            app.mode = InputMode::Insert;
+        }
+        KeyCode::Char('o') => {
+            app.move_to_line_end();
+            app.new_line();
+            app.mode = InputMode::Insert;
+        }
+        KeyCode::Char('O') => {
+            app.move_to_line_start();
+            app.new_line();
+            app.move_up();
+            app.mode = InputMode::Insert;
+        }
+        KeyCode::Char('C') => {
+            app.delete_to_line_end();
+            app.mode = InputMode::Insert;
+        }
+        KeyCode::Char('s') => {
+            app.delete_char_forward();
+            app.mode = InputMode::Insert;
+        }
+        // Movement
+        KeyCode::Char(' ') => app.move_right(),
+        KeyCode::Char('h') | KeyCode::Left => app.move_left(),
+        KeyCode::Char('j') | KeyCode::Down => app.move_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.move_up(),
+        KeyCode::Char('l') | KeyCode::Right => app.move_right(),
+        KeyCode::Char('w') => app.move_word_forward(),
+        KeyCode::Char('b') => app.move_word_backward(),
+        KeyCode::Char('e') => app.move_word_end(),
+        KeyCode::Char('G') => app.move_to_last_line(),
+        KeyCode::Char('g') => app.pending = PendingCommand::Go,
+        KeyCode::PageUp => app.page_up(),
+        KeyCode::PageDown => app.page_down(),
+        KeyCode::Home | KeyCode::Char('0') => app.move_to_line_start(),
+        KeyCode::End | KeyCode::Char('$') => app.move_to_line_end(),
+        KeyCode::Char('^') => app.move_to_line_start(),
+        // Editing
+        KeyCode::Char('x') => app.delete_char_forward(),
+        KeyCode::Char('X') => app.delete_char(),
+        KeyCode::Char('d') => app.pending = PendingCommand::Delete,
+        KeyCode::Char('D') => app.delete_to_line_end(),
+        KeyCode::Char('J') => {
+            app.move_to_line_end();
+            app.delete_char_forward();
+            let line = &app.lines[app.cursor_y];
+            if !line.is_empty() && !line.ends_with(' ') {
+                app.insert_char(' ');
+            }
+        }
+        // Toggles
+        KeyCode::Char('W') => app.toggle_wrap(),
+        KeyCode::Char('N') => app.toggle_line_numbers(),
+        KeyCode::Char('H') => app.toggle_header(),
+        KeyCode::F(12) => app.toggle_debug(),
+        _ => {}
+    }
+
+    Ok(ControlFlow::Continue)
+}
+
+/// Handle Vim Insert mode keys
+fn handle_vim_insert_mode(
+    key: crossterm::event::KeyEvent,
+    app: &mut App,
+    rate_rx: &mut Option<mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>>,
+) -> Result<ControlFlow> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    match key.code {
+        KeyCode::Esc => app.mode = InputMode::Normal,
+        KeyCode::Char('s') if ctrl => {
+            if let Err(e) = handle_save(app) {
+                app.set_status(&e);
+            } else {
+                app.set_status("Saved");
+            }
+        }
+        KeyCode::Char('r') if ctrl => {
+            *rate_rx = Some(spawn_rate_fetch(app));
+        }
+        KeyCode::Char(c) => app.insert_char(c),
+        KeyCode::Backspace => app.delete_char(),
+        KeyCode::Enter => app.new_line(),
+        KeyCode::Up => app.move_up(),
+        KeyCode::Down => app.move_down(),
+        KeyCode::Left => app.move_left(),
+        KeyCode::Right => app.move_right(),
+        KeyCode::PageUp => app.page_up(),
+        KeyCode::PageDown => app.page_down(),
+        KeyCode::Home => app.move_to_line_start(),
+        KeyCode::End => app.move_to_line_end(),
+        KeyCode::Delete => app.delete_char_forward(),
+        KeyCode::F(12) => app.toggle_debug(),
+        _ => {}
+    }
+
+    Ok(ControlFlow::Continue)
 }
