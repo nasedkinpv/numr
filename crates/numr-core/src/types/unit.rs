@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
+/// Tolerance for unit conversion factor matching (0.1%)
+const CONVERSION_TOLERANCE: &str = "0.001";
+
 /// Helper to create Decimal from string (panics on invalid input, only for static definitions)
 fn d(s: &str) -> Decimal {
     Decimal::from_str(s).unwrap()
@@ -988,8 +991,8 @@ fn find_unit_by_dimensions_and_factor(dims: &Dimensions, factor: Decimal) -> Opt
             } else {
                 factor / def.factor
             };
-            // Allow 0.1% tolerance
-            if (ratio - Decimal::ONE).abs() < Decimal::from_str("0.001").unwrap() {
+            // Allow 0.1% tolerance for floating point conversion factors
+            if (ratio - Decimal::ONE).abs() < d(CONVERSION_TOLERANCE) {
                 return Some(def.symbol);
             }
         }
@@ -1144,7 +1147,8 @@ impl Unit {
             Unit::Celsius => "°C",
             Unit::Fahrenheit => "°F",
         };
-        parse_unit(symbol).unwrap()
+        // SAFETY: All legacy Unit variants have known symbols that are registered in UNITS
+        parse_unit(symbol).expect("Legacy Unit symbol should be registered in UNITS")
     }
 
     pub fn unit_type(&self) -> UnitType {

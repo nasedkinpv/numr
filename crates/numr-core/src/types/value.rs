@@ -4,6 +4,9 @@ use super::{CompoundUnit, Currency, Unit};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+/// Number of decimal places for display formatting
+const DISPLAY_PRECISION: u32 = 2;
+
 /// A computed value with optional unit/currency
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
@@ -116,19 +119,23 @@ impl std::fmt::Display for Value {
     }
 }
 
-/// Format a number nicely (max 2 decimal places, remove trailing zeros only if integer)
+/// Format a number nicely (max DISPLAY_PRECISION decimal places, remove trailing zeros only if integer)
 pub fn format_number(n: Decimal) -> String {
-    let rounded = n.round_dp(2);
+    let rounded = n.round_dp(DISPLAY_PRECISION);
     if rounded.fract().is_zero() {
         format!("{}", rounded.trunc())
     } else {
-        format!("{:.2}", rounded)
+        format!("{:.prec$}", rounded, prec = DISPLAY_PRECISION as usize)
     }
 }
 
-/// Format currency amount (always 2 decimal places)
+/// Format currency amount (always DISPLAY_PRECISION decimal places)
 pub fn format_currency(n: Decimal) -> String {
-    format!("{:.2}", n.round_dp(2))
+    format!(
+        "{:.prec$}",
+        n.round_dp(DISPLAY_PRECISION),
+        prec = DISPLAY_PRECISION as usize
+    )
 }
 
 #[cfg(test)]

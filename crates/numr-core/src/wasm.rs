@@ -174,3 +174,150 @@ fn format_value(value: &Value) -> String {
         _ => value.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal::Decimal;
+
+    #[test]
+    fn test_format_value_number() {
+        let value = Value::Number(Decimal::from(42));
+        assert_eq!(format_value(&value), "42");
+    }
+
+    #[test]
+    fn test_format_value_empty() {
+        let value = Value::Empty;
+        assert_eq!(format_value(&value), "");
+    }
+
+    #[test]
+    fn test_format_value_error() {
+        let value = Value::Error("Division by zero".to_string());
+        assert_eq!(format_value(&value), "Error: Division by zero");
+    }
+
+    #[test]
+    fn test_format_value_currency() {
+        use crate::types::Currency;
+        let value = Value::Currency {
+            amount: Decimal::from(100),
+            currency: Currency::USD,
+        };
+        assert_eq!(format_value(&value), "$100.00");
+    }
+
+    #[test]
+    fn test_value_to_json_number() {
+        let value = Value::Number(Decimal::from(42));
+        let json = value_to_json(&value);
+
+        // Parse and verify
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["formatted"], "42");
+        assert_eq!(parsed["is_error"], false);
+        assert_eq!(parsed["is_empty"], false);
+        assert_eq!(parsed["raw"], "42");
+    }
+
+    #[test]
+    fn test_value_to_json_empty() {
+        let value = Value::Empty;
+        let json = value_to_json(&value);
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["formatted"], "");
+        assert_eq!(parsed["is_error"], false);
+        assert_eq!(parsed["is_empty"], true);
+    }
+
+    #[test]
+    fn test_value_to_json_error() {
+        let value = Value::Error("Test error".to_string());
+        let json = value_to_json(&value);
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["formatted"], "Error: Test error");
+        assert_eq!(parsed["is_error"], true);
+        assert_eq!(parsed["is_empty"], false);
+    }
+
+    #[test]
+    fn test_wasm_engine_eval() {
+        let mut engine = WasmEngine::new();
+        let result = engine.eval("10 + 20");
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["formatted"], "30");
+        assert_eq!(parsed["is_error"], false);
+    }
+
+    #[test]
+    fn test_wasm_engine_eval_preview() {
+        let engine = WasmEngine::new();
+        let result = engine.eval_preview("5 * 5");
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["formatted"], "25");
+    }
+
+    #[test]
+    fn test_wasm_engine_eval_document() {
+        let mut engine = WasmEngine::new();
+        let result = engine.eval_document("10\n20\n30");
+
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0]["result"], "10");
+        assert_eq!(parsed[1]["result"], "20");
+        assert_eq!(parsed[2]["result"], "30");
+    }
+
+    #[test]
+    fn test_wasm_engine_variables() {
+        let mut engine = WasmEngine::new();
+        engine.eval("x = 42");
+        engine.eval("y = 100");
+
+        let vars_json = engine.get_variables();
+        let vars: Vec<serde_json::Value> = serde_json::from_str(&vars_json).unwrap();
+
+        assert!(vars.iter().any(|v| v["name"] == "x" && v["value"] == "42"));
+        assert!(vars.iter().any(|v| v["name"] == "y" && v["value"] == "100"));
+    }
+
+    #[test]
+    fn test_wasm_engine_clear() {
+        let mut engine = WasmEngine::new();
+        engine.eval("x = 42");
+        engine.clear();
+
+        let vars_json = engine.get_variables();
+        let vars: Vec<serde_json::Value> = serde_json::from_str(&vars_json).unwrap();
+        assert!(vars.is_empty());
+    }
+
+    #[test]
+    fn test_wasm_engine_apply_rates() {
+        let mut engine = WasmEngine::new();
+        engine.apply_rates(r#"{"EUR":0.92,"GBP":0.79}"#);
+
+        let result = engine.eval("$100 in EUR");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["formatted"], "€92.00");
+    }
+
+    #[test]
+    fn test_wasm_engine_totals() {
+        let mut engine = WasmEngine::new();
+        engine.eval("$100");
+        engine.eval("$50");
+        engine.eval("$25");
+
+        let totals_json = engine.get_totals();
+        let totals: Vec<String> = serde_json::from_str(&totals_json).unwrap();
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0], "$175.00");
+    }
+}

@@ -573,6 +573,15 @@ mod tests {
         evaluate(&ast, &mut ctx)
     }
 
+    fn eval_with_ctx(input: &str, ctx: &mut EvalContext) -> Value {
+        let ast = parse_line(input).unwrap();
+        evaluate(&ast, ctx)
+    }
+
+    // ========================================
+    // Basic Arithmetic Operations
+    // ========================================
+
     #[test]
     fn test_basic_arithmetic() {
         assert_eq!(eval_str("10 + 20").as_f64(), Some(30.0));
@@ -582,7 +591,306 @@ mod tests {
     }
 
     #[test]
+    fn test_division_by_zero() {
+        let result = eval_str("10 / 0");
+        assert!(result.is_error());
+    }
+
+    #[test]
+    fn test_negative_numbers() {
+        assert_eq!(eval_str("-5 + 10").as_f64(), Some(5.0));
+        assert_eq!(eval_str("10 + -5").as_f64(), Some(5.0));
+        assert_eq!(eval_str("-5 * -3").as_f64(), Some(15.0));
+    }
+
+    #[test]
+    fn test_decimal_arithmetic() {
+        assert_eq!(eval_str("1.5 + 2.5").as_f64(), Some(4.0));
+        assert_eq!(eval_str("10.5 / 2").as_f64(), Some(5.25));
+    }
+
+    // ========================================
+    // Percentage Operations
+    // ========================================
+
+    #[test]
     fn test_percentage_of() {
         assert_eq!(eval_str("20% of 150").as_f64(), Some(30.0));
+    }
+
+    #[test]
+    fn test_percentage_addition() {
+        // 100 + 20% = 120 (add 20% of the base)
+        assert_eq!(eval_str("100 + 20%").as_f64(), Some(120.0));
+    }
+
+    #[test]
+    fn test_percentage_subtraction() {
+        // 100 - 20% = 80 (subtract 20% of the base)
+        assert_eq!(eval_str("100 - 20%").as_f64(), Some(80.0));
+    }
+
+    #[test]
+    fn test_percentage_multiplication() {
+        // 100 * 50% = 50 (multiply by 0.5)
+        assert_eq!(eval_str("100 * 50%").as_f64(), Some(50.0));
+    }
+
+    #[test]
+    fn test_percentage_division() {
+        // 100 / 50% = 200 (divide by 0.5)
+        assert_eq!(eval_str("100 / 50%").as_f64(), Some(200.0));
+    }
+
+    // ========================================
+    // Power Operations
+    // ========================================
+
+    #[test]
+    fn test_power_basic() {
+        assert_eq!(eval_str("2 ^ 3").as_f64(), Some(8.0));
+        assert_eq!(eval_str("3 ^ 2").as_f64(), Some(9.0));
+    }
+
+    #[test]
+    fn test_power_right_associativity() {
+        // 2^3^2 should be 2^(3^2) = 2^9 = 512, not (2^3)^2 = 64
+        assert_eq!(eval_str("2 ^ 3 ^ 2").as_f64(), Some(512.0));
+    }
+
+    // ========================================
+    // Currency Operations
+    // ========================================
+
+    #[test]
+    fn test_currency_addition() {
+        let result = eval_str("$100 + $50");
+        assert!(matches!(result, Value::Currency { .. }));
+        assert_eq!(result.as_f64(), Some(150.0));
+    }
+
+    #[test]
+    fn test_currency_subtraction() {
+        let result = eval_str("$100 - $30");
+        assert!(matches!(result, Value::Currency { .. }));
+        assert_eq!(result.as_f64(), Some(70.0));
+    }
+
+    #[test]
+    fn test_currency_multiply_by_number() {
+        let result = eval_str("$50 * 3");
+        assert!(matches!(result, Value::Currency { .. }));
+        assert_eq!(result.as_f64(), Some(150.0));
+    }
+
+    #[test]
+    fn test_number_multiply_currency() {
+        let result = eval_str("3 * $50");
+        assert!(matches!(result, Value::Currency { .. }));
+        assert_eq!(result.as_f64(), Some(150.0));
+    }
+
+    #[test]
+    fn test_currency_percentage_of() {
+        let result = eval_str("20% of $100");
+        assert!(matches!(result, Value::Currency { .. }));
+        assert_eq!(result.as_f64(), Some(20.0));
+    }
+
+    #[test]
+    fn test_currency_add_percentage() {
+        // $100 + 10% = $110
+        let result = eval_str("$100 + 10%");
+        assert!(matches!(result, Value::Currency { .. }));
+        assert_eq!(result.as_f64(), Some(110.0));
+    }
+
+    // ========================================
+    // Unit Operations
+    // ========================================
+
+    #[test]
+    fn test_unit_addition() {
+        let result = eval_str("5 km + 3 km");
+        // May return WithUnit or WithCompoundUnit depending on implementation
+        assert!(
+            matches!(
+                result,
+                Value::WithUnit { .. } | Value::WithCompoundUnit { .. }
+            ),
+            "Expected unit value, got {:?}",
+            result
+        );
+        assert_eq!(result.as_f64(), Some(8.0));
+    }
+
+    #[test]
+    fn test_unit_subtraction() {
+        let result = eval_str("10 kg - 3 kg");
+        // May return WithUnit or WithCompoundUnit depending on implementation
+        assert!(
+            matches!(
+                result,
+                Value::WithUnit { .. } | Value::WithCompoundUnit { .. }
+            ),
+            "Expected unit value, got {:?}",
+            result
+        );
+        assert_eq!(result.as_f64(), Some(7.0));
+    }
+
+    #[test]
+    fn test_unit_multiply_by_number() {
+        let result = eval_str("5 km * 2");
+        assert!(matches!(
+            result,
+            Value::WithUnit { .. } | Value::WithCompoundUnit { .. }
+        ));
+        assert_eq!(result.as_f64(), Some(10.0));
+    }
+
+    #[test]
+    fn test_unit_divide_by_number() {
+        let result = eval_str("10 km / 2");
+        assert!(matches!(
+            result,
+            Value::WithUnit { .. } | Value::WithCompoundUnit { .. }
+        ));
+        assert_eq!(result.as_f64(), Some(5.0));
+    }
+
+    #[test]
+    fn test_unit_division_to_number() {
+        // 10 km / 5 km = 2 (dimensionless)
+        let result = eval_str("10 km / 5 km");
+        assert!(matches!(result, Value::Number(_)));
+        assert_eq!(result.as_f64(), Some(2.0));
+    }
+
+    #[test]
+    fn test_unit_times_currency() {
+        // 8h * $50 = $400 (hours times hourly rate)
+        let result = eval_str("8h * $50");
+        assert!(matches!(result, Value::Currency { .. }));
+        assert_eq!(result.as_f64(), Some(400.0));
+    }
+
+    // ========================================
+    // Variable Operations
+    // ========================================
+
+    #[test]
+    fn test_variable_assignment() {
+        let mut ctx = EvalContext::new();
+        eval_with_ctx("x = 10", &mut ctx);
+        let result = eval_with_ctx("x + 5", &mut ctx);
+        assert_eq!(result.as_f64(), Some(15.0));
+    }
+
+    #[test]
+    fn test_variable_undefined() {
+        let result = eval_str("undefined_var + 5");
+        assert!(result.is_error());
+    }
+
+    #[test]
+    fn test_variable_with_currency() {
+        let mut ctx = EvalContext::new();
+        eval_with_ctx("price = $100", &mut ctx);
+        let result = eval_with_ctx("price + $50", &mut ctx);
+        assert!(matches!(result, Value::Currency { .. }));
+        assert_eq!(result.as_f64(), Some(150.0));
+    }
+
+    // ========================================
+    // Function Calls
+    // ========================================
+
+    #[test]
+    fn test_function_sum() {
+        assert_eq!(eval_str("sum(1, 2, 3)").as_f64(), Some(6.0));
+    }
+
+    #[test]
+    fn test_function_avg() {
+        assert_eq!(eval_str("avg(10, 20, 30)").as_f64(), Some(20.0));
+    }
+
+    #[test]
+    fn test_function_min() {
+        assert_eq!(eval_str("min(5, 2, 8)").as_f64(), Some(2.0));
+    }
+
+    #[test]
+    fn test_function_max() {
+        assert_eq!(eval_str("max(5, 2, 8)").as_f64(), Some(8.0));
+    }
+
+    #[test]
+    fn test_function_abs() {
+        assert_eq!(eval_str("abs(-5)").as_f64(), Some(5.0));
+        assert_eq!(eval_str("abs(5)").as_f64(), Some(5.0));
+    }
+
+    #[test]
+    fn test_function_round() {
+        assert_eq!(eval_str("round(3.7)").as_f64(), Some(4.0));
+        assert_eq!(eval_str("round(3.2)").as_f64(), Some(3.0));
+    }
+
+    #[test]
+    fn test_function_floor() {
+        assert_eq!(eval_str("floor(3.9)").as_f64(), Some(3.0));
+    }
+
+    #[test]
+    fn test_function_ceil() {
+        assert_eq!(eval_str("ceil(3.1)").as_f64(), Some(4.0));
+    }
+
+    #[test]
+    fn test_function_sqrt() {
+        assert_eq!(eval_str("sqrt(16)").as_f64(), Some(4.0));
+        assert_eq!(eval_str("sqrt(9)").as_f64(), Some(3.0));
+    }
+
+    #[test]
+    fn test_function_sqrt_negative() {
+        let result = eval_str("sqrt(-4)");
+        assert!(result.is_error());
+    }
+
+    #[test]
+    fn test_function_unknown() {
+        let result = eval_str("unknown_func(1, 2)");
+        assert!(result.is_error());
+    }
+
+    // ========================================
+    // Complex Expressions
+    // ========================================
+
+    #[test]
+    fn test_mixed_operations() {
+        // Test operator precedence: 2 + 3 * 4 = 2 + 12 = 14
+        assert_eq!(eval_str("2 + 3 * 4").as_f64(), Some(14.0));
+    }
+
+    #[test]
+    fn test_parentheses() {
+        // (2 + 3) * 4 = 5 * 4 = 20
+        assert_eq!(eval_str("(2 + 3) * 4").as_f64(), Some(20.0));
+    }
+
+    #[test]
+    fn test_nested_parentheses() {
+        // ((1 + 2) * (3 + 4)) = 3 * 7 = 21
+        assert_eq!(eval_str("((1 + 2) * (3 + 4))").as_f64(), Some(21.0));
+    }
+
+    #[test]
+    fn test_chained_operations() {
+        // 100 / 4 / 5 = 25 / 5 = 5 (left-to-right for same precedence)
+        assert_eq!(eval_str("100 / 4 / 5").as_f64(), Some(5.0));
     }
 }
