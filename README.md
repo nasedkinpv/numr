@@ -49,6 +49,8 @@ brew tap nasedkinpv/tap
 brew install numr
 ```
 
+Installs both binaries: `numr` (opens the calculator file in the TUI) and `numr-cli` (CLI/REPL/server).
+
 ### Arch Linux (AUR)
 
 ```bash
@@ -58,6 +60,8 @@ yay -S numr
 # Using paru
 paru -S numr
 ```
+
+Installs both binaries: `numr` (opens the calculator file in the TUI) and `numr-cli` (CLI/REPL/server).
 
 ### From source
 
@@ -70,6 +74,8 @@ cargo build --release
 
 # Binary will be available at target/release/numr
 ```
+
+Release archives also contain both binaries: `numr` (opens the calculator file in the TUI) and `numr-cli` (CLI/REPL/server).
 
 ## Usage
 
@@ -97,6 +103,12 @@ numr-cli -i
 
 # Pipe mode
 echo "100 + 200" | numr-cli
+```
+
+`numr-cli -i` is a simple interactive REPL. If you want readline-style history and editing on Linux, use:
+
+```bash
+rlwrap numr-cli -i
 ```
 
 ### JSON-RPC Server Mode
