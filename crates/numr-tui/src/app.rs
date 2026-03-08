@@ -843,8 +843,10 @@ mod tests {
 
     #[test]
     fn test_refresh_results_preserves_dirty_state() {
-        let mut app = App::default();
-        app.lines = vec!["1 + 1".to_string()];
+        let mut app = App {
+            lines: vec!["1 + 1".to_string()],
+            ..Default::default()
+        };
 
         app.refresh_results();
         assert!(!app.dirty);
