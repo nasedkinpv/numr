@@ -66,13 +66,16 @@ Installs both binaries: `numr` (opens the calculator file in the TUI) and `numr-
 ### From source
 
 ```bash
-# Install from source
+# Install the TUI binary
 cargo install --path crates/numr-tui
 
-# Or build from source
+# Install the CLI binary
+cargo install --path crates/numr-cli
+
+# Or build both from source
 cargo build --release
 
-# Binary will be available at target/release/numr
+# Binaries will be available at target/release/numr and target/release/numr-cli
 ```
 
 Release archives also contain both binaries: `numr` (opens the calculator file in the TUI) and `numr-cli` (CLI/REPL/server).
