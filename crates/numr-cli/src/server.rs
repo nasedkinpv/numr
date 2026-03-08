@@ -3,7 +3,7 @@
 //! Enables external tools to use numr as a calculation backend.
 //! Reads JSON-RPC requests from stdin, writes responses to stdout.
 
-use numr_core::{format_currency, format_number, Decimal, Engine, Value};
+use numr_core::{format_currency_value, format_number, Decimal, Engine, Value};
 use serde::{Deserialize, Serialize};
 use std::io::{self, BufRead, Write};
 
@@ -124,7 +124,7 @@ fn value_to_result(value: &Value) -> EvalResult {
         },
         Value::Currency { amount, currency } => EvalResult {
             result_type: "currency",
-            value: Some(format_currency(*amount)),
+            value: Some(format_currency_value(*amount, *currency)),
             unit: Some(currency.code().to_string()),
             message: None,
             display: value.to_string(),

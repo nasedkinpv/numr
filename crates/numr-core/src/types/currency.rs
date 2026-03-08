@@ -24,11 +24,17 @@ pub struct CurrencyDef {
     pub aliases: &'static [&'static str],
     /// Whether symbol appears after the number (e.g., "100₽" vs "$100")
     pub symbol_after: bool,
+    /// Number of decimal places used when displaying values in this currency
+    pub display_precision: u32,
     /// Whether this is a cryptocurrency (affects exchange rate handling)
     pub is_crypto: bool,
     /// CoinGecko API ID for fetching prices (crypto only)
     pub coingecko_id: Option<&'static str>,
 }
+
+const FIAT_DISPLAY_PRECISION: u32 = 2;
+const CRYPTO_DISPLAY_PRECISION: u32 = 8;
+const STABLECOIN_DISPLAY_PRECISION: u32 = 2;
 
 /// Complete registry of all supported currencies.
 /// To add a new currency: add enum variant and add entry here.
@@ -40,6 +46,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "USD",
         aliases: &["$", "usd", "dollars"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -49,6 +56,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "EUR",
         aliases: &["€", "eur", "euros"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -58,6 +66,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "GBP",
         aliases: &["£", "gbp", "pounds"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -67,6 +76,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "JPY",
         aliases: &["¥", "jpy", "yen"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -76,6 +86,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "CHF",
         aliases: &["chf", "francs"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -85,6 +96,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "CNY",
         aliases: &["cny", "rmb", "yuan"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -94,6 +106,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "CAD",
         aliases: &["cad"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -103,6 +116,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "AUD",
         aliases: &["aud"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -112,6 +126,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "INR",
         aliases: &["₹", "inr", "rupees"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -121,6 +136,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "KRW",
         aliases: &["₩", "krw", "won"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -130,6 +146,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "RUB",
         aliases: &["₽", "rub", "rubles"],
         symbol_after: true,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -139,6 +156,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "ILS",
         aliases: &["₪", "ils", "shekels"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -148,6 +166,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "PLN",
         aliases: &["zł", "pln", "zloty"],
         symbol_after: true,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -157,6 +176,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "UAH",
         aliases: &["₴", "uah", "hryvnia"],
         symbol_after: false,
+        display_precision: FIAT_DISPLAY_PRECISION,
         is_crypto: false,
         coingecko_id: None,
     },
@@ -167,6 +187,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "BTC",
         aliases: &["₿", "btc", "bitcoin"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("bitcoin"),
     },
@@ -176,6 +197,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "ETH",
         aliases: &["Ξ", "eth", "ethereum", "ether"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("ethereum"),
     },
@@ -185,6 +207,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "SOL",
         aliases: &["◎", "sol", "solana"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("solana"),
     },
@@ -194,6 +217,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "USDT",
         aliases: &["₮", "usdt", "tether"],
         symbol_after: false,
+        display_precision: STABLECOIN_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("tether"),
     },
@@ -203,6 +227,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "USDC",
         aliases: &["usdc"],
         symbol_after: false,
+        display_precision: STABLECOIN_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("usd-coin"),
     },
@@ -212,6 +237,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "BNB",
         aliases: &["bnb", "binance"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("binancecoin"),
     },
@@ -221,6 +247,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "XRP",
         aliases: &["xrp", "ripple"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("ripple"),
     },
@@ -230,6 +257,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "ADA",
         aliases: &["₳", "ada", "cardano"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("cardano"),
     },
@@ -239,6 +267,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "DOGE",
         aliases: &["Ð", "doge", "dogecoin"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("dogecoin"),
     },
@@ -248,6 +277,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "DOT",
         aliases: &["dot", "polkadot"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("polkadot"),
     },
@@ -257,6 +287,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "LTC",
         aliases: &["Ł", "ltc", "litecoin"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("litecoin"),
     },
@@ -266,6 +297,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "LINK",
         aliases: &["link", "chainlink"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("chainlink"),
     },
@@ -275,6 +307,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "AVAX",
         aliases: &["avax", "avalanche"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("avalanche-2"),
     },
@@ -284,6 +317,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "MATIC",
         aliases: &["matic", "polygon"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("polygon-ecosystem-token"),
     },
@@ -293,6 +327,7 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         code: "TON",
         aliases: &["ton", "toncoin"],
         symbol_after: false,
+        display_precision: CRYPTO_DISPLAY_PRECISION,
         is_crypto: true,
         coingecko_id: Some("the-open-network"),
     },
@@ -356,6 +391,11 @@ impl Currency {
     /// Check if symbol appears after the number
     pub fn symbol_after(&self) -> bool {
         self.def().symbol_after
+    }
+
+    /// Get the number of decimal places used when displaying this currency
+    pub fn display_precision(&self) -> u32 {
+        self.def().display_precision
     }
 
     /// Check if this is a cryptocurrency (vs fiat)

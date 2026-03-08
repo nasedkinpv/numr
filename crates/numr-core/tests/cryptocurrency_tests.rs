@@ -87,6 +87,20 @@ fn test_usd_to_btc_conversion() {
 }
 
 #[test]
+fn test_small_usd_to_btc_display_precision() {
+    let mut engine = engine_with_btc_rate(d("95000"));
+
+    let result = engine.eval("$400 in BTC");
+    let btc = result.as_decimal().unwrap();
+    let expected = d("400") / d("95000");
+    assert!(
+        (btc - expected).abs() < d("0.00000001"),
+        "Expected ~{expected}, got {btc}"
+    );
+    assert_eq!(result.to_string(), "₿0.00421053");
+}
+
+#[test]
 fn test_btc_arithmetic() {
     let mut engine = Engine::new();
 

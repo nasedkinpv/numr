@@ -42,8 +42,8 @@ pub mod wasm;
 pub use eval::EvalContext;
 pub use parser::{parse_line, try_parse_exact, Ast, BinaryOp, Expr};
 pub use types::{
-    format_currency, format_number, CompoundUnit, Currency, CurrencyDef, Dimensions, NumberBase,
-    RuntimeUnitDef, Unit, UnitType, Value, CURRENCIES, UNITS,
+    format_currency, format_currency_value, format_number, CompoundUnit, Currency, CurrencyDef,
+    Dimensions, NumberBase, RuntimeUnitDef, Unit, UnitType, Value, CURRENCIES, UNITS,
 };
 
 // Re-export Decimal for tests and external use

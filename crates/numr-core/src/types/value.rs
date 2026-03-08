@@ -127,7 +127,7 @@ impl std::fmt::Display for Value {
             }
             Value::Percentage(p) => write!(f, "{}%", format_number(*p * Decimal::from(100))),
             Value::Currency { amount, currency } => {
-                let formatted = format_currency(*amount);
+                let formatted = format_currency_value(*amount, *currency);
                 if currency.symbol_after() {
                     write!(f, "{}{}", formatted, currency.symbol())
                 } else {
@@ -182,11 +182,34 @@ fn format_number_base(n: Decimal, base: NumberBase) -> String {
 
 /// Format currency amount (always DISPLAY_PRECISION decimal places)
 pub fn format_currency(n: Decimal) -> String {
-    format!(
+    format_currency_with_precision(n, DISPLAY_PRECISION)
+}
+
+/// Format currency amount using display rules from the currency registry.
+pub fn format_currency_value(n: Decimal, currency: Currency) -> String {
+    format_currency_with_precision(n, currency.display_precision())
+}
+
+/// Format currency amount using the requested precision.
+/// Extra trailing zeros are trimmed for higher-precision currencies, but at least
+/// two decimal places are preserved for readability.
+fn format_currency_with_precision(n: Decimal, precision: u32) -> String {
+    let mut formatted = format!(
         "{:.prec$}",
-        n.round_dp(DISPLAY_PRECISION),
-        prec = DISPLAY_PRECISION as usize
-    )
+        n.round_dp(precision),
+        prec = precision as usize
+    );
+
+    if precision > DISPLAY_PRECISION {
+        if let Some(dot) = formatted.find('.') {
+            while formatted.ends_with('0') && formatted.len() - dot - 1 > DISPLAY_PRECISION as usize
+            {
+                formatted.pop();
+            }
+        }
+    }
+
+    formatted
 }
 
 #[cfg(test)]
@@ -217,6 +240,23 @@ mod tests {
         assert_eq!(
             Value::with_base(Decimal::from(-10), NumberBase::Hexadecimal).to_string(),
             "-0xa"
+        );
+    }
+
+    #[test]
+    fn test_format_currency_with_precision() {
+        assert_eq!(format_currency_with_precision(Decimal::from(1), 8), "1.00");
+        assert_eq!(
+            format_currency_with_precision(Decimal::from_str("0.1").unwrap(), 8),
+            "0.10"
+        );
+        assert_eq!(
+            format_currency_with_precision(Decimal::from_str("0.04").unwrap(), 8),
+            "0.04"
+        );
+        assert_eq!(
+            format_currency_with_precision(Decimal::from_str("0.0042105263").unwrap(), 8),
+            "0.00421053"
         );
     }
 }
