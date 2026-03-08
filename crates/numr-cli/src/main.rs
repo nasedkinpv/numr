@@ -35,7 +35,7 @@ struct Args {
     #[arg(long)]
     server: bool,
 
-    /// Show only the final result (no input echo)
+    /// Show only the final result (default output is "input = result")
     #[arg(short, long)]
     quiet: bool,
 

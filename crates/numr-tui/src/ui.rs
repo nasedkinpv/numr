@@ -48,7 +48,7 @@ pub mod palette {
 
 fn result_column_width(app: &App, area: Rect) -> u16 {
     let content_width = app
-        .results
+        .results()
         .iter()
         .filter(|v| !v.is_error())
         .map(|v| v.to_string().len())
@@ -62,7 +62,7 @@ fn result_column_width(app: &App, area: Rect) -> u16 {
 
 fn line_number_width(app: &App) -> u16 {
     if app.show_line_numbers {
-        app.lines.len().to_string().len() as u16 + 1
+        app.lines().len().to_string().len() as u16 + 1
     } else {
         0
     }
@@ -169,13 +169,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let filename = app
-        .path
-        .as_ref()
+        .path()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or("Untitled");
 
-    let status = if app.dirty { " [+]" } else { "" };
+    let status = if app.is_dirty() { " [+]" } else { "" };
 
     let title = format!("numr - {filename}{status}");
 
@@ -202,14 +201,14 @@ fn draw_wrapped_content(
     // Iterate through all lines to find what to render
     // This might be slow for huge files, but for a calculator it's fine.
     // Optimization: we could cache heights or use a smarter data structure if needed.
-    for (line_idx, line) in app.lines.iter().enumerate() {
+    for (line_idx, line) in app.lines().iter().enumerate() {
         let line_height = app.get_wrapped_height(line);
 
         // Check if this line is visible
-        if current_visual_row + line_height > app.viewport_y {
+        if current_visual_row + line_height > app.viewport_y() {
             // Calculate how much of the top of this line is hidden
-            let skip_rows = if current_visual_row < app.viewport_y {
-                (app.viewport_y - current_visual_row) as u16
+            let skip_rows = if current_visual_row < app.viewport_y() {
+                (app.viewport_y() - current_visual_row) as u16
             } else {
                 0
             };
@@ -233,7 +232,7 @@ fn draw_wrapped_content(
                     height: visible_rows,
                 };
 
-                let result = &app.results[line_idx];
+                let result = &app.results()[line_idx];
 
                 // Split row into [nums | input | result]
                 let [nums_area, rest_area] =
@@ -246,7 +245,7 @@ fn draw_wrapped_content(
 
                 // Render line number (only if we are showing the first row of the line)
                 if skip_rows == 0 {
-                    let num_style = if line_idx == app.cursor_y {
+                    let num_style = if line_idx == app.cursor_y() {
                         Style::new().fg(palette::ACCENT).bold()
                     } else {
                         Style::new().fg(palette::DIM)
@@ -268,7 +267,7 @@ fn draw_wrapped_content(
                 frame.render_widget(input_para, input_area);
 
                 // Set cursor position if this is the cursor line
-                if !cursor_set && line_idx == app.cursor_y {
+                if !cursor_set && line_idx == app.cursor_y() {
                     let cursor_visual_row_in_area = cursor_row_in_line as u16;
                     if cursor_visual_row_in_area >= skip_rows
                         && cursor_visual_row_in_area < skip_rows + visible_rows
@@ -317,10 +316,10 @@ fn draw_wrapped_content(
 }
 
 fn draw_line_numbers(frame: &mut Frame, area: Rect, app: &App) {
-    let lines: Vec<Line> = (0..app.lines.len())
+    let lines: Vec<Line> = (0..app.lines().len())
         .map(|i| {
             let num = (i + 1).to_string();
-            let style = if i == app.cursor_y {
+            let style = if i == app.cursor_y() {
                 Style::new().fg(palette::ACCENT).bold()
             } else {
                 Style::new().fg(palette::DIM)
@@ -329,19 +328,24 @@ fn draw_line_numbers(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let paragraph = Paragraph::new(lines).scroll((app.viewport_y as u16, 0));
+    let paragraph = Paragraph::new(lines).scroll((app.viewport_y() as u16, 0));
     frame.render_widget(paragraph, area);
 }
 
 fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
-    let lines: Vec<Line> = app.lines.iter().map(|line| highlight_line(line)).collect();
+    let lines: Vec<Line> = app
+        .lines()
+        .iter()
+        .map(|line| highlight_line(line))
+        .collect();
 
-    let paragraph = Paragraph::new(lines).scroll((app.viewport_y as u16, app.viewport_x as u16));
+    let paragraph =
+        Paragraph::new(lines).scroll((app.viewport_y() as u16, app.viewport_x() as u16));
     frame.render_widget(paragraph, area);
 
     // Set terminal cursor position
-    let cursor_screen_x = area.x + (app.cursor_x.saturating_sub(app.viewport_x)) as u16;
-    let cursor_screen_y = area.y + (app.cursor_y.saturating_sub(app.viewport_y)) as u16;
+    let cursor_screen_x = area.x + (app.cursor_x().saturating_sub(app.viewport_x())) as u16;
+    let cursor_screen_y = area.y + (app.cursor_y().saturating_sub(app.viewport_y())) as u16;
 
     if cursor_screen_x < area.x + area.width && cursor_screen_y < area.y + area.height {
         frame.set_cursor_position(Position {
@@ -353,7 +357,7 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
     let lines: Vec<Line> = app
-        .results
+        .results()
         .iter()
         .map(|value| {
             if value.is_error() || value.is_empty() {
@@ -367,7 +371,7 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
     // Results scroll vertically only (no horizontal scroll needed)
     let paragraph = Paragraph::new(lines)
         .right_aligned()
-        .scroll((app.viewport_y as u16, 0));
+        .scroll((app.viewport_y() as u16, 0));
     frame.render_widget(paragraph, area);
 }
 
@@ -533,7 +537,7 @@ fn build_hints_parts(app: &App) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
     let mut left = vec![first_span];
 
     // Unsaved indicator: a subtle dot after mode
-    if app.dirty {
+    if app.is_dirty() {
         left.push(" •".fg(palette::NUMBER));
     }
 
@@ -851,8 +855,7 @@ mod tests {
         let mut app = App::default();
         app.wrap_mode = true;
         app.show_line_numbers = true;
-        app.lines = vec!["1".to_string(); 120];
-        app.results = vec![numr_core::Value::Number(numr_core::Decimal::ONE); 120];
+        app.set_lines_for_test(vec!["1".to_string(); 120]);
         let (width, height) = viewport_dimensions(
             &app,
             Rect {

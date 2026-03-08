@@ -24,7 +24,7 @@ pub fn handle_save(app: &mut App) -> Result<(), String> {
 /// Handle quit command
 /// Returns QuitResult indicating whether to exit, show confirmation, or continue
 pub fn handle_quit(app: &App) -> QuitResult {
-    if app.dirty {
+    if app.is_dirty() {
         QuitResult::ShowConfirmation
     } else {
         QuitResult::Exit

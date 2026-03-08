@@ -383,14 +383,7 @@ fn handle_vim_normal_mode<B: ratatui::backend::Backend>(
         KeyCode::Char('X') => app.delete_char(),
         KeyCode::Char('d') => app.pending = PendingCommand::Delete,
         KeyCode::Char('D') => app.delete_to_line_end(),
-        KeyCode::Char('J') => {
-            app.move_to_line_end();
-            app.delete_char_forward();
-            let line = &app.lines[app.cursor_y];
-            if !line.is_empty() && !line.ends_with(' ') {
-                app.insert_char(' ');
-            }
-        }
+        KeyCode::Char('J') => app.join_with_next_line(),
         // Toggles
         KeyCode::Char('W') => app.toggle_wrap(),
         KeyCode::Char('N') => app.toggle_line_numbers(),

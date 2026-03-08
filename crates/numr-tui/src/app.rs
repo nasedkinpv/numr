@@ -6,10 +6,9 @@ use numr_editor::char_to_byte_idx;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
-use textwrap::{wrap, Options, WordSplitter};
-
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+use textwrap::{wrap, Options, WordSplitter};
 
 // ========================================
 // Status Display Constants
@@ -51,81 +50,89 @@ pub enum PendingCommand {
 // Re-export KeybindingMode so main.rs can use it
 pub use crate::config::KeybindingMode;
 
-pub struct App {
-    pub lines: Vec<String>,
-    pub results: Vec<Value>,
-    pub cursor_x: usize,
-    pub cursor_y: usize,
-    pub viewport_x: usize,      // Horizontal scroll offset
-    pub viewport_y: usize,      // Vertical scroll offset
-    pub viewport_width: usize,  // Visible columns count
-    pub viewport_height: usize, // Visible lines count
-    pub engine: Engine,
-    pub mode: InputMode,
-    pub keybinding_mode: KeybindingMode,
-    pub pending: PendingCommand, // For multi-key commands like dd, gg
-    pub path: Option<PathBuf>,
-    pub dirty: bool,
-    pub debug_mode: bool,
-    pub wrap_mode: bool, // Toggle text wrapping
-    pub fetch_status: FetchStatus,
-    pub fetch_start: Option<Instant>, // For loading animation
-    pub status_message: Option<String>,
-    pub status_start: Option<Instant>,
-    pub show_help: bool,
-    pub help_scroll: usize, // Scroll offset for help popup
-    pub show_line_numbers: bool,
-    pub show_header: bool,
-    pub show_quit_confirmation: bool,
-    config: Config, // Persistent user configuration
-}
-
 /// Get character count of a string (not byte count)
 fn char_count(s: &str) -> usize {
     s.chars().count()
 }
 
-impl App {
-    pub fn new(path: Option<PathBuf>, config: Config) -> Self {
-        // Apply config preferences
-        let keybinding_mode = config.preferences.keybinding_mode;
-        let mode = match keybinding_mode {
-            KeybindingMode::Standard => InputMode::Insert,
-            KeybindingMode::Vim => InputMode::Normal,
-        };
-        let wrap_mode = config.preferences.wrap_mode;
-        let show_line_numbers = config.preferences.show_line_numbers;
-        let show_header = config.preferences.show_header;
-        let debug_mode = config.preferences.debug_mode;
+struct Document {
+    lines: Vec<String>,
+    results: Vec<Value>,
+    path: Option<PathBuf>,
+    dirty: bool,
+    engine: Engine,
+}
 
-        let mut app = Self {
+impl Document {
+    pub fn new(path: Option<PathBuf>) -> Self {
+        let mut document = Self {
+            lines: vec![String::new()],
+            results: vec![Value::Empty],
             path,
-            config,
-            keybinding_mode,
-            mode,
-            wrap_mode,
-            show_line_numbers,
-            show_header,
-            debug_mode,
-            ..Self::default()
+            dirty: false,
+            engine: Engine::new(),
         };
-
-        // Save config (creates file on first run, updates with new defaults on subsequent runs)
-        if let Err(e) = app.config.save() {
-            app.set_status(&format!("Config save failed: {e}"));
-        }
-
-        if let Some(p) = &app.path {
-            if p.exists() {
-                if let Err(e) = app.load() {
-                    eprintln!("Failed to load file: {e}");
-                }
-            }
-        }
-        app
+        document.refresh_results();
+        document
     }
 
-    /// Load lines from the file
+    #[cfg(test)]
+    fn from_lines(lines: Vec<String>) -> Self {
+        let mut document = Self {
+            lines: if lines.is_empty() {
+                vec![String::new()]
+            } else {
+                lines
+            },
+            results: Vec::new(),
+            path: None,
+            dirty: false,
+            engine: Engine::new(),
+        };
+        document.refresh_results();
+        document
+    }
+
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
+
+    pub fn results(&self) -> &[Value] {
+        &self.results
+    }
+
+    pub fn line(&self, index: usize) -> Option<&str> {
+        self.lines.get(index).map(String::as_str)
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn line_char_len(&self, index: usize) -> usize {
+        self.line(index).map(char_count).unwrap_or(0)
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    pub fn dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub fn grouped_totals(&self) -> Vec<Value> {
+        self.engine.grouped_totals()
+    }
+
+    pub fn current_line_error(&self, line_idx: usize) -> Option<&str> {
+        if let Some(Value::Error(msg)) = self.results.get(line_idx) {
+            Some(msg.as_str())
+        } else {
+            None
+        }
+    }
+
     pub fn load(&mut self) -> io::Result<()> {
         if let Some(path) = &self.path {
             let content = fs::read_to_string(path)?;
@@ -139,10 +146,8 @@ impl App {
         Ok(())
     }
 
-    /// Save lines to the file
     pub fn save(&mut self) -> io::Result<()> {
         if let Some(path) = &self.path {
-            // Ensure directory exists
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -157,6 +162,582 @@ impl App {
             self.dirty = false;
         }
         Ok(())
+    }
+
+    pub fn update_rates(&mut self, raw_rates: &HashMap<String, f64>) {
+        self.engine.apply_raw_rates(raw_rates);
+        self.engine.save_rates_to_cache(raw_rates);
+        self.refresh_results();
+    }
+
+    pub fn recalculate(&mut self) {
+        self.dirty = true;
+        self.recompute_results();
+    }
+
+    pub fn refresh_results(&mut self) {
+        self.recompute_results();
+    }
+
+    pub fn insert_char(&mut self, line: usize, char_col: usize, c: char) -> bool {
+        if line < self.lines.len() {
+            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
+            self.lines[line].insert(byte_idx, c);
+            self.recalculate();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn delete_char_before(&mut self, line: usize, char_col: usize) -> Option<(usize, usize)> {
+        if char_col > 0 && line < self.lines.len() {
+            let byte_idx = char_to_byte_idx(&self.lines[line], char_col - 1);
+            self.lines[line].remove(byte_idx);
+            self.recalculate();
+            Some((line, char_col - 1))
+        } else if char_col == 0 && line > 0 && line < self.lines.len() {
+            let current_line = self.lines.remove(line);
+            let previous_col = char_count(&self.lines[line - 1]);
+            self.lines[line - 1].push_str(&current_line);
+            self.recalculate();
+            Some((line - 1, previous_col))
+        } else {
+            None
+        }
+    }
+
+    pub fn delete_char_forward(&mut self, line: usize, char_col: usize) -> bool {
+        if line >= self.lines.len() {
+            return false;
+        }
+
+        let line_char_len = char_count(&self.lines[line]);
+        if char_col < line_char_len {
+            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
+            self.lines[line].remove(byte_idx);
+            self.recalculate();
+            true
+        } else if char_col == line_char_len && line < self.lines.len() - 1 {
+            let next_line = self.lines.remove(line + 1);
+            self.lines[line].push_str(&next_line);
+            self.recalculate();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn delete_line(&mut self, line: usize) -> usize {
+        if self.lines.len() > 1 && line < self.lines.len() {
+            self.lines.remove(line);
+            self.recalculate();
+            line.min(self.lines.len().saturating_sub(1))
+        } else {
+            self.lines[0].clear();
+            self.recalculate();
+            0
+        }
+    }
+
+    pub fn new_line(&mut self, line: usize, char_col: usize) -> Option<(usize, usize)> {
+        if line < self.lines.len() {
+            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
+            let remainder = self.lines[line].split_off(byte_idx);
+            self.lines.insert(line + 1, remainder);
+            self.recalculate();
+            Some((line + 1, 0))
+        } else {
+            None
+        }
+    }
+
+    pub fn delete_to_line_end(&mut self, line: usize, char_col: usize) -> bool {
+        if line < self.lines.len() {
+            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
+            self.lines[line].truncate(byte_idx);
+            self.recalculate();
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(test)]
+    fn set_lines(&mut self, lines: Vec<String>) {
+        self.lines = if lines.is_empty() {
+            vec![String::new()]
+        } else {
+            lines
+        };
+        self.refresh_results();
+        self.dirty = false;
+    }
+
+    fn recompute_results(&mut self) {
+        self.engine.clear();
+        self.results.clear();
+
+        for line in &self.lines {
+            let value = if line.trim().is_empty() {
+                Value::Empty
+            } else {
+                self.engine.eval(line)
+            };
+            self.results.push(value);
+        }
+    }
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+struct ViewState {
+    cursor_x: usize,
+    cursor_y: usize,
+    viewport_x: usize,
+    viewport_y: usize,
+    viewport_width: usize,
+    viewport_height: usize,
+}
+
+impl ViewState {
+    fn sync_after_wrap_toggle(&mut self, wrap_mode: bool, doc: &Document) {
+        if wrap_mode {
+            self.viewport_x = 0;
+        } else {
+            self.viewport_y = self.cursor_y.saturating_sub(self.viewport_height / 2);
+        }
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn cursor_x(&self) -> usize {
+        self.cursor_x
+    }
+
+    pub fn cursor_y(&self) -> usize {
+        self.cursor_y
+    }
+
+    pub fn viewport_x(&self) -> usize {
+        self.viewport_x
+    }
+
+    pub fn viewport_y(&self) -> usize {
+        self.viewport_y
+    }
+
+    pub fn set_viewport_size(
+        &mut self,
+        width: usize,
+        height: usize,
+        doc: &Document,
+        wrap_mode: bool,
+    ) {
+        self.viewport_width = width;
+        self.viewport_height = height;
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn get_wrapped_height(&self, text: &str) -> usize {
+        if text.is_empty() || self.viewport_width == 0 {
+            return 1;
+        }
+        let options = Options::new(self.viewport_width)
+            .break_words(true)
+            .word_splitter(WordSplitter::NoHyphenation);
+        wrap(text, options).len().max(1)
+    }
+
+    pub fn get_cursor_wrapped_position(&self, doc: &Document) -> (usize, usize) {
+        if self.viewport_width == 0 {
+            return (0, self.cursor_x);
+        }
+
+        let line = doc.line(self.cursor_y).unwrap_or("");
+        let options = Options::new(self.viewport_width)
+            .break_words(true)
+            .word_splitter(WordSplitter::NoHyphenation);
+        let wrapped = wrap(line, options);
+
+        if wrapped.is_empty() {
+            return (0, self.cursor_x);
+        }
+
+        let mut current_len = 0;
+        for (idx, part) in wrapped.iter().enumerate() {
+            let part_len = part.chars().count();
+            if self.cursor_x <= current_len + part_len {
+                return (idx, self.cursor_x - current_len);
+            }
+            current_len += part_len;
+        }
+
+        let last_row = wrapped.len().saturating_sub(1);
+        let last_len = wrapped.last().map(|s| s.chars().count()).unwrap_or(0);
+        (last_row, last_len)
+    }
+
+    pub fn ensure_cursor_visible(&mut self, doc: &Document, wrap_mode: bool) {
+        if wrap_mode {
+            let visual_row = self.get_cursor_visual_row(doc);
+
+            if visual_row < self.viewport_y {
+                self.viewport_y = visual_row;
+            } else if visual_row >= self.viewport_y + self.viewport_height {
+                self.viewport_y = visual_row.saturating_sub(self.viewport_height.saturating_sub(1));
+            }
+        } else {
+            if self.cursor_y < self.viewport_y {
+                self.viewport_y = self.cursor_y;
+            } else if self.cursor_y >= self.viewport_y + self.viewport_height {
+                self.viewport_y = self
+                    .cursor_y
+                    .saturating_sub(self.viewport_height.saturating_sub(1));
+            }
+
+            let margin = CURSOR_MARGIN.min(self.viewport_width / 4);
+            if self.cursor_x < self.viewport_x + margin {
+                self.viewport_x = self.cursor_x.saturating_sub(margin);
+            } else if self.cursor_x >= self.viewport_x + self.viewport_width.saturating_sub(margin)
+            {
+                self.viewport_x = self
+                    .cursor_x
+                    .saturating_sub(self.viewport_width.saturating_sub(margin + 1));
+            }
+        }
+    }
+
+    pub fn move_up(&mut self, doc: &Document, wrap_mode: bool) {
+        if self.cursor_y > 0 {
+            self.cursor_y -= 1;
+            self.cursor_x = self.cursor_x.min(doc.line_char_len(self.cursor_y));
+            self.ensure_cursor_visible(doc, wrap_mode);
+        }
+    }
+
+    pub fn move_down(&mut self, doc: &Document, wrap_mode: bool) {
+        if self.cursor_y < doc.line_count().saturating_sub(1) {
+            self.cursor_y += 1;
+            self.cursor_x = self.cursor_x.min(doc.line_char_len(self.cursor_y));
+            self.ensure_cursor_visible(doc, wrap_mode);
+        }
+    }
+
+    pub fn move_left(&mut self, doc: &Document, wrap_mode: bool) {
+        if self.cursor_x > 0 {
+            self.cursor_x -= 1;
+        } else if self.cursor_y > 0 {
+            self.cursor_y -= 1;
+            self.cursor_x = doc.line_char_len(self.cursor_y);
+        }
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn move_right(&mut self, doc: &Document, wrap_mode: bool) {
+        let line_char_len = doc.line_char_len(self.cursor_y);
+        if self.cursor_x < line_char_len {
+            self.cursor_x += 1;
+        } else if self.cursor_y < doc.line_count().saturating_sub(1) {
+            self.cursor_y += 1;
+            self.cursor_x = 0;
+        }
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn move_to_line_start(&mut self, doc: &Document, wrap_mode: bool) {
+        self.cursor_x = 0;
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn move_to_line_end(&mut self, doc: &Document, wrap_mode: bool) {
+        self.cursor_x = doc.line_char_len(self.cursor_y);
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn move_to_first_line(&mut self, doc: &Document, wrap_mode: bool) {
+        self.cursor_y = 0;
+        self.cursor_x = 0;
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn move_to_last_line(&mut self, doc: &Document, wrap_mode: bool) {
+        self.cursor_y = doc.line_count().saturating_sub(1);
+        self.cursor_x = 0;
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn page_up(&mut self, doc: &Document, wrap_mode: bool) {
+        let page_size = self.viewport_height.saturating_sub(1).max(1);
+        if self.cursor_y > 0 {
+            self.cursor_y = self.cursor_y.saturating_sub(page_size);
+            self.cursor_x = self.cursor_x.min(doc.line_char_len(self.cursor_y));
+            self.ensure_cursor_visible(doc, wrap_mode);
+        }
+    }
+
+    pub fn page_down(&mut self, doc: &Document, wrap_mode: bool) {
+        let page_size = self.viewport_height.saturating_sub(1).max(1);
+        if self.cursor_y < doc.line_count().saturating_sub(1) {
+            self.cursor_y = (self.cursor_y + page_size).min(doc.line_count().saturating_sub(1));
+            self.cursor_x = self.cursor_x.min(doc.line_char_len(self.cursor_y));
+            self.ensure_cursor_visible(doc, wrap_mode);
+        }
+    }
+
+    pub fn move_word_forward(&mut self, doc: &Document, wrap_mode: bool) {
+        let line = doc.line(self.cursor_y).unwrap_or("");
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+
+        if self.cursor_x >= len {
+            if self.cursor_y < doc.line_count().saturating_sub(1) {
+                self.cursor_y += 1;
+                self.cursor_x = 0;
+                let next_line: Vec<char> = doc.line(self.cursor_y).unwrap_or("").chars().collect();
+                while self.cursor_x < next_line.len() && next_line[self.cursor_x].is_whitespace() {
+                    self.cursor_x += 1;
+                }
+            }
+            self.ensure_cursor_visible(doc, wrap_mode);
+            return;
+        }
+
+        let mut pos = self.cursor_x;
+        while pos < len && !chars[pos].is_whitespace() {
+            pos += 1;
+        }
+        while pos < len && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+
+        if pos >= len && self.cursor_y < doc.line_count().saturating_sub(1) {
+            self.cursor_y += 1;
+            self.cursor_x = 0;
+            let next_line: Vec<char> = doc.line(self.cursor_y).unwrap_or("").chars().collect();
+            while self.cursor_x < next_line.len() && next_line[self.cursor_x].is_whitespace() {
+                self.cursor_x += 1;
+            }
+        } else {
+            self.cursor_x = pos.min(len);
+        }
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn move_word_backward(&mut self, doc: &Document, wrap_mode: bool) {
+        if self.cursor_x == 0 {
+            if self.cursor_y > 0 {
+                self.cursor_y -= 1;
+                self.cursor_x = doc.line_char_len(self.cursor_y);
+            } else {
+                return;
+            }
+        }
+
+        let line = doc.line(self.cursor_y).unwrap_or("");
+        let chars: Vec<char> = line.chars().collect();
+
+        if chars.is_empty() {
+            self.cursor_x = 0;
+            self.ensure_cursor_visible(doc, wrap_mode);
+            return;
+        }
+
+        let mut pos = self.cursor_x.saturating_sub(1);
+        while pos > 0 && chars[pos].is_whitespace() {
+            pos -= 1;
+        }
+        while pos > 0 && !chars[pos - 1].is_whitespace() {
+            pos -= 1;
+        }
+
+        self.cursor_x = pos;
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    pub fn move_word_end(&mut self, doc: &Document, wrap_mode: bool) {
+        let line = doc.line(self.cursor_y).unwrap_or("");
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+
+        if self.cursor_x >= len.saturating_sub(1) {
+            if self.cursor_y < doc.line_count().saturating_sub(1) {
+                self.cursor_y += 1;
+                self.cursor_x = 0;
+                let next_line: Vec<char> = doc.line(self.cursor_y).unwrap_or("").chars().collect();
+                while self.cursor_x < next_line.len() && next_line[self.cursor_x].is_whitespace() {
+                    self.cursor_x += 1;
+                }
+                while self.cursor_x < next_line.len().saturating_sub(1)
+                    && !next_line[self.cursor_x + 1].is_whitespace()
+                {
+                    self.cursor_x += 1;
+                }
+            }
+            self.ensure_cursor_visible(doc, wrap_mode);
+            return;
+        }
+
+        let mut pos = self.cursor_x + 1;
+        while pos < len && chars[pos].is_whitespace() {
+            pos += 1;
+        }
+        while pos < len.saturating_sub(1) && !chars[pos + 1].is_whitespace() {
+            pos += 1;
+        }
+
+        self.cursor_x = pos.min(len.saturating_sub(1));
+        self.ensure_cursor_visible(doc, wrap_mode);
+    }
+
+    fn get_cursor_visual_row(&self, doc: &Document) -> usize {
+        let mut visual_row = 0;
+        for (i, line) in doc.lines().iter().enumerate() {
+            if i == self.cursor_y {
+                let options = Options::new(self.viewport_width)
+                    .break_words(true)
+                    .word_splitter(WordSplitter::NoHyphenation);
+                let wrapped = wrap(line, options);
+
+                if wrapped.is_empty() {
+                    return visual_row;
+                }
+
+                let mut current_len = 0;
+                for (idx, part) in wrapped.iter().enumerate() {
+                    let part_len = part.chars().count();
+                    if self.cursor_x <= current_len + part_len {
+                        return visual_row + idx;
+                    }
+                    current_len += part_len;
+                }
+                return visual_row + wrapped.len().saturating_sub(1);
+            }
+            visual_row += self.get_wrapped_height(line);
+        }
+        visual_row
+    }
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        Self {
+            cursor_x: 0,
+            cursor_y: 0,
+            viewport_x: 0,
+            viewport_y: 0,
+            viewport_width: 80,
+            viewport_height: 20,
+        }
+    }
+}
+
+pub struct App {
+    document: Document,
+    view: ViewState,
+    pub mode: InputMode,
+    pub keybinding_mode: KeybindingMode,
+    pub pending: PendingCommand,
+    pub debug_mode: bool,
+    pub wrap_mode: bool,
+    pub fetch_status: FetchStatus,
+    pub fetch_start: Option<Instant>,
+    pub status_message: Option<String>,
+    pub status_start: Option<Instant>,
+    pub show_help: bool,
+    pub help_scroll: usize,
+    pub show_line_numbers: bool,
+    pub show_header: bool,
+    pub show_quit_confirmation: bool,
+    config: Config,
+}
+
+impl App {
+    pub fn new(path: Option<PathBuf>, config: Config) -> Self {
+        let keybinding_mode = config.preferences.keybinding_mode;
+        let mode = match keybinding_mode {
+            KeybindingMode::Standard => InputMode::Insert,
+            KeybindingMode::Vim => InputMode::Normal,
+        };
+        let wrap_mode = config.preferences.wrap_mode;
+        let show_line_numbers = config.preferences.show_line_numbers;
+        let show_header = config.preferences.show_header;
+        let debug_mode = config.preferences.debug_mode;
+
+        let mut app = Self {
+            document: Document::new(path),
+            config,
+            keybinding_mode,
+            mode,
+            wrap_mode,
+            show_line_numbers,
+            show_header,
+            debug_mode,
+            ..Self::default()
+        };
+
+        if let Err(e) = app.config.save() {
+            app.set_status(&format!("Config save failed: {e}"));
+        }
+
+        if let Some(path) = app.document.path() {
+            if path.exists() {
+                if let Err(e) = app.load() {
+                    eprintln!("Failed to load file: {e}");
+                }
+            }
+        }
+        app
+    }
+
+    pub fn lines(&self) -> &[String] {
+        self.document.lines()
+    }
+
+    pub fn results(&self) -> &[Value] {
+        self.document.results()
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.document.path()
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.document.dirty()
+    }
+
+    pub fn cursor_x(&self) -> usize {
+        self.view.cursor_x()
+    }
+
+    pub fn cursor_y(&self) -> usize {
+        self.view.cursor_y()
+    }
+
+    pub fn viewport_x(&self) -> usize {
+        self.view.viewport_x()
+    }
+
+    pub fn viewport_y(&self) -> usize {
+        self.view.viewport_y()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_lines_for_test(&mut self, lines: Vec<String>) {
+        self.document.set_lines(lines);
+    }
+
+    /// Load lines from the file
+    pub fn load(&mut self) -> io::Result<()> {
+        self.document.load()
+    }
+
+    /// Save lines to the file
+    pub fn save(&mut self) -> io::Result<()> {
+        self.document.save()
     }
 
     /// Save current preferences to config file
@@ -178,9 +759,8 @@ impl App {
 
     /// Update viewport dimensions and keep the cursor visible within them.
     pub fn set_viewport_size(&mut self, width: usize, height: usize) {
-        self.viewport_width = width;
-        self.viewport_height = height;
-        self.ensure_cursor_visible();
+        self.view
+            .set_viewport_size(width, height, &self.document, self.wrap_mode);
     }
 
     /// Toggle debug mode
@@ -192,16 +772,8 @@ impl App {
     /// Toggle wrap mode
     pub fn toggle_wrap(&mut self) {
         self.wrap_mode = !self.wrap_mode;
-        // Reset horizontal scroll when entering wrap mode
-        if self.wrap_mode {
-            self.viewport_x = 0;
-            // Recalculate viewport_y to ensure cursor is visible in new mode
-            self.ensure_cursor_visible();
-        } else {
-            // Reset to line-based scrolling
-            self.viewport_y = self.cursor_y.saturating_sub(self.viewport_height / 2);
-            self.ensure_cursor_visible();
-        }
+        self.view
+            .sync_after_wrap_toggle(self.wrap_mode, &self.document);
         self.save_config();
     }
 
@@ -231,7 +803,7 @@ impl App {
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
         if self.show_help {
-            self.help_scroll = 0; // Reset scroll when opening
+            self.help_scroll = 0;
         }
     }
 
@@ -261,416 +833,161 @@ impl App {
 
     /// Page up
     pub fn page_up(&mut self) {
-        let page_size = self.viewport_height.saturating_sub(1).max(1);
-        if self.cursor_y > 0 {
-            self.cursor_y = self.cursor_y.saturating_sub(page_size);
-            self.cursor_x = self.cursor_x.min(char_count(&self.lines[self.cursor_y]));
-            self.ensure_cursor_visible();
-        }
+        self.view.page_up(&self.document, self.wrap_mode);
     }
 
     /// Page down
     pub fn page_down(&mut self) {
-        let page_size = self.viewport_height.saturating_sub(1).max(1);
-        if self.cursor_y < self.lines.len() - 1 {
-            self.cursor_y = (self.cursor_y + page_size).min(self.lines.len() - 1);
-            self.cursor_x = self.cursor_x.min(char_count(&self.lines[self.cursor_y]));
-            self.ensure_cursor_visible();
-        }
+        self.view.page_down(&self.document, self.wrap_mode);
     }
 
     /// Insert a character at cursor position
     pub fn insert_char(&mut self, c: char) {
-        let (line, char_col) = (self.cursor_y, self.cursor_x);
-        if line < self.lines.len() {
-            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
-            self.lines[line].insert(byte_idx, c);
-            self.cursor_x += 1;
-            self.recalculate();
+        let line = self.view.cursor_y;
+        let char_col = self.view.cursor_x;
+        if self.document.insert_char(line, char_col, c) {
+            self.view.cursor_x += 1;
+            self.view
+                .ensure_cursor_visible(&self.document, self.wrap_mode);
         }
     }
 
     /// Delete character before cursor
     pub fn delete_char(&mut self) {
-        let (line, char_col) = (self.cursor_y, self.cursor_x);
-        if char_col > 0 && line < self.lines.len() {
-            let byte_idx = char_to_byte_idx(&self.lines[line], char_col - 1);
-            self.lines[line].remove(byte_idx);
-            self.cursor_x -= 1;
-            self.recalculate();
-        } else if char_col == 0 && line > 0 {
-            // Merge with previous line
-            let current_line = self.lines.remove(line);
-            self.results.remove(line);
-            let prev_char_len = char_count(&self.lines[line - 1]);
-            self.lines[line - 1].push_str(&current_line);
-            self.cursor_y = line - 1;
-            self.cursor_x = prev_char_len;
-            self.recalculate();
+        let line = self.view.cursor_y;
+        let char_col = self.view.cursor_x;
+        if let Some((new_y, new_x)) = self.document.delete_char_before(line, char_col) {
+            self.view.cursor_y = new_y;
+            self.view.cursor_x = new_x;
+            self.view
+                .ensure_cursor_visible(&self.document, self.wrap_mode);
         }
     }
 
     /// Delete character after cursor
     pub fn delete_char_forward(&mut self) {
-        let (line, char_col) = (self.cursor_y, self.cursor_x);
-        let line_char_len = char_count(&self.lines[line]);
-        if line < self.lines.len() && char_col < line_char_len {
-            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
-            self.lines[line].remove(byte_idx);
-            self.recalculate();
-        } else if char_col == line_char_len && line < self.lines.len() - 1 {
-            // Merge with next line
-            let next_line = self.lines.remove(line + 1);
-            self.results.remove(line + 1);
-            self.lines[line].push_str(&next_line);
-            self.recalculate();
+        if self
+            .document
+            .delete_char_forward(self.view.cursor_y, self.view.cursor_x)
+        {
+            self.view
+                .ensure_cursor_visible(&self.document, self.wrap_mode);
         }
     }
 
     /// Delete the current line
     pub fn delete_line(&mut self) {
-        let line = self.cursor_y;
-        if self.lines.len() > 1 {
-            self.lines.remove(line);
-            self.results.remove(line);
-            if line >= self.lines.len() {
-                self.cursor_y = self.lines.len() - 1;
-            }
-            self.cursor_x = 0; // Reset col
-            self.recalculate();
-        } else {
-            // If only one line, just clear it
-            self.lines[0].clear();
-            self.results[0] = Value::Empty;
-            self.cursor_x = 0;
-            self.recalculate();
-        }
+        self.view.cursor_y = self.document.delete_line(self.view.cursor_y);
+        self.view.cursor_x = 0;
+        self.view
+            .ensure_cursor_visible(&self.document, self.wrap_mode);
     }
 
     /// Insert a new line
     pub fn new_line(&mut self) {
-        let (line, char_col) = (self.cursor_y, self.cursor_x);
-        if line < self.lines.len() {
-            let byte_idx = char_to_byte_idx(&self.lines[line], char_col);
-            let remainder = self.lines[line].split_off(byte_idx);
-            self.lines.insert(line + 1, remainder);
-            self.results.insert(line + 1, Value::Empty);
-            self.cursor_y = line + 1;
-            self.cursor_x = 0;
-            self.recalculate();
+        if let Some((new_y, new_x)) = self
+            .document
+            .new_line(self.view.cursor_y, self.view.cursor_x)
+        {
+            self.view.cursor_y = new_y;
+            self.view.cursor_x = new_x;
+            self.view
+                .ensure_cursor_visible(&self.document, self.wrap_mode);
         }
     }
 
     /// Move cursor up
     pub fn move_up(&mut self) {
-        if self.cursor_y > 0 {
-            self.cursor_y -= 1;
-            self.cursor_x = self.cursor_x.min(char_count(&self.lines[self.cursor_y]));
-            self.ensure_cursor_visible();
-        }
+        self.view.move_up(&self.document, self.wrap_mode);
     }
 
     /// Move cursor down
     pub fn move_down(&mut self) {
-        if self.cursor_y < self.lines.len() - 1 {
-            self.cursor_y += 1;
-            self.cursor_x = self.cursor_x.min(char_count(&self.lines[self.cursor_y]));
-            self.ensure_cursor_visible();
-        }
+        self.view.move_down(&self.document, self.wrap_mode);
     }
 
     /// Calculate wrapped height of a line
     pub fn get_wrapped_height(&self, text: &str) -> usize {
-        if text.is_empty() || self.viewport_width == 0 {
-            return 1;
-        }
-        let options = Options::new(self.viewport_width)
-            .break_words(true)
-            .word_splitter(WordSplitter::NoHyphenation);
-        wrap(text, options).len().max(1)
-    }
-
-    /// Get the visual row index of the cursor (0-indexed global)
-    pub fn get_cursor_visual_row(&self) -> usize {
-        let mut visual_row = 0;
-        for (i, line) in self.lines.iter().enumerate() {
-            if i == self.cursor_y {
-                let options = Options::new(self.viewport_width)
-                    .break_words(true)
-                    .word_splitter(WordSplitter::NoHyphenation);
-                let wrapped = wrap(line, options);
-
-                if wrapped.is_empty() {
-                    return visual_row;
-                }
-
-                let mut current_len = 0;
-                for (idx, part) in wrapped.iter().enumerate() {
-                    let part_len = part.chars().count();
-                    // If cursor is within this part (inclusive of end)
-                    if self.cursor_x <= current_len + part_len {
-                        return visual_row + idx;
-                    }
-                    current_len += part_len;
-                }
-                return visual_row + wrapped.len().saturating_sub(1);
-            }
-            visual_row += self.get_wrapped_height(line);
-        }
-        visual_row
+        self.view.get_wrapped_height(text)
     }
 
     /// Get cursor position within wrapped line: (row_offset_within_line, x_position)
-    /// row_offset_within_line: which visual row within the current line (0 = first row)
-    /// x_position: character position within that wrapped row
     pub fn get_cursor_wrapped_position(&self) -> (usize, usize) {
-        if self.viewport_width == 0 {
-            return (0, self.cursor_x);
-        }
-
-        let line = &self.lines[self.cursor_y];
-        let options = Options::new(self.viewport_width)
-            .break_words(true)
-            .word_splitter(WordSplitter::NoHyphenation);
-        let wrapped = wrap(line, options);
-
-        if wrapped.is_empty() {
-            return (0, self.cursor_x);
-        }
-
-        let mut current_len = 0;
-        for (idx, part) in wrapped.iter().enumerate() {
-            let part_len = part.chars().count();
-            if self.cursor_x <= current_len + part_len {
-                return (idx, self.cursor_x - current_len);
-            }
-            current_len += part_len;
-        }
-        // Cursor is past the end
-        let last_row = wrapped.len().saturating_sub(1);
-        let last_len = wrapped.last().map(|s| s.chars().count()).unwrap_or(0);
-        (last_row, last_len)
-    }
-
-    /// Ensure cursor is visible in viewport (both vertical and horizontal)
-    pub fn ensure_cursor_visible(&mut self) {
-        if self.wrap_mode {
-            let visual_row = self.get_cursor_visual_row();
-
-            // Vertical scrolling (visual rows)
-            if visual_row < self.viewport_y {
-                self.viewport_y = visual_row;
-            } else if visual_row >= self.viewport_y + self.viewport_height {
-                self.viewport_y = visual_row.saturating_sub(self.viewport_height - 1);
-            }
-            // No horizontal scrolling in wrap mode
-        } else {
-            // Vertical scrolling (lines)
-            if self.cursor_y < self.viewport_y {
-                self.viewport_y = self.cursor_y;
-            } else if self.cursor_y >= self.viewport_y + self.viewport_height {
-                self.viewport_y = self.cursor_y.saturating_sub(self.viewport_height - 1);
-            }
-
-            // Horizontal scrolling (keep some margin)
-            let margin = CURSOR_MARGIN.min(self.viewport_width / 4);
-            if self.cursor_x < self.viewport_x + margin {
-                self.viewport_x = self.cursor_x.saturating_sub(margin);
-            } else if self.cursor_x >= self.viewport_x + self.viewport_width.saturating_sub(margin)
-            {
-                self.viewport_x = self
-                    .cursor_x
-                    .saturating_sub(self.viewport_width.saturating_sub(margin + 1));
-            }
-        }
+        self.view.get_cursor_wrapped_position(&self.document)
     }
 
     /// Move cursor left
     pub fn move_left(&mut self) {
-        if self.cursor_x > 0 {
-            self.cursor_x -= 1;
-        } else if self.cursor_y > 0 {
-            self.cursor_y -= 1;
-            self.cursor_x = char_count(&self.lines[self.cursor_y]);
-        }
-        self.ensure_cursor_visible();
+        self.view.move_left(&self.document, self.wrap_mode);
     }
 
     /// Move cursor right
     pub fn move_right(&mut self) {
-        let (line, char_col) = (self.cursor_y, self.cursor_x);
-        let line_char_len = char_count(&self.lines[line]);
-        if char_col < line_char_len {
-            self.cursor_x += 1;
-        } else if line < self.lines.len() - 1 {
-            self.cursor_y += 1;
-            self.cursor_x = 0;
-        }
-        self.ensure_cursor_visible();
+        self.view.move_right(&self.document, self.wrap_mode);
     }
 
     /// Move to start of current line
     pub fn move_to_line_start(&mut self) {
-        self.cursor_x = 0;
-        self.ensure_cursor_visible();
+        self.view.move_to_line_start(&self.document, self.wrap_mode);
     }
 
     /// Move to end of current line
     pub fn move_to_line_end(&mut self) {
-        self.cursor_x = char_count(&self.lines[self.cursor_y]);
-        self.ensure_cursor_visible();
+        self.view.move_to_line_end(&self.document, self.wrap_mode);
     }
 
     /// Move to first line (gg in vim)
     pub fn move_to_first_line(&mut self) {
-        self.cursor_y = 0;
-        self.cursor_x = 0;
-        self.ensure_cursor_visible();
+        self.view.move_to_first_line(&self.document, self.wrap_mode);
     }
 
     /// Move to last line (G in vim)
     pub fn move_to_last_line(&mut self) {
-        self.cursor_y = self.lines.len().saturating_sub(1);
-        self.cursor_x = 0;
-        self.ensure_cursor_visible();
+        self.view.move_to_last_line(&self.document, self.wrap_mode);
     }
 
     /// Delete from cursor to end of line (D in vim)
     pub fn delete_to_line_end(&mut self) {
-        let line = self.cursor_y;
-        if line < self.lines.len() {
-            let byte_idx = char_to_byte_idx(&self.lines[line], self.cursor_x);
-            self.lines[line].truncate(byte_idx);
-            self.recalculate();
+        if self
+            .document
+            .delete_to_line_end(self.view.cursor_y, self.view.cursor_x)
+        {
+            self.view
+                .ensure_cursor_visible(&self.document, self.wrap_mode);
         }
     }
 
     /// Move to next word start (w in vim)
     pub fn move_word_forward(&mut self) {
-        let line = &self.lines[self.cursor_y];
-        let chars: Vec<char> = line.chars().collect();
-        let len = chars.len();
-
-        if self.cursor_x >= len {
-            // Move to next line if possible
-            if self.cursor_y < self.lines.len() - 1 {
-                self.cursor_y += 1;
-                self.cursor_x = 0;
-                // Skip leading whitespace on new line
-                let next_line: Vec<char> = self.lines[self.cursor_y].chars().collect();
-                while self.cursor_x < next_line.len() && next_line[self.cursor_x].is_whitespace() {
-                    self.cursor_x += 1;
-                }
-            }
-            self.ensure_cursor_visible();
-            return;
-        }
-
-        let mut pos = self.cursor_x;
-
-        // Skip current word (non-whitespace)
-        while pos < len && !chars[pos].is_whitespace() {
-            pos += 1;
-        }
-        // Skip whitespace
-        while pos < len && chars[pos].is_whitespace() {
-            pos += 1;
-        }
-
-        if pos >= len && self.cursor_y < self.lines.len() - 1 {
-            // Move to next line
-            self.cursor_y += 1;
-            self.cursor_x = 0;
-            let next_line: Vec<char> = self.lines[self.cursor_y].chars().collect();
-            while self.cursor_x < next_line.len() && next_line[self.cursor_x].is_whitespace() {
-                self.cursor_x += 1;
-            }
-        } else {
-            self.cursor_x = pos.min(len);
-        }
-        self.ensure_cursor_visible();
+        self.view.move_word_forward(&self.document, self.wrap_mode);
     }
 
     /// Move to previous word start (b in vim)
     pub fn move_word_backward(&mut self) {
-        if self.cursor_x == 0 {
-            if self.cursor_y > 0 {
-                self.cursor_y -= 1;
-                self.cursor_x = char_count(&self.lines[self.cursor_y]);
-            } else {
-                return;
-            }
-        }
-
-        let line = &self.lines[self.cursor_y];
-        let chars: Vec<char> = line.chars().collect();
-
-        if chars.is_empty() {
-            self.cursor_x = 0;
-            self.ensure_cursor_visible();
-            return;
-        }
-
-        let mut pos = self.cursor_x.saturating_sub(1);
-
-        // Skip whitespace backwards
-        while pos > 0 && chars[pos].is_whitespace() {
-            pos -= 1;
-        }
-        // Skip word backwards
-        while pos > 0 && !chars[pos - 1].is_whitespace() {
-            pos -= 1;
-        }
-
-        self.cursor_x = pos;
-        self.ensure_cursor_visible();
+        self.view.move_word_backward(&self.document, self.wrap_mode);
     }
 
     /// Move to end of word (e in vim)
     pub fn move_word_end(&mut self) {
-        let line = &self.lines[self.cursor_y];
-        let chars: Vec<char> = line.chars().collect();
-        let len = chars.len();
+        self.view.move_word_end(&self.document, self.wrap_mode);
+    }
 
-        if self.cursor_x >= len.saturating_sub(1) {
-            if self.cursor_y < self.lines.len() - 1 {
-                self.cursor_y += 1;
-                self.cursor_x = 0;
-                let next_line: Vec<char> = self.lines[self.cursor_y].chars().collect();
-                // Skip whitespace, then find end of word
-                while self.cursor_x < next_line.len() && next_line[self.cursor_x].is_whitespace() {
-                    self.cursor_x += 1;
-                }
-                while self.cursor_x < next_line.len().saturating_sub(1)
-                    && !next_line[self.cursor_x + 1].is_whitespace()
-                {
-                    self.cursor_x += 1;
-                }
-            }
-            self.ensure_cursor_visible();
-            return;
+    /// Join the current line with the next line, inserting a single space when needed.
+    pub fn join_with_next_line(&mut self) {
+        self.move_to_line_end();
+        self.delete_char_forward();
+
+        let line = self.document.line(self.view.cursor_y).unwrap_or("");
+        if !line.is_empty() && !line.ends_with(' ') {
+            self.insert_char(' ');
         }
-
-        let mut pos = self.cursor_x + 1;
-
-        // Skip whitespace
-        while pos < len && chars[pos].is_whitespace() {
-            pos += 1;
-        }
-        // Move to end of word
-        while pos < len.saturating_sub(1) && !chars[pos + 1].is_whitespace() {
-            pos += 1;
-        }
-
-        self.cursor_x = pos.min(len.saturating_sub(1).max(0));
-        self.ensure_cursor_visible();
     }
 
     /// Toggle keybinding mode between Vim and Standard
     pub fn toggle_keybinding_mode(&mut self) {
         self.keybinding_mode = match self.keybinding_mode {
             KeybindingMode::Vim => {
-                self.mode = InputMode::Insert; // Standard mode is always "insert"
+                self.mode = InputMode::Insert;
                 KeybindingMode::Standard
             }
             KeybindingMode::Standard => {
@@ -683,80 +1000,36 @@ impl App {
 
     /// Get totals grouped by type (currency, unit, etc.)
     pub fn grouped_totals(&self) -> Vec<Value> {
-        self.engine.grouped_totals()
+        self.document.grouped_totals()
     }
 
     /// Get errors for the current line (for debug panel)
     pub fn current_line_error(&self) -> Option<&str> {
-        let line_idx = self.cursor_y;
-        if let Some(Value::Error(msg)) = self.results.get(line_idx) {
-            Some(msg.as_str())
-        } else {
-            None
-        }
+        self.document.current_line_error(self.view.cursor_y)
     }
 
     /// Update exchange rates and save to cache
     pub fn update_rates(&mut self, rates: Result<HashMap<String, f64>, String>) {
         match rates {
             Ok(raw_rates) => {
-                // Apply rates to engine
-                self.engine.apply_raw_rates(&raw_rates);
-                // Save to file cache for CLI and future use
-                self.engine.save_rates_to_cache(&raw_rates);
+                self.document.update_rates(&raw_rates);
                 self.fetch_status = FetchStatus::Success;
             }
             Err(e) => {
                 self.fetch_status = FetchStatus::Error(e);
             }
         }
-        // Re-evaluate all lines with new rates
-        self.refresh_results();
-    }
-
-    /// Recalculate all results after a user edit.
-    pub fn recalculate(&mut self) {
-        self.dirty = true;
-        self.recompute_results();
-    }
-
-    /// Recalculate derived results without changing dirty state.
-    pub fn refresh_results(&mut self) {
-        self.recompute_results();
-    }
-
-    fn recompute_results(&mut self) {
-        self.engine.clear();
-        self.results.clear();
-
-        for line in &self.lines {
-            let value = if line.trim().is_empty() {
-                Value::Empty
-            } else {
-                self.engine.eval(line)
-            };
-            self.results.push(value);
-        }
     }
 }
 
 impl Default for App {
     fn default() -> Self {
-        let mut app = Self {
-            lines: vec![String::new()],
-            results: vec![Value::Empty],
-            cursor_x: 0,
-            cursor_y: 0,
-            viewport_x: 0,
-            viewport_y: 0,
-            viewport_width: 80,  // Will be updated by UI
-            viewport_height: 20, // Will be updated by UI
-            engine: Engine::new(),
+        Self {
+            document: Document::default(),
+            view: ViewState::default(),
             mode: InputMode::Normal,
             keybinding_mode: KeybindingMode::Vim,
             pending: PendingCommand::None,
-            path: None,
-            dirty: false,
             debug_mode: false,
             wrap_mode: false,
             fetch_status: FetchStatus::Idle,
@@ -769,9 +1042,7 @@ impl Default for App {
             show_header: false,
             show_quit_confirmation: false,
             config: Config::default(),
-        };
-        app.refresh_results();
-        app
+        }
     }
 }
 
@@ -781,56 +1052,35 @@ mod tests {
 
     #[test]
     fn test_get_wrapped_height() {
-        // "hello world" (11 chars)
-        // width 5: "hello" + "world" -> 2 lines
-        let app = App {
-            viewport_width: 5,
-            ..Default::default()
-        };
+        let mut app = App::default();
+        app.set_viewport_size(5, 20);
         assert_eq!(app.get_wrapped_height("hello world"), 2);
 
-        // width 11: "hello world" -> 1 line
-        let app = App {
-            viewport_width: 11,
-            ..Default::default()
-        };
+        app.set_viewport_size(11, 20);
         assert_eq!(app.get_wrapped_height("hello world"), 1);
 
-        // width 3: splits into 4+ lines
-        let app = App {
-            viewport_width: 3,
-            ..Default::default()
-        };
+        app.set_viewport_size(3, 20);
         assert!(app.get_wrapped_height("hello world") >= 2);
     }
 
     #[test]
     fn test_get_cursor_wrapped_position() {
-        // "hello world" with width 6 wraps to:
-        // Row 0: "hello " (6 chars)
-        // Row 1: "world" (5 chars)
         let mut app = App {
-            viewport_width: 6,
-            lines: vec!["hello world".to_string()],
-            cursor_y: 0,
-            cursor_x: 0,
+            document: Document::from_lines(vec!["hello world".to_string()]),
             ..Default::default()
         };
+        app.set_viewport_size(6, 20);
 
-        // Cursor at start
         assert_eq!(app.get_cursor_wrapped_position(), (0, 0));
 
-        // Cursor at position 5 (at space in "hello ")
-        app.cursor_x = 5;
+        app.view.cursor_x = 5;
         assert_eq!(app.get_cursor_wrapped_position(), (0, 5));
 
-        // Cursor at position 6 (start of "world") - should be on second row
-        app.cursor_x = 6;
+        app.view.cursor_x = 6;
         let (row, _col) = app.get_cursor_wrapped_position();
         assert_eq!(row, 1, "cursor_x=6 should be on row 1");
 
-        // Cursor at position 8 (in "world")
-        app.cursor_x = 8;
+        app.view.cursor_x = 8;
         let (row, _col) = app.get_cursor_wrapped_position();
         assert_eq!(row, 1, "cursor_x=8 should be on row 1");
     }
@@ -838,23 +1088,23 @@ mod tests {
     #[test]
     fn test_default_app_starts_clean() {
         let app = App::default();
-        assert!(!app.dirty);
+        assert!(!app.is_dirty());
     }
 
     #[test]
     fn test_refresh_results_preserves_dirty_state() {
         let mut app = App {
-            lines: vec!["1 + 1".to_string()],
+            document: Document::from_lines(vec!["1 + 1".to_string()]),
             ..Default::default()
         };
 
-        app.refresh_results();
-        assert!(!app.dirty);
+        app.document.refresh_results();
+        assert!(!app.is_dirty());
 
-        app.recalculate();
-        assert!(app.dirty);
+        app.document.recalculate();
+        assert!(app.is_dirty());
 
-        app.refresh_results();
-        assert!(app.dirty);
+        app.document.refresh_results();
+        assert!(app.is_dirty());
     }
 }

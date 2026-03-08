@@ -106,7 +106,12 @@ numr-cli -i
 
 # Pipe mode
 echo "100 + 200" | numr-cli
+
+# Result only
+numr-cli -q "20% of 150"
 ```
+
+By default, `numr-cli` prints aligned output in the form `input = result`. Use `-q` / `--quiet` to print only the result.
 
 `numr-cli -i` is a simple interactive REPL. If you want readline-style history and editing on Linux, use:
 
