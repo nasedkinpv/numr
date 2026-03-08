@@ -133,7 +133,7 @@ impl App {
             if self.lines.is_empty() {
                 self.lines.push(String::new());
             }
-            self.recalculate();
+            self.refresh_results();
             self.dirty = false;
         }
         Ok(())
@@ -174,6 +174,13 @@ impl App {
     /// Build fetch configuration for exchange-rate APIs from persisted settings.
     pub fn fetch_config(&self) -> FetchConfig {
         (&self.config.api).into()
+    }
+
+    /// Update viewport dimensions and keep the cursor visible within them.
+    pub fn set_viewport_size(&mut self, width: usize, height: usize) {
+        self.viewport_width = width;
+        self.viewport_height = height;
+        self.ensure_cursor_visible();
     }
 
     /// Toggle debug mode
@@ -704,12 +711,21 @@ impl App {
             }
         }
         // Re-evaluate all lines with new rates
-        self.recalculate();
+        self.refresh_results();
     }
 
-    /// Recalculate all results
+    /// Recalculate all results after a user edit.
     pub fn recalculate(&mut self) {
         self.dirty = true;
+        self.recompute_results();
+    }
+
+    /// Recalculate derived results without changing dirty state.
+    pub fn refresh_results(&mut self) {
+        self.recompute_results();
+    }
+
+    fn recompute_results(&mut self) {
         self.engine.clear();
         self.results.clear();
 
@@ -754,7 +770,7 @@ impl Default for App {
             show_quit_confirmation: false,
             config: Config::default(),
         };
-        app.recalculate();
+        app.refresh_results();
         app
     }
 }
@@ -817,5 +833,26 @@ mod tests {
         app.cursor_x = 8;
         let (row, _col) = app.get_cursor_wrapped_position();
         assert_eq!(row, 1, "cursor_x=8 should be on row 1");
+    }
+
+    #[test]
+    fn test_default_app_starts_clean() {
+        let app = App::default();
+        assert!(!app.dirty);
+    }
+
+    #[test]
+    fn test_refresh_results_preserves_dirty_state() {
+        let mut app = App::default();
+        app.lines = vec!["1 + 1".to_string()];
+
+        app.refresh_results();
+        assert!(!app.dirty);
+
+        app.recalculate();
+        assert!(app.dirty);
+
+        app.refresh_results();
+        assert!(app.dirty);
     }
 }

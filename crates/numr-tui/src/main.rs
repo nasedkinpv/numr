@@ -25,6 +25,7 @@ use handlers::{
     handle_help_standard, handle_help_vim, handle_keybinding_toggle, handle_quit,
     handle_quit_confirmation, handle_save, spawn_rate_fetch, QuitConfirmResult, QuitResult,
 };
+use ratatui::layout::Rect;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -118,6 +119,11 @@ fn run_app<B: ratatui::backend::Backend>(
     loop {
         // Clear expired status messages before drawing
         app.clear_status_if_expired();
+
+        let terminal_size = terminal.size()?;
+        let terminal_area = Rect::new(0, 0, terminal_size.width, terminal_size.height);
+        let (viewport_width, viewport_height) = ui::viewport_dimensions(app, terminal_area);
+        app.set_viewport_size(viewport_width, viewport_height);
 
         terminal.draw(|f| ui::draw(f, app))?;
 

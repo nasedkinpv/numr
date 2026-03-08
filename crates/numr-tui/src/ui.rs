@@ -46,11 +46,7 @@ pub mod palette {
     }
 }
 
-/// Main draw function
-pub fn draw(frame: &mut Frame, app: &mut App) {
-    let area = frame.area();
-
-    // Calculate the width needed for results column (fit to content)
+fn result_column_width(app: &App, area: Rect) -> u16 {
     let content_width = app
         .results
         .iter()
@@ -60,10 +56,58 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .unwrap_or(0)
         .max(8);
 
-    // Clamp width: max MAX_RESULT_WIDTH chars or 50% of screen width (whichever is smaller)
-    // But ensure at least 8 chars if possible (unless screen is extremely small)
     let max_allowed = (area.width as usize / 2).min(MAX_RESULT_WIDTH as usize);
-    let max_result_width = content_width.min(max_allowed) as u16;
+    content_width.min(max_allowed) as u16
+}
+
+fn line_number_width(app: &App) -> u16 {
+    if app.show_line_numbers {
+        app.lines.len().to_string().len() as u16 + 1
+    } else {
+        0
+    }
+}
+
+pub fn viewport_dimensions(app: &App, area: Rect) -> (usize, usize) {
+    let max_result_width = result_column_width(app, area);
+    let has_error = app.current_line_error().is_some();
+    let debug_height = if app.debug_mode && has_error { 5 } else { 0 };
+    let header_height = if app.show_header { 1 } else { 0 };
+    let footer_h = footer_height(app, area.width);
+
+    let [_header_area, main_area, _debug_area, _footer_area] = Layout::vertical([
+        Constraint::Length(header_height),
+        Constraint::Fill(1),
+        Constraint::Length(debug_height),
+        Constraint::Length(footer_h),
+    ])
+    .areas(area);
+
+    let line_num_width = line_number_width(app);
+
+    if app.wrap_mode {
+        let width = main_area
+            .width
+            .saturating_sub(max_result_width + 2 + line_num_width) as usize;
+        (width, main_area.height as usize)
+    } else {
+        let [_nums_area, rest_area] =
+            Layout::horizontal([Constraint::Length(line_num_width), Constraint::Fill(1)])
+                .areas(main_area);
+        let [input_area, _result_area] = Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Length(max_result_width + 4),
+        ])
+        .areas(rest_area);
+        (input_area.width as usize, input_area.height as usize)
+    }
+}
+
+/// Main draw function
+pub fn draw(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    let max_result_width = result_column_width(app, area);
 
     // Reserve space for debug panel if in debug mode and there's an error
     let has_error = app.current_line_error().is_some();
@@ -81,12 +125,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     .areas(area);
 
     // Calculate width for line numbers
-    let line_count = app.lines.len();
-    let line_num_width = if app.show_line_numbers {
-        line_count.to_string().len() as u16 + 1 // +1 for padding
-    } else {
-        0
-    };
+    let line_num_width = line_number_width(app);
 
     if app.show_header {
         draw_header(frame, header_area, app);
@@ -149,17 +188,10 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 fn draw_wrapped_content(
     frame: &mut Frame,
     area: Rect,
-    app: &mut App,
+    app: &App,
     result_width: u16,
     line_num_width: u16,
 ) {
-    let input_width = area.width.saturating_sub(result_width + 2 + line_num_width) as usize;
-
-    // Update viewport for cursor visibility
-    app.viewport_width = input_width;
-    app.viewport_height = area.height as usize;
-    app.ensure_cursor_visible();
-
     // Calculate cursor screen position for later
     let (cursor_row_in_line, cursor_x_in_row) = app.get_cursor_wrapped_position();
     let mut cursor_set = false;
@@ -301,12 +333,7 @@ fn draw_line_numbers(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-fn draw_input(frame: &mut Frame, area: Rect, app: &mut App) {
-    // Update viewport dimensions based on actual area
-    app.viewport_width = area.width as usize;
-    app.viewport_height = area.height as usize;
-    app.ensure_cursor_visible();
-
+fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
     let lines: Vec<Line> = app.lines.iter().map(|line| highlight_line(line)).collect();
 
     let paragraph = Paragraph::new(lines).scroll((app.viewport_y as u16, app.viewport_x as u16));
@@ -639,6 +666,7 @@ fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::layout::Rect;
 
     /// Extract (text, color) pairs from tokenized spans for testing
     fn tokenize_to_pairs(input: &str) -> Vec<(String, Color)> {
@@ -799,5 +827,43 @@ mod tests {
     fn test_keyword_to() {
         let pairs = tokenize_to_pairs("5 km to miles");
         assert!(has_token(&pairs, "to", palette::KEYWORD));
+    }
+
+    #[test]
+    fn test_viewport_dimensions_non_wrap() {
+        let app = App::default();
+        let (width, height) = viewport_dimensions(
+            &app,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 24,
+            },
+        );
+
+        assert_eq!(width, 68);
+        assert_eq!(height, 23);
+    }
+
+    #[test]
+    fn test_viewport_dimensions_wrap_mode() {
+        let mut app = App::default();
+        app.wrap_mode = true;
+        app.show_line_numbers = true;
+        app.lines = vec!["1".to_string(); 120];
+        app.results = vec![numr_core::Value::Number(numr_core::Decimal::ONE); 120];
+        let (width, height) = viewport_dimensions(
+            &app,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 24,
+            },
+        );
+
+        assert_eq!(width, 66);
+        assert_eq!(height, 23);
     }
 }
