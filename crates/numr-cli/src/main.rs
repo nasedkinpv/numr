@@ -58,12 +58,15 @@ fn main() -> Result<()> {
     // Fetch fresh rates if cache is expired (skip for server mode - handled above)
     if !engine.has_cached_rates() {
         let rt = tokio::runtime::Runtime::new()?;
-        if let Ok(result) = rt.block_on(numr_core::fetch_rates()) {
-            engine.apply_raw_rates(&result.rates);
-            engine.save_rates_to_cache(&result.rates);
-            if let Some(warning) = result.warning {
-                eprintln!("Warning: {warning}");
+        match rt.block_on(numr_core::fetch_rates()) {
+            Ok(result) => {
+                engine.apply_raw_rates(&result.rates);
+                engine.save_rates_to_cache(&result.rates);
+                if let Some(warning) = result.warning {
+                    eprintln!("Warning: {warning}");
+                }
             }
+            Err(e) => eprintln!("Warning: {e}"),
         }
     }
 

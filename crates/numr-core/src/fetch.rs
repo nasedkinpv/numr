@@ -61,6 +61,7 @@ pub async fn fetch_rates() -> Result<FetchResult, String> {
 /// Fetch exchange rates using custom API endpoints and optional credentials.
 pub async fn fetch_rates_with_config(config: &FetchConfig) -> Result<FetchResult, String> {
     let client = reqwest::Client::builder()
+        .user_agent("numr")
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;

@@ -1105,6 +1105,70 @@ mod tests {
     }
 
     #[test]
+    fn test_update_rates_success_updates_results() {
+        let mut app = App {
+            document: Document::from_lines(vec!["1 BTC in USD".to_string()]),
+            ..Default::default()
+        };
+
+        // Simulate successful fetch with a specific rate
+        let mut rates = std::collections::HashMap::new();
+        rates.insert("BTC".to_string(), Decimal::from(42000));
+        let result = Ok(numr_core::FetchResult {
+            rates,
+            warning: None,
+        });
+        app.update_rates(result);
+
+        assert!(matches!(app.fetch_status, FetchStatus::Success));
+        // Result should reflect the new rate
+        let value = &app.document.results()[0];
+        assert_eq!(
+            value.as_decimal(),
+            Some(Decimal::from(42000)),
+            "1 BTC in USD should equal the updated rate"
+        );
+        assert!(
+            !app.is_dirty(),
+            "rate updates should not mark document dirty"
+        );
+    }
+
+    #[test]
+    fn test_update_rates_with_crypto_warning_shows_status() {
+        let mut app = App::default();
+
+        let rates = std::collections::HashMap::new();
+        let result = Ok(numr_core::FetchResult {
+            rates,
+            warning: Some("crypto rates unavailable: 403 Forbidden".to_string()),
+        });
+        app.update_rates(result);
+
+        assert!(matches!(app.fetch_status, FetchStatus::Success));
+        assert!(
+            app.status_message
+                .as_ref()
+                .unwrap()
+                .contains("crypto rates unavailable"),
+            "warning should be surfaced in status bar"
+        );
+    }
+
+    #[test]
+    fn test_update_rates_error_sets_error_status() {
+        let mut app = App::default();
+
+        let result = Err("Failed to fetch fiat rates: timeout".to_string());
+        app.update_rates(result);
+
+        assert!(matches!(app.fetch_status, FetchStatus::Error(_)));
+        if let FetchStatus::Error(msg) = &app.fetch_status {
+            assert!(msg.contains("timeout"));
+        }
+    }
+
+    #[test]
     fn test_refresh_results_preserves_dirty_state() {
         let mut app = App {
             document: Document::from_lines(vec!["1 + 1".to_string()]),
