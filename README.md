@@ -98,7 +98,7 @@ numr example.numr
 # Single expression
 numr-cli "20% of 150"
 
-# Evaluate file
+# Evaluate file (aligned "input = result" output)
 numr-cli -f example.numr
 
 # Interactive REPL
@@ -107,17 +107,13 @@ numr-cli -i
 # Pipe mode
 echo "100 + 200" | numr-cli
 
-# Result only
-numr-cli -q "20% of 150"
+# Aligned output for any mode
+numr-cli --verbose "20% of 150"
 ```
 
-By default, `numr-cli` prints aligned output in the form `input = result`. Use `-q` / `--quiet` to print only the result.
+By default, `numr-cli` prints just the result. File mode (`-f`) uses aligned `input = result` output. Use `--verbose` to get aligned output in other modes.
 
-`numr-cli -i` is a simple interactive REPL. If you want readline-style history and editing on Linux, use:
-
-```bash
-rlwrap numr-cli -i
-```
+On Linux, use `rlwrap numr-cli -i` for readline-style history and editing in the REPL.
 
 ### JSON-RPC Server Mode
 

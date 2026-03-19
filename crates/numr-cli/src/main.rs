@@ -35,9 +35,9 @@ struct Args {
     #[arg(long)]
     server: bool,
 
-    /// Show only the final result (default output is "input = result")
+    /// Show aligned "input = result" output (default for -f file mode)
     #[arg(short, long)]
-    quiet: bool,
+    verbose: bool,
 
     /// Show running total
     #[arg(short, long)]
@@ -71,24 +71,26 @@ fn main() -> Result<()> {
     }
 
     // Determine input source
+    // File mode defaults to verbose (aligned output), everything else to quiet
     if let Some(expr) = &args.expression {
         // Single expression mode
-        eval_and_print(&mut engine, expr, args.quiet);
+        eval_and_print(&mut engine, expr, !args.verbose);
     } else if let Some(path) = &args.file {
-        // File mode
+        // File mode — verbose by default
+        let quiet = false;
         let content = std::fs::read_to_string(path)?;
         for line in content.lines() {
-            eval_and_print(&mut engine, line, args.quiet);
+            eval_and_print(&mut engine, line, quiet);
         }
     } else if args.interactive {
         // Interactive REPL
-        run_repl(&mut engine, args.quiet)?;
+        run_repl(&mut engine)?;
     } else if !io::stdin().is_terminal() {
         // Pipe mode (stdin is not a tty)
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
             let line = line?;
-            eval_and_print(&mut engine, &line, args.quiet);
+            eval_and_print(&mut engine, &line, !args.verbose);
         }
     } else {
         // No input, show help
@@ -129,7 +131,7 @@ fn eval_and_print(engine: &mut Engine, input: &str, quiet: bool) {
     }
 }
 
-fn run_repl(engine: &mut Engine, quiet: bool) -> Result<()> {
+fn run_repl(engine: &mut Engine) -> Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
@@ -171,7 +173,7 @@ fn run_repl(engine: &mut Engine, quiet: bool) -> Result<()> {
             _ => {}
         }
 
-        eval_and_print(engine, line, quiet);
+        eval_and_print(engine, line, true);
     }
 
     Ok(())
