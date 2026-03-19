@@ -373,15 +373,16 @@ graph TB
 ```
 numr/
 ├── crates/
-│   ├── numr-core/     # Core evaluation engine (WASM-compatible)
-│   │   ├── parser/    # Pest PEG grammar and AST builder
-│   │   ├── eval/      # Expression evaluation with unit/currency handling
-│   │   ├── types/     # Value, Currency, Unit registries
-│   │   ├── cache/     # Exchange rate caching with BFS path finding
-│   │   └── fetch/     # HTTP fetching (optional "fetch" feature)
-│   ├── numr-editor/   # Syntax highlighting (WASM-compatible)
-│   ├── numr-tui/      # Terminal UI (Ratatui) with vim modes
-│   └── numr-cli/      # Command-line interface and REPL
+│   ├── numr-core/      # Core evaluation engine (WASM-compatible)
+│   │   ├── parser/     # Pest PEG grammar and AST builder
+│   │   ├── eval/       # Expression evaluation with unit/currency handling
+│   │   ├── types/      # Value, Currency, Unit registries
+│   │   ├── cache/      # Exchange rate caching with BFS path finding
+│   │   ├── fetch.rs    # HTTP rate fetching (optional "fetch" feature)
+│   │   └── wasm.rs     # WASM bindings (optional "wasm" feature)
+│   ├── numr-editor/    # Syntax highlighting and text buffer (WASM-compatible)
+│   ├── numr-tui/       # Terminal UI (Ratatui) with vim/standard modes
+│   └── numr-cli/       # CLI, interactive REPL, and JSON-RPC server
 ```
 
 The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, GUI, or WASM contexts. The `fetch` feature flag enables HTTP fetching (adds reqwest dependency, not WASM-compatible).
