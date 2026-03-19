@@ -111,7 +111,7 @@ fn main() -> Result<()> {
 fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    initial_rx: mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>,
+    initial_rx: mpsc::Receiver<Result<numr_core::FetchResult, String>>,
 ) -> Result<()> {
     let mut stdout = io::stdout();
     let mut rate_rx = Some(initial_rx);
@@ -204,7 +204,7 @@ fn handle_standard_mode<B: ratatui::backend::Backend>(
     key: crossterm::event::KeyEvent,
     app: &mut App,
     terminal: &Terminal<B>,
-    rate_rx: &mut Option<mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>>,
+    rate_rx: &mut Option<mpsc::Receiver<Result<numr_core::FetchResult, String>>>,
 ) -> Result<ControlFlow> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
@@ -260,7 +260,7 @@ fn handle_vim_mode<B: ratatui::backend::Backend>(
     key: crossterm::event::KeyEvent,
     app: &mut App,
     terminal: &Terminal<B>,
-    rate_rx: &mut Option<mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>>,
+    rate_rx: &mut Option<mpsc::Receiver<Result<numr_core::FetchResult, String>>>,
 ) -> Result<ControlFlow> {
     match app.mode {
         InputMode::Normal => handle_vim_normal_mode(key, app, terminal, rate_rx),
@@ -273,7 +273,7 @@ fn handle_vim_normal_mode<B: ratatui::backend::Backend>(
     key: crossterm::event::KeyEvent,
     app: &mut App,
     terminal: &Terminal<B>,
-    rate_rx: &mut Option<mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>>,
+    rate_rx: &mut Option<mpsc::Receiver<Result<numr_core::FetchResult, String>>>,
 ) -> Result<ControlFlow> {
     // Handle pending commands first
     match app.pending {
@@ -399,7 +399,7 @@ fn handle_vim_normal_mode<B: ratatui::backend::Backend>(
 fn handle_vim_insert_mode(
     key: crossterm::event::KeyEvent,
     app: &mut App,
-    rate_rx: &mut Option<mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>>>,
+    rate_rx: &mut Option<mpsc::Receiver<Result<numr_core::FetchResult, String>>>,
 ) -> Result<ControlFlow> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 

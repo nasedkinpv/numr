@@ -5,7 +5,6 @@
 //! On WASM, filesystem caching is not available - use defaults only.
 
 use crate::types::Currency;
-use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -29,13 +28,16 @@ struct CachedRates {
     /// Unix timestamp when rates were fetched
     timestamp: u64,
     /// Rates as code -> value (e.g., "EUR" -> 0.92, "BTC" -> 95000)
-    rates: HashMap<String, f64>,
+    rates: HashMap<String, Decimal>,
 }
 
 /// Cache for exchange rates
 #[derive(Clone)]
 pub struct RateCache {
     pub(crate) rates: HashMap<(Currency, Currency), Decimal>,
+    /// Whether rates were loaded from a non-expired file cache
+    #[cfg(not(target_arch = "wasm32"))]
+    loaded_from_file: bool,
 }
 
 impl RateCache {
@@ -43,16 +45,19 @@ impl RateCache {
     pub fn new() -> Self {
         Self {
             rates: HashMap::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            loaded_from_file: false,
         }
     }
 
     /// Set an exchange rate
     pub fn set_rate(&mut self, from: Currency, to: Currency, rate: Decimal) {
+        if rate.is_sign_negative() || rate.is_zero() {
+            return;
+        }
         self.rates.insert((from, to), rate);
         // Also store the inverse rate
-        if !rate.is_zero() {
-            self.rates.insert((to, from), Decimal::ONE / rate);
-        }
+        self.rates.insert((to, from), Decimal::ONE / rate);
     }
 
     /// Get an exchange rate (uses BFS to find conversion path)
@@ -114,12 +119,13 @@ impl RateCache {
         // Check if expired
         let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
 
-        if now - cached.timestamp > CACHE_EXPIRY_SECS {
+        if now.saturating_sub(cached.timestamp) > CACHE_EXPIRY_SECS {
             return None; // Expired
         }
 
         // Load rates
         self.apply_raw_rates(&cached.rates);
+        self.loaded_from_file = true;
         Some(())
     }
 
@@ -131,82 +137,71 @@ impl RateCache {
 
     /// Save current rates to file cache (native only)
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn save_to_file(&self, raw_rates: &HashMap<String, f64>) {
+    pub fn save_to_file(&self, raw_rates: &HashMap<String, Decimal>) {
         let Some(path) = Self::cache_path() else {
             return;
         };
 
         // Ensure directory exists
         if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+            if let Err(e) = fs::create_dir_all(parent) {
+                eprintln!("Warning: failed to create cache directory: {e}");
+                return;
+            }
         }
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+            eprintln!("Warning: system clock error, skipping cache write");
+            return;
+        };
+        let now = duration.as_secs();
 
         let cached = CachedRates {
             timestamp: now,
             rates: raw_rates.clone(),
         };
 
-        if let Ok(content) = serde_json::to_string_pretty(&cached) {
-            let _ = fs::write(&path, content);
+        match serde_json::to_string_pretty(&cached) {
+            Ok(content) => {
+                if let Err(e) = fs::write(&path, content) {
+                    eprintln!("Warning: failed to write rate cache: {e}");
+                }
+            }
+            Err(e) => eprintln!("Warning: failed to serialize rate cache: {e}"),
         }
     }
 
     /// Save current rates to file cache (WASM stub - no-op)
     #[cfg(target_arch = "wasm32")]
-    pub fn save_to_file(&self, _raw_rates: &HashMap<String, f64>) {
+    pub fn save_to_file(&self, _raw_rates: &HashMap<String, Decimal>) {
         // No filesystem in WASM
     }
 
-    /// Check if cache file exists and is not expired (native only)
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Whether a non-expired cache was successfully loaded during initialization
     #[must_use]
-    pub fn is_cache_valid() -> bool {
-        let Some(path) = Self::cache_path() else {
-            return false;
-        };
-
-        let Ok(content) = fs::read_to_string(&path) else {
-            return false;
-        };
-
-        let Ok(cached) = serde_json::from_str::<CachedRates>(&content) else {
-            return false;
-        };
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        now - cached.timestamp <= CACHE_EXPIRY_SECS
-    }
-
-    /// Check if cache file exists and is not expired (WASM stub - always false)
-    #[cfg(target_arch = "wasm32")]
-    #[must_use]
-    pub fn is_cache_valid() -> bool {
-        false
+    pub fn has_cached_rates(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.loaded_from_file
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
+        }
     }
 
     /// Apply raw rates from API response
     /// - Fiat rates: "1 USD = X currency" (from exchangerate-api)
     /// - Crypto rates: "1 TOKEN = X USD" (from coingecko)
-    pub fn apply_raw_rates(&mut self, raw_rates: &HashMap<String, f64>) {
+    pub fn apply_raw_rates(&mut self, raw_rates: &HashMap<String, Decimal>) {
         for (code, rate) in raw_rates {
             if let Ok(currency) = code.parse::<Currency>() {
-                if let Some(decimal_rate) = Decimal::from_f64(*rate) {
-                    if currency.is_crypto() {
-                        // Crypto: 1 TOKEN = X USD
-                        self.set_rate(currency, Currency::USD, decimal_rate);
-                    } else {
-                        // Fiat: 1 USD = X currency
-                        self.set_rate(Currency::USD, currency, decimal_rate);
-                    }
+                if currency.is_crypto() {
+                    // Crypto: 1 TOKEN = X USD
+                    self.set_rate(currency, Currency::USD, *rate);
+                } else {
+                    // Fiat: 1 USD = X currency
+                    self.set_rate(Currency::USD, currency, *rate);
                 }
             }
         }

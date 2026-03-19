@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use wasm_bindgen::prelude::*;
 
-use crate::{Engine, Value};
+use crate::{Decimal, Engine, Value};
 
 /// Initialize panic hook for better error messages in the browser console
 #[wasm_bindgen(start)]
@@ -101,7 +101,7 @@ impl WasmEngine {
     /// Apply exchange rates from JSON object: {"EUR": 0.92, "BTC": 95000, ...}
     #[wasm_bindgen]
     pub fn apply_rates(&mut self, rates_json: &str) {
-        if let Ok(rates) = serde_json::from_str::<HashMap<String, f64>>(rates_json) {
+        if let Ok(rates) = serde_json::from_str::<HashMap<String, Decimal>>(rates_json) {
             self.engine.apply_raw_rates(&rates);
         }
     }

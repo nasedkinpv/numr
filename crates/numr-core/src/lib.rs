@@ -42,8 +42,8 @@ pub mod wasm;
 pub use eval::EvalContext;
 pub use parser::{parse_line, try_parse_exact, Ast, BinaryOp, Expr};
 pub use types::{
-    format_currency, format_currency_value, format_number, CompoundUnit, Currency, CurrencyDef,
-    Dimensions, NumberBase, RuntimeUnitDef, Unit, UnitType, Value, CURRENCIES, UNITS,
+    format_currency_value, format_number, CompoundUnit, Currency, CurrencyDef, Dimensions,
+    NumberBase, RuntimeUnitDef, Unit, UnitType, Value, CURRENCIES, UNITS,
 };
 
 // Re-export Decimal for tests and external use
@@ -66,7 +66,7 @@ pub fn decimal(s: &str) -> Decimal {
 
 #[cfg(feature = "fetch")]
 pub use fetch::{
-    fetch_rates, fetch_rates_with_config, FetchConfig, DEFAULT_CRYPTO_RATES_URL,
+    fetch_rates, fetch_rates_with_config, FetchConfig, FetchResult, DEFAULT_CRYPTO_RATES_URL,
     DEFAULT_FIAT_RATES_URL,
 };
 
@@ -131,31 +131,41 @@ impl Engine {
     /// Try continuation parsing first, fall back to normal parsing
     /// Returns (result, whether_continuation_succeeded)
     fn eval_with_continuation(&mut self, input: &str) -> (Value, bool) {
+        Self::eval_with_context(input, &mut self.context, |ctx| {
+            ctx.get_variable("_").is_some()
+        })
+    }
+
+    /// Shared continuation logic used by both eval and eval_preview.
+    /// `has_previous` checks whether a previous result exists for continuation.
+    fn eval_with_context(
+        input: &str,
+        ctx: &mut eval::EvalContext,
+        has_previous: impl FnOnce(&eval::EvalContext) -> bool,
+    ) -> (Value, bool) {
         // Skip continuation for empty lines and comments
         let trimmed = input.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
-            return (self.parse_and_eval(input), false);
+            return (Self::parse_and_eval_with(input, ctx), false);
         }
 
         // Only try continuation if it looks like one and we have a previous result
-        if self.looks_like_continuation(input) && self.context.get_variable("_").is_some() {
+        if Self::looks_like_continuation_static(trimmed) && has_previous(ctx) {
             let continued = format!("_ {}", input);
-            // Use exact parsing to avoid fuzzy suffix matching
             if let Ok(ast) = try_parse_exact(&continued) {
-                let result = eval::evaluate(&ast, &mut self.context);
+                let result = eval::evaluate(&ast, ctx);
                 if !result.is_error() {
                     return (result, true);
                 }
             }
         }
         // Fall back to normal parsing
-        (self.parse_and_eval(input), false)
+        (Self::parse_and_eval_with(input, ctx), false)
     }
 
     /// Check if input looks like it's continuing a previous expression
     /// (e.g., starts with an operator or "in"/"to")
-    fn looks_like_continuation(&self, input: &str) -> bool {
-        let trimmed = input.trim_start();
+    fn looks_like_continuation_static(trimmed: &str) -> bool {
         if trimmed.is_empty() {
             return false;
         }
@@ -215,10 +225,10 @@ impl Engine {
             .find(|lr| !lr.value.is_empty() && !lr.value.is_error())
     }
 
-    /// Parse and evaluate input, returning the result
-    fn parse_and_eval(&mut self, input: &str) -> Value {
+    /// Parse and evaluate with a given context
+    fn parse_and_eval_with(input: &str, ctx: &mut eval::EvalContext) -> Value {
         match parse_line(input) {
-            Ok(ast) => eval::evaluate(&ast, &mut self.context),
+            Ok(ast) => eval::evaluate(&ast, ctx),
             Err(e) => Value::Error(e),
         }
     }
@@ -235,21 +245,9 @@ impl Engine {
             ctx.set_variable("ans".to_string(), last.value.clone());
         }
 
-        // Try continuation-first if we have a previous value
-        if self.looks_like_continuation(input) && ctx.get_variable("_").is_some() {
-            if let Ok(ast) = try_parse_exact(&format!("_ {}", input)) {
-                let result = eval::evaluate(&ast, &mut ctx);
-                if !result.is_error() {
-                    return result;
-                }
-            }
-        }
-
-        // Fallback to normal parse
-        match parse_line(input) {
-            Ok(ast) => eval::evaluate(&ast, &mut ctx),
-            Err(e) => Value::Error(e),
-        }
+        let (result, _) =
+            Self::eval_with_context(input, &mut ctx, |ctx| ctx.get_variable("_").is_some());
+        result
     }
 
     /// Get the sum of all computed values (as plain number)
@@ -466,19 +464,19 @@ impl Engine {
     }
 
     /// Apply raw rates from API response (delegates to rate cache)
-    pub fn apply_raw_rates(&mut self, raw_rates: &std::collections::HashMap<String, f64>) {
+    pub fn apply_raw_rates(&mut self, raw_rates: &std::collections::HashMap<String, Decimal>) {
         self.context.rate_cache.apply_raw_rates(raw_rates);
     }
 
     /// Save rates to file cache (delegates to rate cache)
-    pub fn save_rates_to_cache(&self, raw_rates: &std::collections::HashMap<String, f64>) {
+    pub fn save_rates_to_cache(&self, raw_rates: &std::collections::HashMap<String, Decimal>) {
         self.context.rate_cache.save_to_file(raw_rates);
     }
 
-    /// Check if rate cache file is valid (not expired)
+    /// Whether a non-expired cache was loaded during engine initialization
     #[must_use]
-    pub fn is_rate_cache_valid() -> bool {
-        cache::RateCache::is_cache_valid()
+    pub fn has_cached_rates(&self) -> bool {
+        self.context.rate_cache.has_cached_rates()
     }
 }
 

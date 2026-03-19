@@ -95,6 +95,9 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
                     Value::currency(amount * percentage, currency)
                 }
                 Value::WithUnit { amount, unit } => Value::with_unit(amount * percentage, unit),
+                Value::WithCompoundUnit { amount, unit } => {
+                    Value::with_compound_unit(amount * percentage, unit)
+                }
                 _ => Value::Error("Cannot calculate percentage of this value".to_string()),
             }
         }
@@ -146,6 +149,7 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
     match result_type {
         ResultType::Currency(c) => Value::currency(result, c),
         ResultType::Unit(u) => Value::with_unit(result, u),
+        ResultType::Percentage => Value::Percentage(result),
         ResultType::Number => Value::Number(result),
     }
 }
@@ -155,15 +159,18 @@ fn try_percentage_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Value>
     let Value::Percentage(p) = right else {
         return None;
     };
+    if matches!(left, Value::Percentage(_)) {
+        return None; // let coerce_operands handle Percentage ± Percentage
+    }
     let base = left.as_decimal()?;
 
     Some(match op {
         BinaryOp::Add => left.with_scaled_amount(base * (Decimal::ONE + p)),
         BinaryOp::Subtract => left.with_scaled_amount(base * (Decimal::ONE - p)),
-        BinaryOp::Multiply => Value::Number(base * p),
+        BinaryOp::Multiply => left.with_scaled_amount(base * p),
         BinaryOp::Divide if p.is_zero() => Value::Error("Division by zero".to_string()),
-        BinaryOp::Divide => Value::Number(base / p),
-        BinaryOp::Power => Value::Number(base.powd(*p)),
+        BinaryOp::Divide => left.with_scaled_amount(base / p),
+        BinaryOp::Power => left.with_scaled_amount(base.powd(*p)), // 100 ^ 50% = 100^0.5 = 10
         BinaryOp::Conversion => return None,
     })
 }
@@ -333,6 +340,7 @@ enum ResultType {
     Currency(Currency),
     Unit(Unit),
     Number,
+    Percentage,
 }
 
 /// Coerce operands to compatible decimal values, returning result type
@@ -434,6 +442,9 @@ fn coerce_operands(
             Ok((*l, *r, ResultType::Unit(*unit)))
         }
 
+        // Percentage + Percentage: preserve percentage type
+        (Value::Percentage(l), Value::Percentage(r)) => Ok((*l, *r, ResultType::Percentage)),
+
         // Plain numbers
         _ => match (left.as_decimal(), right.as_decimal()) {
             (Some(l), Some(r)) => Ok((l, r, ResultType::Number)),
@@ -451,7 +462,7 @@ fn apply_op(op: BinaryOp, l: Decimal, r: Decimal) -> Result<Decimal, String> {
         BinaryOp::Divide if r.is_zero() => Err("Division by zero".to_string()),
         BinaryOp::Divide => Ok(l / r),
         BinaryOp::Power => Ok(l.powd(r)),
-        BinaryOp::Conversion => Err("Internal error: Unhandled conversion op".to_string()),
+        BinaryOp::Conversion => unreachable!("Conversions are handled by eval_conversion"),
     }
 }
 
@@ -555,17 +566,27 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
             .unwrap_or_else(|| Value::Error(format!("{name} requires a number")))
     };
 
-    // Helper to get all numeric values
+    // Helper to get all numeric values.
+    // NOTE: as_decimal() strips Currency/Unit types. Aggregates like sum($100, $200)
+    // return a plain number, not a currency. Supporting typed aggregates would require
+    // checking all args share the same type and preserving it in the result.
     let numbers = || args.iter().filter_map(|v| v.as_decimal());
 
     match name.to_lowercase().as_str() {
         // Aggregate functions
-        "sum" | "total" => Value::Number(numbers().sum()),
+        "sum" | "total" => {
+            let vals: Vec<_> = numbers().collect();
+            if vals.is_empty() {
+                Value::Error(format!("{name} requires at least one value"))
+            } else {
+                Value::Number(vals.into_iter().sum())
+            }
+        }
 
         "avg" | "average" => {
             let vals: Vec<_> = numbers().collect();
             if vals.is_empty() {
-                Value::Number(Decimal::ZERO)
+                Value::Error(format!("{name} requires at least one value"))
             } else {
                 Value::Number(vals.iter().sum::<Decimal>() / Decimal::from(vals.len()))
             }
@@ -591,7 +612,10 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
             if n.is_sign_negative() {
                 Value::Error("Cannot take sqrt of negative number".to_string())
             } else {
-                Value::Number(n.sqrt().unwrap_or(Decimal::ZERO))
+                match n.sqrt() {
+                    Some(v) => Value::Number(v),
+                    None => Value::Error(format!("sqrt({n}) failed")),
+                }
             }
         }),
 

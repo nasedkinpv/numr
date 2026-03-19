@@ -14,7 +14,8 @@ struct Request {
     method: String,
     #[serde(default)]
     params: Option<serde_json::Value>,
-    id: serde_json::Value,
+    #[serde(default)]
+    id: Option<serde_json::Value>,
 }
 
 /// JSON-RPC 2.0 response
@@ -74,6 +75,7 @@ const INVALID_REQUEST: i32 = -32600;
 const METHOD_NOT_FOUND: i32 = -32601;
 const INVALID_PARAMS: i32 = -32602;
 const INTERNAL_ERROR: i32 = -32603;
+const SERVER_ERROR: i32 = -32000;
 
 impl Response {
     fn success(id: serde_json::Value, result: serde_json::Value) -> Self {
@@ -160,39 +162,50 @@ fn value_to_result(value: &Value) -> EvalResult {
     }
 }
 
-/// Handle a single JSON-RPC request
-fn handle_request(engine: &mut Engine, input: &str) -> Response {
+/// Handle a single JSON-RPC request. Returns None for notifications (no id).
+fn handle_request(
+    engine: &mut Engine,
+    rt: &tokio::runtime::Runtime,
+    input: &str,
+) -> Option<Response> {
     // Parse request
     let request: Request = match serde_json::from_str(input) {
         Ok(r) => r,
         Err(e) => {
-            return Response::error(
+            return Some(Response::error(
                 serde_json::Value::Null,
                 PARSE_ERROR,
                 format!("Parse error: {e}"),
-            );
+            ));
         }
     };
 
+    // Notifications (no id) must not receive a response per JSON-RPC 2.0 spec
+    let id = request.id?;
+
     // Validate jsonrpc version
     if request.jsonrpc != "2.0" {
-        return Response::error(request.id, INVALID_REQUEST, "Invalid JSON-RPC version");
+        return Some(Response::error(
+            id,
+            INVALID_REQUEST,
+            "Invalid JSON-RPC version",
+        ));
     }
 
     // Dispatch method
-    match request.method.as_str() {
-        "eval" => handle_eval(engine, request.id, request.params),
-        "eval_lines" => handle_eval_lines(engine, request.id, request.params),
-        "clear" => handle_clear(engine, request.id),
-        "get_totals" => handle_get_totals(engine, request.id),
-        "get_variables" => handle_get_variables(engine, request.id),
-        "reload_rates" => handle_reload_rates(engine, request.id),
+    Some(match request.method.as_str() {
+        "eval" => handle_eval(engine, id, request.params),
+        "eval_lines" => handle_eval_lines(engine, id, request.params),
+        "clear" => handle_clear(engine, id),
+        "get_totals" => handle_get_totals(engine, id),
+        "get_variables" => handle_get_variables(engine, id),
+        "reload_rates" => handle_reload_rates(engine, rt, id),
         _ => Response::error(
-            request.id,
+            id,
             METHOD_NOT_FOUND,
             format!("Method not found: {}", request.method),
         ),
-    }
+    })
 }
 
 /// Handle eval method - evaluate single expression
@@ -253,7 +266,7 @@ fn handle_clear(engine: &mut Engine, id: serde_json::Value) -> Response {
 }
 
 /// Handle get_totals method - get grouped totals
-fn handle_get_totals(engine: &mut Engine, id: serde_json::Value) -> Response {
+fn handle_get_totals(engine: &Engine, id: serde_json::Value) -> Response {
     let totals = engine.grouped_totals();
     let results: Vec<EvalResult> = totals.iter().map(value_to_result).collect();
     match serde_json::to_value(results) {
@@ -263,7 +276,7 @@ fn handle_get_totals(engine: &mut Engine, id: serde_json::Value) -> Response {
 }
 
 /// Handle get_variables method - list defined variables
-fn handle_get_variables(engine: &mut Engine, id: serde_json::Value) -> Response {
+fn handle_get_variables(engine: &Engine, id: serde_json::Value) -> Response {
     let variables = engine.variables();
     let results: Vec<VariableInfo> = variables
         .iter()
@@ -279,25 +292,29 @@ fn handle_get_variables(engine: &mut Engine, id: serde_json::Value) -> Response 
 }
 
 /// Handle reload_rates method - fetch fresh exchange rates
-fn handle_reload_rates(engine: &mut Engine, id: serde_json::Value) -> Response {
-    // Create a small runtime for fetching
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => return Response::error(id, -32000, format!("Failed to create runtime: {e}")),
-    };
-
+fn handle_reload_rates(
+    engine: &mut Engine,
+    rt: &tokio::runtime::Runtime,
+    id: serde_json::Value,
+) -> Response {
     match rt.block_on(numr_core::fetch_rates()) {
-        Ok(rates) => {
-            engine.apply_raw_rates(&rates);
-            engine.save_rates_to_cache(&rates);
-            Response::success(id, serde_json::json!({"message": "Rates reloaded"}))
+        Ok(result) => {
+            engine.apply_raw_rates(&result.rates);
+            engine.save_rates_to_cache(&result.rates);
+            let message = match result.warning {
+                Some(w) => format!("Rates reloaded ({w})"),
+                None => "Rates reloaded".to_string(),
+            };
+            Response::success(id, serde_json::json!({"message": message}))
         }
-        Err(e) => Response::error(id, -32000, format!("Failed to fetch rates: {e}")),
+        Err(e) => Response::error(id, SERVER_ERROR, format!("Failed to fetch rates: {e}")),
     }
 }
 
 /// Run the JSON-RPC server loop
 pub fn run_server(engine: &mut Engine) -> io::Result<()> {
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| io::Error::other(format!("Failed to create runtime: {e}")))?;
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
@@ -307,10 +324,11 @@ pub fn run_server(engine: &mut Engine) -> io::Result<()> {
             continue;
         }
 
-        let response = handle_request(engine, &line);
-        let json = serde_json::to_string(&response)?;
-        writeln!(stdout, "{json}")?;
-        stdout.flush()?;
+        if let Some(response) = handle_request(engine, &rt, &line) {
+            let json = serde_json::to_string(&response)?;
+            writeln!(stdout, "{json}")?;
+            stdout.flush()?;
+        }
     }
 
     Ok(())

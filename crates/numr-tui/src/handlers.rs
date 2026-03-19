@@ -135,9 +135,7 @@ pub fn handle_help_vim(
 }
 
 /// Spawn a background thread to fetch exchange rates
-pub fn spawn_rate_fetch(
-    app: &mut App,
-) -> mpsc::Receiver<Result<std::collections::HashMap<String, f64>, String>> {
+pub fn spawn_rate_fetch(app: &mut App) -> mpsc::Receiver<Result<numr_core::FetchResult, String>> {
     use crate::app::FetchStatus;
     use std::thread;
 

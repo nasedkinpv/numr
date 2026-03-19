@@ -1,7 +1,7 @@
 //! Application state and logic
 
 use crate::config::Config;
-use numr_core::{Engine, FetchConfig, Value};
+use numr_core::{Decimal, Engine, FetchConfig, Value};
 use numr_editor::char_to_byte_idx;
 use std::collections::HashMap;
 use std::fs;
@@ -153,28 +153,27 @@ impl Document {
             }
 
             let mut file = fs::File::create(path)?;
-            for (i, line) in self.lines.iter().enumerate() {
-                if i > 0 {
-                    writeln!(file)?;
-                }
-                write!(file, "{line}")?;
+            for line in &self.lines {
+                writeln!(file, "{line}")?;
             }
             self.dirty = false;
         }
         Ok(())
     }
 
-    pub fn update_rates(&mut self, raw_rates: &HashMap<String, f64>) {
+    pub fn update_rates(&mut self, raw_rates: &HashMap<String, Decimal>) {
         self.engine.apply_raw_rates(raw_rates);
         self.engine.save_rates_to_cache(raw_rates);
         self.refresh_results();
     }
 
+    /// Re-evaluate all lines after a user edit. Marks document as dirty.
     pub fn recalculate(&mut self) {
         self.dirty = true;
         self.recompute_results();
     }
 
+    /// Re-evaluate all lines without marking dirty (for loads, rate updates, etc.)
     pub fn refresh_results(&mut self) {
         self.recompute_results();
     }
@@ -274,6 +273,10 @@ impl Document {
         self.dirty = false;
     }
 
+    // NOTE: Re-evaluates all lines from scratch on every edit. Could be optimized
+    // to re-eval from the dirty line onward using engine state snapshots, but at
+    // typical document sizes (<100 lines) this completes in ~1ms. Not worth the
+    // complexity of incremental eval until users report actual lag.
     fn recompute_results(&mut self) {
         self.engine.clear();
         self.results.clear();
@@ -686,7 +689,7 @@ impl App {
         if let Some(path) = app.document.path() {
             if path.exists() {
                 if let Err(e) = app.load() {
-                    eprintln!("Failed to load file: {e}");
+                    app.set_status(&format!("Failed to load file: {e}"));
                 }
             }
         }
@@ -975,10 +978,15 @@ impl App {
     /// Join the current line with the next line, inserting a single space when needed.
     pub fn join_with_next_line(&mut self) {
         self.move_to_line_end();
+        let join_col = self.view.cursor_x;
         self.delete_char_forward();
 
         let line = self.document.line(self.view.cursor_y).unwrap_or("");
-        if !line.is_empty() && !line.ends_with(' ') {
+        let char_before = join_col.checked_sub(1).and_then(|i| line.chars().nth(i));
+        let char_after = line.chars().nth(join_col);
+        let needs_space =
+            char_before.is_some_and(|c| c != ' ') && char_after.is_some_and(|c| c != ' ');
+        if needs_space {
             self.insert_char(' ');
         }
     }
@@ -1009,11 +1017,16 @@ impl App {
     }
 
     /// Update exchange rates and save to cache
-    pub fn update_rates(&mut self, rates: Result<HashMap<String, f64>, String>) {
-        match rates {
-            Ok(raw_rates) => {
-                self.document.update_rates(&raw_rates);
-                self.fetch_status = FetchStatus::Success;
+    pub fn update_rates(&mut self, result: Result<numr_core::FetchResult, String>) {
+        match result {
+            Ok(fetch_result) => {
+                self.document.update_rates(&fetch_result.rates);
+                if let Some(warning) = fetch_result.warning {
+                    self.fetch_status = FetchStatus::Success;
+                    self.set_status(&format!("Rates updated ({warning})"));
+                } else {
+                    self.fetch_status = FetchStatus::Success;
+                }
             }
             Err(e) => {
                 self.fetch_status = FetchStatus::Error(e);

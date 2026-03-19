@@ -4,8 +4,10 @@
 //! It's gated behind the "fetch" feature to keep numr-core WASM-compatible by default.
 
 use crate::types::Currency;
+use rust_decimal::Decimal;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::time::Duration;
 
 pub const DEFAULT_FIAT_RATES_URL: &str = "https://open.er-api.com/v6/latest/USD";
 pub const DEFAULT_CRYPTO_RATES_URL: &str = "https://api.coingecko.com/api/v3/simple/price";
@@ -29,7 +31,7 @@ impl Default for FetchConfig {
 
 #[derive(Deserialize)]
 struct FiatRatesResponse {
-    rates: HashMap<String, f64>,
+    rates: HashMap<String, Decimal>,
 }
 
 /// CoinGecko returns: { "bitcoin": { "usd": 92000 }, "ethereum": { "usd": 3000 }, ... }
@@ -38,38 +40,54 @@ type CryptoPricesResponse = HashMap<String, CryptoPrice>;
 #[derive(Deserialize)]
 struct CryptoPrice {
     #[serde(default)]
-    usd: Option<f64>,
+    usd: Option<Decimal>,
+}
+
+/// Result of a rate fetch, including any partial-failure warnings
+pub struct FetchResult {
+    pub rates: HashMap<String, Decimal>,
+    /// Warning message if some rates (e.g., crypto) failed to fetch
+    pub warning: Option<String>,
 }
 
 /// Fetch exchange rates from multiple sources.
 /// Returns rates as HashMap where key is currency code (e.g., "EUR", "BTC").
 /// - Fiat rates: "1 USD = X units" (e.g., EUR -> 0.92)
 /// - Crypto rates: "1 TOKEN = X USD" (e.g., BTC -> 92000, ETH -> 3000)
-pub async fn fetch_rates() -> Result<HashMap<String, f64>, String> {
+pub async fn fetch_rates() -> Result<FetchResult, String> {
     fetch_rates_with_config(&FetchConfig::default()).await
 }
 
 /// Fetch exchange rates using custom API endpoints and optional credentials.
-pub async fn fetch_rates_with_config(config: &FetchConfig) -> Result<HashMap<String, f64>, String> {
-    let client = reqwest::Client::new();
+pub async fn fetch_rates_with_config(config: &FetchConfig) -> Result<FetchResult, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
     let mut rates = fetch_fiat_rates(&client, &config.fiat_rates_url).await?;
 
-    if let Some(crypto_rates) = fetch_crypto_prices(&client, config).await {
-        rates.extend(crypto_rates);
-    }
+    let warning = match fetch_crypto_prices(&client, config).await {
+        Ok(crypto_rates) => {
+            rates.extend(crypto_rates);
+            None
+        }
+        Err(e) => Some(format!("crypto rates unavailable: {e}")),
+    };
 
-    Ok(rates)
+    Ok(FetchResult { rates, warning })
 }
 
 async fn fetch_fiat_rates(
     client: &reqwest::Client,
     url: &str,
-) -> Result<HashMap<String, f64>, String> {
+) -> Result<HashMap<String, Decimal>, String> {
     let response = client
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch fiat rates: {e}"))?;
+        .map_err(|e| format!("Failed to fetch fiat rates: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Fiat rates API error: {e}"))?;
     let data: FiatRatesResponse = response
         .json()
         .await
@@ -80,7 +98,7 @@ async fn fetch_fiat_rates(
 async fn fetch_crypto_prices(
     client: &reqwest::Client,
     config: &FetchConfig,
-) -> Option<HashMap<String, f64>> {
+) -> Result<HashMap<String, Decimal>, String> {
     // Get crypto IDs from the currency registry (single source of truth)
     let crypto_currencies: Vec<_> = Currency::all()
         .filter(|c| c.is_crypto())
@@ -88,16 +106,22 @@ async fn fetch_crypto_prices(
         .collect();
 
     if crypto_currencies.is_empty() {
-        return Some(HashMap::new());
+        return Ok(HashMap::new());
     }
 
     let ids: Vec<&str> = crypto_currencies.iter().map(|(id, _)| *id).collect();
     let response = build_crypto_prices_request(client, config, &ids)
         .send()
         .await
-        .ok()?;
-    let text = response.text().await.ok()?;
-    let data: CryptoPricesResponse = serde_json::from_str(&text).ok()?;
+        .map_err(|e| format!("Failed to fetch crypto prices: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Crypto prices API error: {e}"))?;
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read crypto response: {e}"))?;
+    let data: CryptoPricesResponse =
+        serde_json::from_str(&text).map_err(|e| format!("Failed to parse crypto prices: {e}"))?;
 
     let mut rates = HashMap::new();
     for (coingecko_id, code) in &crypto_currencies {
@@ -108,7 +132,7 @@ async fn fetch_crypto_prices(
         }
     }
 
-    Some(rates)
+    Ok(rates)
 }
 
 fn build_crypto_prices_request(
@@ -142,7 +166,9 @@ fn coingecko_api_key_header(url: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rust_decimal::Decimal;
     use std::collections::HashMap;
+    use std::str::FromStr;
 
     fn request_query(request: &reqwest::Request) -> HashMap<String, String> {
         request
@@ -165,10 +191,19 @@ mod tests {
         let json = r#"{"rates":{"EUR":0.92,"GBP":0.79,"JPY":149.5,"RUB":92}}"#;
         let response: FiatRatesResponse = serde_json::from_str(json).unwrap();
 
-        assert_eq!(response.rates.get("EUR"), Some(&0.92));
-        assert_eq!(response.rates.get("GBP"), Some(&0.79));
-        assert_eq!(response.rates.get("JPY"), Some(&149.5));
-        assert_eq!(response.rates.get("RUB"), Some(&92.0));
+        assert_eq!(
+            response.rates.get("EUR"),
+            Some(&Decimal::from_str("0.92").unwrap())
+        );
+        assert_eq!(
+            response.rates.get("GBP"),
+            Some(&Decimal::from_str("0.79").unwrap())
+        );
+        assert_eq!(
+            response.rates.get("JPY"),
+            Some(&Decimal::from_str("149.5").unwrap())
+        );
+        assert_eq!(response.rates.get("RUB"), Some(&Decimal::from(92)));
     }
 
     #[test]
@@ -176,9 +211,18 @@ mod tests {
         let json = r#"{"bitcoin":{"usd":95000},"ethereum":{"usd":3000},"solana":{"usd":140}}"#;
         let response: CryptoPricesResponse = serde_json::from_str(json).unwrap();
 
-        assert_eq!(response.get("bitcoin").unwrap().usd, Some(95000.0));
-        assert_eq!(response.get("ethereum").unwrap().usd, Some(3000.0));
-        assert_eq!(response.get("solana").unwrap().usd, Some(140.0));
+        assert_eq!(
+            response.get("bitcoin").unwrap().usd,
+            Some(Decimal::from(95000))
+        );
+        assert_eq!(
+            response.get("ethereum").unwrap().usd,
+            Some(Decimal::from(3000))
+        );
+        assert_eq!(
+            response.get("solana").unwrap().usd,
+            Some(Decimal::from(140))
+        );
     }
 
     #[test]
@@ -187,7 +231,10 @@ mod tests {
         let json = r#"{"bitcoin":{"usd":95000},"unknown_token":{}}"#;
         let response: CryptoPricesResponse = serde_json::from_str(json).unwrap();
 
-        assert_eq!(response.get("bitcoin").unwrap().usd, Some(95000.0));
+        assert_eq!(
+            response.get("bitcoin").unwrap().usd,
+            Some(Decimal::from(95000))
+        );
         assert_eq!(response.get("unknown_token").unwrap().usd, None);
     }
 

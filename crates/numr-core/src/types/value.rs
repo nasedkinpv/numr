@@ -180,11 +180,6 @@ fn format_number_base(n: Decimal, base: NumberBase) -> String {
     }
 }
 
-/// Format currency amount (always DISPLAY_PRECISION decimal places)
-pub fn format_currency(n: Decimal) -> String {
-    format_currency_with_precision(n, DISPLAY_PRECISION)
-}
-
 /// Format currency amount using display rules from the currency registry.
 pub fn format_currency_value(n: Decimal, currency: Currency) -> String {
     format_currency_with_precision(n, currency.display_precision())

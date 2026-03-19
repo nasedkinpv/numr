@@ -20,12 +20,15 @@ pub fn parse_line(input: &str) -> Result<Ast, String> {
         }
     }
 
-    // Fuzzy parsing: Try to find a valid suffix
-    for (i, _) in input.char_indices() {
-        if i == 0 {
+    // Fuzzy parsing: try suffixes starting at word/token boundaries only.
+    // This strips leading prose (e.g., "pay rate = $85/hr" → "$85/hr") while
+    // avoiding O(n) parse attempts on every byte offset.
+    let bytes = input.as_bytes();
+    for (i, _) in input.char_indices().skip(1) {
+        // Only try boundaries after whitespace or punctuation
+        if i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
             continue;
-        } // Already tried full line
-
+        }
         let suffix = &input[i..];
         if suffix.trim().is_empty() {
             continue;
