@@ -682,14 +682,14 @@ impl App {
             ..Self::default()
         };
 
-        if let Err(e) = app.config.save() {
-            app.set_status(&format!("Config save failed: {e}"));
+        if app.config.save().is_err() {
+            app.set_status("Config error");
         }
 
         if let Some(path) = app.document.path() {
             if path.exists() {
-                if let Err(e) = app.load() {
-                    app.set_status(&format!("Failed to load file: {e}"));
+                if let Err(_e) = app.load() {
+                    app.set_status("Load failed");
                 }
             }
         }
@@ -750,8 +750,8 @@ impl App {
         self.config.preferences.show_line_numbers = self.show_line_numbers;
         self.config.preferences.show_header = self.show_header;
         self.config.preferences.debug_mode = self.debug_mode;
-        if let Err(e) = self.config.save() {
-            self.set_status(&format!("Config save failed: {e}"));
+        if let Err(_e) = self.config.save() {
+            self.set_status("Config error");
         }
     }
 
@@ -1021,11 +1021,9 @@ impl App {
         match result {
             Ok(fetch_result) => {
                 self.document.update_rates(&fetch_result.rates);
-                if let Some(warning) = fetch_result.warning {
-                    self.fetch_status = FetchStatus::Success;
-                    self.set_status(&format!("Rates updated ({warning})"));
-                } else {
-                    self.fetch_status = FetchStatus::Success;
+                self.fetch_status = FetchStatus::Success;
+                if fetch_result.warning.is_some() {
+                    self.set_status("Rates partial");
                 }
             }
             Err(e) => {
@@ -1146,11 +1144,9 @@ mod tests {
         app.update_rates(result);
 
         assert!(matches!(app.fetch_status, FetchStatus::Success));
-        assert!(
-            app.status_message
-                .as_ref()
-                .unwrap()
-                .contains("crypto rates unavailable"),
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Rates partial"),
             "warning should be surfaced in status bar"
         );
     }

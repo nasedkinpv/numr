@@ -18,7 +18,7 @@ pub enum QuitResult {
 /// Handle save command (Ctrl+S)
 /// Returns Ok(()) on success, Err with message on failure
 pub fn handle_save(app: &mut App) -> Result<(), String> {
-    app.save().map_err(|e| format!("Error: {e}"))
+    app.save().map_err(|_e| "Save failed".to_string())
 }
 
 /// Handle quit command
@@ -53,8 +53,8 @@ pub fn handle_quit_confirmation(
     match key_code {
         KeyCode::Char('y') | KeyCode::Char('Y') => {
             // Save and quit
-            if let Err(e) = app.save() {
-                app.set_status(&format!("Error saving: {e}"));
+            if let Err(_e) = app.save() {
+                app.set_status("Save failed");
                 app.show_quit_confirmation = false;
                 QuitConfirmResult::Cancel
             } else {
