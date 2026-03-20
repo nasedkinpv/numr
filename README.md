@@ -213,6 +213,25 @@ Direct input like traditional editors - no modal switching required.
 
 ## Supported Operations
 
+| Category | Examples |
+|----------|----------|
+| Arithmetic | `10 + 20`, `6 * 7`, `2 ^ 8` |
+| Percentages | `20% of 150`, `$50 - 10%`, `100 + 15%` |
+| Variables | `tax = 8%` then `price + tax` |
+| Continuation | `$100` → `+ $50` → `* 2` (chains from previous) |
+| Functions | `sum()`, `avg()`, `min()`, `max()`, `sqrt()`, `abs()`, `round()`, `floor()`, `ceil()` |
+| Base conversion | `22 to hex` → `0x16`, `22 to bin` → `0b10110` |
+| Unit conversion | `5 km in miles`, `22 C in F`, `1 TB in GB` |
+| Compound units | `5 m * 10 m` → `50 m²`, `100 km / 2 h` → `50 km/h` |
+| Currency | `$100 in eur`, `1 BTC in USD` |
+| Comments | `# comment` or `// comment` |
+| Reference previous | `_` or `ANS` for last result |
+
+**Compound unit aliases**: `kph` (km/h), `mph` (mi/h), `mps` (m/s), `m2` (m²), `km2` (km²), `ft2` (ft²)
+
+<details>
+<summary>Full examples</summary>
+
 ### Arithmetic
 ```
 10 + 20           → 30
@@ -248,7 +267,6 @@ price + tax       → $108
 # This is a comment
 // This is also a comment
 Groceries         $45.00
-# Comments are dimmed and ignored in calculations
 ```
 
 ### Continuation
@@ -275,61 +293,31 @@ ceil(3.2)         → 4
 
 ### Compound Units
 ```
-# Area from multiplication
 5 m * 10 m        → 50 m²
-
-# Speed from division
 100 km / 2 h      → 50 km/h
-
-# Distance from speed × time
 50 kph * 2 h      → 100 km
-
-# Unit conversions
 50 kph in mps     → 13.89 m/s
-
-# Mixed operations
 25 km / 100 km    → 0.25 (dimensionless)
 ```
 
-**Compound unit aliases**: `kph` (km/h), `mph` (mi/h), `mps` (m/s), `m2` (m²), `km2` (km²), `ft2` (ft²)
+</details>
 
 ## Supported Units
 
-### Length
-`km`, `m`, `cm`, `mm`, `mi`/`miles`, `ft`/`feet`, `in`/`inches`
-
-### Area
-`m²`/`m2`, `km²`/`km2`, `ft²`/`ft2`, `acre`, `hectare`/`ha`
-
-### Speed
-`m/s`/`mps`, `km/h`/`kph`, `mph`, `knot`
-
-### Weight
-`kg`, `g`, `mg`, `lb`/`lbs`, `oz`, `ton`
-
-### Volume
-`L`, `mL`, `gal`, `m³`/`m3`
-
-### Time
-`months`/`mo`, `weeks`/`wk`, `days`/`d`, `hours`/`hr`/`h`, `minutes`/`min`, `seconds`/`sec`/`s`
-
-### Energy
-`J`, `kJ`, `cal`, `kcal`, `kWh`
-
-### Power
-`W`, `kW`
-
-### Temperature
-`K`/`Kelvin`, `C`/`Celsius`, `F`/`Fahrenheit`
-
-### Data
-`TB`, `GB`, `MB`, `KB`, `bytes`
-
-### Currencies
-
-**Fiat:** `$`/`USD`, `€`/`EUR`, `£`/`GBP`, `¥`/`JPY`, `CHF`, `CNY`/`RMB`, `CAD`, `AUD`, `₹`/`INR`, `₩`/`KRW`, `₽`/`RUB`, `₪`/`ILS`, `zł`/`PLN`, `₴`/`UAH`
-
-**Crypto:** `₿`/`BTC`, `Ξ`/`ETH`, `◎`/`SOL`, `₮`/`USDT`, `USDC`, `BNB`, `XRP`, `₳`/`ADA`, `Ð`/`DOGE`, `DOT`, `Ł`/`LTC`, `LINK`, `AVAX`, `MATIC`, `TON`
+| Category | Units |
+|----------|-------|
+| Length | `km`, `m`, `cm`, `mm`, `mi`/`miles`, `ft`/`feet`, `in`/`inches` |
+| Area | `m²`/`m2`, `km²`/`km2`, `ft²`/`ft2`, `acre`, `hectare`/`ha` |
+| Speed | `m/s`/`mps`, `km/h`/`kph`, `mph`, `knot` |
+| Weight | `kg`, `g`, `mg`, `lb`/`lbs`, `oz`, `ton` |
+| Volume | `L`, `mL`, `gal`, `m³`/`m3` |
+| Time | `months`/`mo`, `weeks`/`wk`, `days`/`d`, `hours`/`hr`/`h`, `minutes`/`min`, `seconds`/`sec`/`s` |
+| Energy | `J`, `kJ`, `cal`, `kcal`, `kWh` |
+| Power | `W`, `kW` |
+| Temperature | `K`/`Kelvin`, `C`/`Celsius`, `F`/`Fahrenheit` |
+| Data | `TB`, `GB`, `MB`, `KB`, `bytes` |
+| Fiat | `$`/`USD`, `€`/`EUR`, `£`/`GBP`, `¥`/`JPY`, `CHF`, `CNY`, `CAD`, `AUD`, `₹`/`INR`, `₩`/`KRW`, `₽`/`RUB`, `₪`/`ILS`, `zł`/`PLN`, `₴`/`UAH` |
+| Crypto | `₿`/`BTC`, `Ξ`/`ETH`, `◎`/`SOL`, `₮`/`USDT`, `USDC`, `BNB`, `XRP`, `₳`/`ADA`, `Ð`/`DOGE`, `DOT`, `Ł`/`LTC`, `LINK`, `AVAX`, `MATIC`, `TON` |
 
 ## Architecture
 
