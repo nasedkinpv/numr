@@ -331,47 +331,25 @@ ceil(3.2)         → 4
 ## Architecture
 
 ```mermaid
-graph TB
+graph LR
     subgraph Frontends
-        TUI[numr-tui<br/>Terminal UI]
-        CLI[numr-cli<br/>CLI / REPL / JSON-RPC]
-        Web[numr-web<br/>WASM Web App]
+        TUI[numr-tui]
+        CLI[numr-cli]
+        Web[numr-web]
     end
 
-    subgraph Editor[numr-editor]
-        Highlight[Syntax Highlighting]
-    end
+    Editor[numr-editor]
+    Core[numr-core<br/>Parser → Eval → Types]
+    Cache[(Rate Cache)]
+    APIs[Exchange Rate APIs]
 
-    subgraph Core[numr-core]
-        Engine[Engine]
-        Parser[Parser<br/>Pest PEG Grammar]
-        AST[AST Builder]
-        Eval[Evaluator]
-        Types[Types<br/>Value, Currency, Unit]
-        Cache[Rate Cache]
-        Fetch[Fetch Module]
-    end
-
-    subgraph External APIs
-        Fiat[open.er-api.com<br/>Fiat Rates]
-        Crypto[CoinGecko API<br/>Crypto Prices]
-    end
-
-    TUI --> Engine
-    CLI --> Engine
-    Web --> Engine
-    TUI --> Highlight
-    Highlight --> Types
-    Engine --> Parser
-    Parser --> AST
-    AST --> Eval
-    Eval --> Types
-    Eval --> Cache
-    TUI -.->|fetch on startup| Fetch
-    CLI -.->|fetch if cache expired| Fetch
-    Fetch -.-> Fiat
-    Fetch -.-> Crypto
-    Fetch -.-> Cache
+    TUI --> Core
+    TUI --> Editor
+    CLI --> Core
+    Web --> Core
+    Web --> Editor
+    Core <--> Cache
+    Cache -.-> APIs
 ```
 
 ```
@@ -391,18 +369,19 @@ numr/
 
 The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, GUI, or WASM contexts. The `fetch` feature flag enables HTTP fetching (adds reqwest dependency, not WASM-compatible).
 
-User preferences are stored in `~/.config/numr/config.toml` (created on first run). Toggle settings persist automatically.
+Config and cache are stored in the OS config directory (`~/.config/numr/` on Linux, `~/Library/Application Support/numr/` on macOS). Settings persist automatically when toggled in the TUI.
 
-Example configuration:
+Example `config.toml`:
 
 ```toml
 [preferences]
-keybinding_mode = "standard"
-wrap_mode = true
-show_line_numbers = true
+keybinding_mode = "vim"   # "vim" or "standard"
+wrap_mode = false
+show_line_numbers = false
+show_header = false
 
 [files]
-default_path = "~/Documents/default.numr"
+default_path = "~/Documents/calculations.numr"
 
 [api]
 fiat_rates_url = "https://open.er-api.com/v6/latest/USD"
@@ -412,7 +391,7 @@ crypto_rates_url = "https://api.coingecko.com/api/v3/simple/price"
 coingecko_api_key = "your-key-here"
 ```
 
-If `crypto_rates_url` points to CoinGecko, `numr` automatically uses the correct demo/pro API key header based on the host.
+CoinGecko API key header (demo vs pro) is selected automatically based on the URL host.
 
 Exchange rates are cached to `~/.config/numr/rates.json` with 1-hour expiry. Both TUI and CLI share this cache:
 - **TUI**: Fetches fresh rates on startup

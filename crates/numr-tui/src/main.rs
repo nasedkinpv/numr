@@ -61,7 +61,7 @@ fn main() -> Result<()> {
             .as_ref()
             .map(|s| expand_tilde(s))
             .or_else(|| {
-                ProjectDirs::from("com", "numr", "numr")
+                ProjectDirs::from("", "", "numr")
                     .map(|proj_dirs| proj_dirs.config_dir().join("default.numr"))
             })
     });

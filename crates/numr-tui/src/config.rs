@@ -61,7 +61,7 @@ pub struct ApiKeys {
 impl Config {
     /// Get the config file path
     pub fn path() -> Option<PathBuf> {
-        ProjectDirs::from("com", "numr", "numr").map(|dirs| dirs.config_dir().join("config.toml"))
+        ProjectDirs::from("", "", "numr").map(|dirs| dirs.config_dir().join("config.toml"))
     }
 
     /// Load config from file, or return defaults if not found.
