@@ -14,6 +14,9 @@ use textwrap::{wrap, Options, WordSplitter};
 // Status Display Constants
 // ========================================
 
+/// Status message for successful save
+pub(crate) const STATUS_SAVED: &str = "Saved";
+
 /// Timeout for "Saved" status message (milliseconds)
 const STATUS_SAVED_TIMEOUT_MS: u128 = 1500;
 
@@ -682,10 +685,6 @@ impl App {
             ..Self::default()
         };
 
-        if app.config.save().is_err() {
-            app.set_status("Config error");
-        }
-
         if let Some(path) = app.document.path() {
             if path.exists() {
                 if let Err(_e) = app.load() {
@@ -790,7 +789,7 @@ impl App {
     /// "Saved" expires after STATUS_SAVED_TIMEOUT_MS, others after STATUS_TIMEOUT_MS
     pub fn clear_status_if_expired(&mut self) {
         if let (Some(start), Some(msg)) = (self.status_start, &self.status_message) {
-            let timeout_ms = if msg == "Saved" {
+            let timeout_ms = if msg == STATUS_SAVED {
                 STATUS_SAVED_TIMEOUT_MS
             } else {
                 STATUS_TIMEOUT_MS

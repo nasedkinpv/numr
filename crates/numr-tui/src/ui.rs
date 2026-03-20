@@ -593,7 +593,7 @@ fn build_hints_parts(app: &App) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
 /// Build the mode/status indicator span
 fn build_mode_indicator(app: &App) -> Span<'static> {
     if let Some(msg) = &app.status_message {
-        let bg = if msg == "Saved" {
+        let bg = if msg == crate::app::STATUS_SAVED {
             // Animated green gradient for saved
             app.status_start
                 .map(saved_pulse_color)

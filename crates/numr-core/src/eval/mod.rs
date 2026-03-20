@@ -276,6 +276,9 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
                         Some(Value::with_compound_unit(l_amount / *n, l_unit))
                     }
                 }
+                BinaryOp::Power => Some(Value::Error(
+                    "Power not supported for unit values".to_string(),
+                )),
                 _ => None,
             };
         }
@@ -330,7 +333,9 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
                 Some(Value::with_compound_unit(result_amount, result_unit))
             }
         }
-        BinaryOp::Power => None, // Power not supported for compound units
+        BinaryOp::Power => Some(Value::Error(
+            "Power not supported for unit values".to_string(),
+        )),
         BinaryOp::Conversion => None,
     }
 }
@@ -461,6 +466,9 @@ fn apply_op(op: BinaryOp, l: Decimal, r: Decimal) -> Result<Decimal, String> {
         BinaryOp::Multiply => Ok(l * r),
         BinaryOp::Divide if r.is_zero() => Err("Division by zero".to_string()),
         BinaryOp::Divide => Ok(l / r),
+        BinaryOp::Power if l.is_sign_negative() && r.fract() != Decimal::ZERO => {
+            Err("Cannot raise negative number to fractional power".to_string())
+        }
         BinaryOp::Power => Ok(l.powd(r)),
         BinaryOp::Conversion => unreachable!("Conversions are handled by eval_conversion"),
     }
@@ -558,13 +566,21 @@ fn eval_number_base_conversion(value: Value, base: NumberBase) -> Value {
 }
 
 fn eval_function(name: &str, args: &[Value]) -> Value {
-    // Helper for single-number functions
+    // Helper for single-number functions (rejects extra args)
     let require_number = |f: fn(Decimal) -> Value| -> Value {
-        args.first()
-            .and_then(|v| v.as_decimal())
+        if args.len() != 1 {
+            return Value::Error(format!("{name} requires exactly one argument"));
+        }
+        args[0]
+            .as_decimal()
             .map(f)
             .unwrap_or_else(|| Value::Error(format!("{name} requires a number")))
     };
+
+    // Check for error values in args before processing aggregates
+    if let Some(err) = args.iter().find(|v| v.is_error()) {
+        return err.clone();
+    }
 
     // Helper to get all numeric values.
     // NOTE: as_decimal() strips Currency/Unit types. Aggregates like sum($100, $200)

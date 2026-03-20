@@ -222,7 +222,7 @@ fn handle_standard_mode<B: ratatui::backend::Backend>(
             if let Err(e) = handle_save(app) {
                 app.set_status(&e);
             } else {
-                app.set_status("Saved");
+                app.set_status(app::STATUS_SAVED);
             }
         }
         KeyCode::Char('r') if ctrl => {
@@ -323,7 +323,7 @@ fn handle_vim_normal_mode<B: ratatui::backend::Backend>(
             if let Err(e) = handle_save(app) {
                 app.set_status(&e);
             } else {
-                app.set_status("Saved");
+                app.set_status(app::STATUS_SAVED);
             }
         }
         KeyCode::Char('r') if ctrl => {
@@ -409,7 +409,7 @@ fn handle_vim_insert_mode(
             if let Err(e) = handle_save(app) {
                 app.set_status(&e);
             } else {
-                app.set_status("Saved");
+                app.set_status(app::STATUS_SAVED);
             }
         }
         KeyCode::Char('r') if ctrl => {
