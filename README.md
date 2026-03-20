@@ -33,7 +33,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Live exchange rates**: Fetched automatically on startup
 - **Dual keybinding modes**: Vim (modal) or Standard (direct input) - toggle with `Shift+Tab`
 - **Mouse support**: Scroll with mouse wheel or trackpad
-- **File persistence**: Auto-saves to config directory, supports custom files
+- **File persistence**: Save with `Ctrl+S`, supports custom files
 - **Syntax highlighting**: Numbers, operators, variables, units, and currencies
 - **Comments**: Lines starting with `#` or `//` are treated as comments
 - **Continuation**: Start a line with an operator (`+ 10`, `* 2`) to continue from the previous result
@@ -85,7 +85,7 @@ Release archives also contain both binaries: `numr` (opens the calculator file i
 ### TUI Mode
 
 ```bash
-# Open default file (~/.config/numr/default.numr)
+# Open default file (stored in OS config directory)
 numr
 
 # Open specific file
@@ -107,11 +107,14 @@ numr-cli -i
 # Pipe mode
 echo "100 + 200" | numr-cli
 
+# Show running total
+numr-cli -t -f example.numr
+
 # Aligned output for any mode
 numr-cli --verbose "20% of 150"
 ```
 
-By default, `numr-cli` prints just the result. File mode (`-f`) uses aligned `input = result` output. Use `--verbose` to get aligned output in other modes.
+By default, `numr-cli` prints just the result. File mode (`-f`) uses aligned `input = result` output. Use `--verbose` to get aligned output in other modes. Use `-t` to show a running total at the end.
 
 On Linux, use `rlwrap numr-cli -i` for readline-style history and editing in the REPL.
 
