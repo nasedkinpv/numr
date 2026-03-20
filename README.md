@@ -127,7 +127,7 @@ Send JSON-RPC 2.0 requests via stdin, receive responses via stdout:
 
 ```bash
 echo '{"jsonrpc":"2.0","method":"eval","params":{"expr":"20% of 150"},"id":1}' | numr-cli --server
-# {"jsonrpc":"2.0","result":{"type":"number","value":30.0,"display":"30"},"id":1}
+# {"jsonrpc":"2.0","result":{"type":"number","value":"30","display":"30"},"id":1}
 ```
 
 **Available methods:**
@@ -401,7 +401,7 @@ coingecko_api_key = "your-key-here"
 
 CoinGecko API key header (demo vs pro) is selected automatically based on the URL host.
 
-Exchange rates are cached to `~/.config/numr/rates.json` with 1-hour expiry. Both TUI and CLI share this cache:
+Exchange rates are cached to `rates.json` in the same config directory with 1-hour expiry. Both TUI and CLI share this cache:
 - **TUI**: Fetches fresh rates on startup
 - **CLI**: Fetches only if cache is expired
 
