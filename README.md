@@ -333,8 +333,8 @@ ceil(3.2)         → 4
 ```mermaid
 graph TB
     subgraph Frontends
-        TUI[numr-tui<br/>Terminal UI · Vim/Standard modes]
-        CLI[numr-cli<br/>CLI · REPL · JSON-RPC server]
+        CLI[numr-cli<br/>CLI · REPL · JSON-RPC]
+        TUI[numr-tui<br/>Terminal UI · Vim/Standard]
         Web[numr-web<br/>WASM web app]
     end
 
@@ -342,7 +342,8 @@ graph TB
 
     subgraph Core[numr-core]
         Engine[Engine]
-        Parser[PEG Parser] --> Eval[Evaluator]
+        Engine --> Parser[PEG Parser]
+        Parser --> Eval[Evaluator]
         Eval --> Types[Currency · Units · Values]
         Eval --> Cache[(Rate Cache)]
     end
@@ -350,10 +351,13 @@ graph TB
     Fiat[open.er-api.com]
     Crypto[CoinGecko]
 
-    TUI & CLI & Web --> Engine
-    TUI & Web --> Editor
-    Engine --> Parser
-    Cache -.->|fetch & cache| Fiat & Crypto
+    CLI --> Engine
+    TUI --> Engine
+    TUI --> Editor
+    Web --> Engine
+    Web --> Editor
+    Cache -.-> Fiat
+    Cache -.-> Crypto
 ```
 
 ```
