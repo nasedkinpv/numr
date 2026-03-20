@@ -333,8 +333,9 @@ ceil(3.2)         → 4
 ```mermaid
 graph TB
     subgraph Frontends
-        TUI[numr-tui<br/>Ratatui Terminal UI]
-        CLI[numr-cli<br/>Command Line]
+        TUI[numr-tui<br/>Terminal UI]
+        CLI[numr-cli<br/>CLI / REPL / JSON-RPC]
+        Web[numr-web<br/>WASM Web App]
     end
 
     subgraph Editor[numr-editor]
@@ -342,6 +343,7 @@ graph TB
     end
 
     subgraph Core[numr-core]
+        Engine[Engine]
         Parser[Parser<br/>Pest PEG Grammar]
         AST[AST Builder]
         Eval[Evaluator]
@@ -355,10 +357,12 @@ graph TB
         Crypto[CoinGecko API<br/>Crypto Prices]
     end
 
+    TUI --> Engine
+    CLI --> Engine
+    Web --> Engine
     TUI --> Highlight
-    TUI --> Parser
-    CLI --> Parser
     Highlight --> Types
+    Engine --> Parser
     Parser --> AST
     AST --> Eval
     Eval --> Types
