@@ -331,25 +331,29 @@ ceil(3.2)         → 4
 ## Architecture
 
 ```mermaid
-graph LR
+graph TB
     subgraph Frontends
-        TUI[numr-tui]
-        CLI[numr-cli]
-        Web[numr-web]
+        TUI[numr-tui<br/>Terminal UI · Vim/Standard modes]
+        CLI[numr-cli<br/>CLI · REPL · JSON-RPC server]
+        Web[numr-web<br/>WASM web app]
     end
 
-    Editor[numr-editor]
-    Core[numr-core<br/>Parser → Eval → Types]
-    Cache[(Rate Cache)]
-    APIs[Exchange Rate APIs]
+    Editor[numr-editor<br/>Syntax highlighting]
 
-    TUI --> Core
-    TUI --> Editor
-    CLI --> Core
-    Web --> Core
-    Web --> Editor
-    Core <--> Cache
-    Cache -.-> APIs
+    subgraph Core[numr-core]
+        Engine[Engine]
+        Parser[PEG Parser] --> Eval[Evaluator]
+        Eval --> Types[Currency · Units · Values]
+        Eval --> Cache[(Rate Cache)]
+    end
+
+    Fiat[open.er-api.com]
+    Crypto[CoinGecko]
+
+    TUI & CLI & Web --> Engine
+    TUI & Web --> Editor
+    Engine --> Parser
+    Cache -.->|fetch & cache| Fiat & Crypto
 ```
 
 ```
