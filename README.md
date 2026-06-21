@@ -30,6 +30,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Compound units**: `5 m * 10 m = 50 m²`, `100 km / 2 h = 50 km/h`
 - **Currency conversions**: USD, EUR, GBP, JPY, CHF, CNY, CAD, AUD, INR, KRW, RUB, ILS, PLN, UAH + crypto (BTC, ETH, SOL, and more)
 - **Number base conversions**: `22 to hex`, `22 to bin`
+- **Math functions and constants**: `sin(pi / 2)`, `log_y(2, 8)`, `factorial(5)`, `mod(10, 3)`
 - **Live exchange rates**: Fetched automatically on startup
 - **Dual keybinding modes**: Vim (modal) or Standard (direct input) - toggle with `Shift+Tab`
 - **Mouse support**: Scroll with mouse wheel or trackpad
@@ -219,7 +220,7 @@ Direct input like traditional editors - no modal switching required.
 | Percentages | `20% of 150`, `$50 - 10%`, `100 + 15%` |
 | Variables | `tax = 8%` then `price + tax` |
 | Continuation | `$100` → `+ $50` → `* 2` (chains from previous) |
-| Functions | `sum()`, `avg()`, `min()`, `max()`, `sqrt()`, `abs()`, `round()`, `floor()`, `ceil()` |
+| Functions | `sum()`, `avg()`, `min()`, `max()`, `sqrt()`, `abs()`, `round()`, `floor()`, `ceil()`, `sin()`, `cos()`, `tan()`, `ln()`, `log()`, `log_y()`, `factorial()`, `mod()` |
 | Base conversion | `22 to hex` → `0x16`, `22 to bin` → `0b10110` |
 | Unit conversion | `5 km in miles`, `22 C in F`, `1 TB in GB` |
 | Compound units | `5 m * 10 m` → `50 m²`, `100 km / 2 h` → `50 km/h` |
@@ -233,6 +234,7 @@ Direct input like traditional editors - no modal switching required.
 <summary>Full examples</summary>
 
 ### Arithmetic
+
 ```
 10 + 20           → 30
 100 - 25          → 75
@@ -242,6 +244,7 @@ Direct input like traditional editors - no modal switching required.
 ```
 
 ### Number Base Conversions
+
 ```
 22 to hex         → 0x16
 22 to bin         → 0b10110
@@ -249,6 +252,7 @@ Direct input like traditional editors - no modal switching required.
 ```
 
 ### Percentages
+
 ```
 20% of 150        → 30
 100 + 15%         → 115
@@ -256,6 +260,7 @@ $50 - 10%         → $45
 ```
 
 ### Variables
+
 ```
 price = $100
 tax = 8%
@@ -263,6 +268,7 @@ price + tax       → $108
 ```
 
 ### Comments
+
 ```
 # This is a comment
 // This is also a comment
@@ -270,6 +276,7 @@ Groceries         $45.00
 ```
 
 ### Continuation
+
 ```
 $100              → $100
 + $50             → $150 (continues from previous)
@@ -279,6 +286,7 @@ total = _         → $270 (_ or ANS references previous result)
 ```
 
 ### Functions
+
 ```
 sum(10, 20, 30)   → 60
 avg(10, 20, 30)   → 20
@@ -289,9 +297,19 @@ abs(-5)           → 5
 round(3.7)        → 4
 floor(3.7)        → 3
 ceil(3.2)         → 4
+sin(pi / 2)       → 1
+cos(0)            → 1
+ln(e)             → 1
+log(100)          → 2
+log_y(2, 8)       → 3
+factorial(5)      → 120
+mod(10, 3)        → 1
 ```
 
+Constants: `pi`, `e`, `phi`.
+
 ### Compound Units
+
 ```
 5 m * 10 m        → 50 m²
 100 km / 2 h      → 50 km/h
@@ -393,10 +411,12 @@ coingecko_api_key = "your-key-here"
 CoinGecko API key header (demo vs pro) is selected automatically based on the URL host.
 
 Exchange rates are cached to `rates.json` in the same config directory with 1-hour expiry. Both TUI and CLI share this cache:
+
 - **TUI**: Fetches fresh rates on startup
 - **CLI**: Fetches only if cache is expired
 
 Rate sources:
+
 - **Fiat currencies**: [open.er-api.com](https://open.er-api.com) (152 currencies, free)
 - **Cryptocurrency**: [CoinGecko](https://www.coingecko.com/en/api) (15 tokens, free)
 

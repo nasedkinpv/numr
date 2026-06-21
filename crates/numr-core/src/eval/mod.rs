@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 use rust_decimal::Decimal;
 use rust_decimal::MathematicalOps;
 
@@ -79,6 +80,7 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
         Expr::Variable(name) => ctx
             .get_variable(name)
             .cloned()
+            .or_else(|| math_constant(name))
             .unwrap_or_else(|| Value::Error(format!("Unknown variable: {name}"))),
 
         Expr::BinaryOp { op, left, right } => {
@@ -565,16 +567,38 @@ fn eval_number_base_conversion(value: Value, base: NumberBase) -> Value {
     Value::with_base(amount, base)
 }
 
+fn math_constant(name: &str) -> Option<Value> {
+    let value = match name.to_lowercase().as_str() {
+        "pi" => std::f64::consts::PI,
+        "e" => std::f64::consts::E,
+        "phi" => 1.618_033_988_749_895,
+        _ => return None,
+    };
+    Decimal::from_f64(value).map(Value::Number)
+}
+
+fn decimal_from_f64(value: f64, name: &str) -> Value {
+    Decimal::from_f64(value)
+        .map(Value::Number)
+        .unwrap_or_else(|| Value::Error(format!("{name} failed")))
+}
+
+fn require_number(name: &str, args: &[Value], f: impl Fn(Decimal) -> Value) -> Value {
+    if args.len() != 1 {
+        return Value::Error(format!("{name} requires exactly one argument"));
+    }
+    args[0]
+        .as_decimal()
+        .map(f)
+        .unwrap_or_else(|| Value::Error(format!("{name} requires a number")))
+}
+
 fn eval_function(name: &str, args: &[Value]) -> Value {
-    // Helper for single-number functions (rejects extra args)
-    let require_number = |f: fn(Decimal) -> Value| -> Value {
-        if args.len() != 1 {
-            return Value::Error(format!("{name} requires exactly one argument"));
-        }
-        args[0]
-            .as_decimal()
-            .map(f)
-            .unwrap_or_else(|| Value::Error(format!("{name} requires a number")))
+    let require_f64 = |f: fn(f64) -> f64| -> Value {
+        require_number(name, args, |n| match n.to_f64() {
+            Some(v) => decimal_from_f64(f(v), name),
+            None => Value::Error(format!("{name} requires a number")),
+        })
     };
 
     // Check for error values in args before processing aggregates
@@ -619,12 +643,21 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
             .unwrap_or_else(|| Value::Error("No values for max".to_string())),
 
         // Single-value math functions
-        "abs" => require_number(|n| Value::Number(n.abs())),
-        "round" => require_number(|n| Value::Number(n.round())),
-        "floor" => require_number(|n| Value::Number(n.floor())),
-        "ceil" => require_number(|n| Value::Number(n.ceil())),
+        "abs" => require_number(name, args, |n| Value::Number(n.abs())),
+        "round" => require_number(name, args, |n| Value::Number(n.round())),
+        "floor" => require_number(name, args, |n| Value::Number(n.floor())),
+        "ceil" => require_number(name, args, |n| Value::Number(n.ceil())),
+        "sin" => require_f64(f64::sin),
+        "cos" => require_f64(f64::cos),
+        "tan" => require_f64(f64::tan),
+        "sinh" => require_f64(f64::sinh),
+        "cosh" => require_f64(f64::cosh),
+        "tanh" => require_f64(f64::tanh),
+        "exp" => require_f64(f64::exp),
+        "ln" => require_f64(f64::ln),
+        "log" => require_f64(f64::log10),
 
-        "sqrt" => require_number(|n| {
+        "sqrt" => require_number(name, args, |n| {
             if n.is_sign_negative() {
                 Value::Error("Cannot take sqrt of negative number".to_string())
             } else {
@@ -634,6 +667,37 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
                 }
             }
         }),
+
+        "factorial" => require_number(name, args, |n| {
+            let Some(n) = n.to_u64().filter(|_| n.fract().is_zero()) else {
+                return Value::Error("factorial requires a non-negative integer".to_string());
+            };
+            Value::Number((1..=n).map(Decimal::from).product())
+        }),
+
+        "mod" => {
+            if args.len() != 2 {
+                return Value::Error("mod requires exactly two arguments".to_string());
+            }
+            match (args[0].as_decimal(), args[1].as_decimal()) {
+                (Some(_), Some(r)) if r.is_zero() => Value::Error("Division by zero".to_string()),
+                (Some(l), Some(r)) => Value::Number(l % r),
+                _ => Value::Error("mod requires numbers".to_string()),
+            }
+        }
+
+        "log_y" => {
+            if args.len() != 2 {
+                return Value::Error("log_y requires exactly two arguments".to_string());
+            }
+            match (args[0].as_decimal(), args[1].as_decimal()) {
+                (Some(base), Some(value)) => match (base.to_f64(), value.to_f64()) {
+                    (Some(base), Some(value)) => decimal_from_f64(value.log(base), name),
+                    _ => Value::Error("log_y requires numbers".to_string()),
+                },
+                _ => Value::Error("log_y requires numbers".to_string()),
+            }
+        }
 
         _ => Value::Error(format!("Unknown function: {name}")),
     }
@@ -653,6 +717,14 @@ mod tests {
     fn eval_with_ctx(input: &str, ctx: &mut EvalContext) -> Value {
         let ast = parse_line(input).unwrap();
         evaluate(&ast, ctx)
+    }
+
+    fn assert_close(input: &str, expected: f64) {
+        let actual = eval_str(input).as_f64().unwrap();
+        assert!(
+            (actual - expected).abs() < 1e-10,
+            "{input}: {actual} != {expected}"
+        );
     }
 
     // ========================================
@@ -935,6 +1007,43 @@ mod tests {
     fn test_function_sqrt_negative() {
         let result = eval_str("sqrt(-4)");
         assert!(result.is_error());
+    }
+
+    #[test]
+    fn test_more_math_functions() {
+        assert_close("sin(pi / 2)", 1.0);
+        assert_close("cos(0)", 1.0);
+        assert_close("tan(pi / 4)", 1.0);
+        assert_close("sinh(0)", 0.0);
+        assert_close("cosh(0)", 1.0);
+        assert_close("tanh(0)", 0.0);
+        assert_close("exp(1)", std::f64::consts::E);
+        assert_close("ln(e)", 1.0);
+        assert_close("log(100)", 2.0);
+        assert_close("log_y(2, 8)", 3.0);
+        assert_eq!(eval_str("factorial(5)").as_f64(), Some(120.0));
+        assert_eq!(eval_str("mod(10, 3)").as_f64(), Some(1.0));
+    }
+
+    #[test]
+    fn test_math_constants() {
+        assert_close("pi", std::f64::consts::PI);
+        assert_close("e", std::f64::consts::E);
+        assert_close("phi", 1.618033988749895);
+    }
+
+    #[test]
+    fn test_math_functions_with_existing_parser_features() {
+        assert_close("sin(pi / 2) + 20% of 100", 21.0);
+        assert_eq!(eval_str("round(2 km in m)").as_f64(), Some(2000.0));
+        assert_eq!(
+            eval_str("sum(1, mod(10, 3), factorial(3))").as_f64(),
+            Some(8.0)
+        );
+
+        let mut ctx = EvalContext::new();
+        assert_eq!(eval_with_ctx("pi = 3", &mut ctx).as_f64(), Some(3.0));
+        assert_eq!(eval_with_ctx("pi", &mut ctx).as_f64(), Some(3.0));
     }
 
     #[test]

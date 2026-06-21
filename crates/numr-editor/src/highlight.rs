@@ -94,7 +94,29 @@ fn is_unit_word(word: &str) -> bool {
 /// Keywords for syntax highlighting
 static KEYWORDS: &[&str] = &["of", "in", "to"];
 static FUNCTIONS: &[&str] = &[
-    "sum", "avg", "average", "min", "max", "abs", "sqrt", "round", "floor", "ceil", "total",
+    "sum",
+    "avg",
+    "average",
+    "min",
+    "max",
+    "abs",
+    "sqrt",
+    "round",
+    "floor",
+    "ceil",
+    "total",
+    "sin",
+    "cos",
+    "tan",
+    "sinh",
+    "cosh",
+    "tanh",
+    "exp",
+    "log",
+    "log_y",
+    "ln",
+    "factorial",
+    "mod",
 ];
 
 /// Tokenize input and apply syntax highlighting

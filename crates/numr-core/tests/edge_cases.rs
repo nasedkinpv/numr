@@ -66,6 +66,18 @@ fn test_floating_point_precision() {
 }
 
 #[test]
+fn test_small_decimal_difference_display() {
+    let mut engine = Engine::new();
+    let result = engine.eval("0.100-0.099");
+
+    assert_eq!(
+        result.as_decimal(),
+        Some(Decimal::from_str("0.001").unwrap())
+    );
+    assert_eq!(result.to_string(), "0.001");
+}
+
+#[test]
 fn test_decimal_precision_financial() {
     let mut engine = Engine::new();
 

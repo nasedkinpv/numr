@@ -146,9 +146,13 @@ impl std::fmt::Display for Value {
     }
 }
 
-/// Format a number nicely (max DISPLAY_PRECISION decimal places, remove trailing zeros only if integer)
+/// Format a number nicely (max DISPLAY_PRECISION decimal places, unless that would hide a small non-zero value)
 pub fn format_number(n: Decimal) -> String {
     let rounded = n.round_dp(DISPLAY_PRECISION);
+    if rounded.is_zero() && !n.is_zero() {
+        return n.normalize().to_string();
+    }
+
     if rounded.fract().is_zero() {
         format!("{}", rounded.trunc())
     } else {
@@ -216,6 +220,7 @@ mod tests {
     fn test_format_number() {
         assert_eq!(format_number(Decimal::from(42)), "42");
         assert_eq!(format_number(Decimal::from_str("3.14").unwrap()), "3.14");
+        assert_eq!(format_number(Decimal::from_str("0.001").unwrap()), "0.001");
         assert_eq!(
             format_number(Decimal::from_str("100.500").unwrap()),
             "100.50"
