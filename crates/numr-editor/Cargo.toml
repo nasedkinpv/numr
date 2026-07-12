@@ -1,12 +1,14 @@
 [package]
 name = "numr-editor"
-description = "Syntax highlighting and text buffer for numr calculator"
+description = "Shared syntax highlighting and text primitives for numr frontends"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-Oz", "--enable-bulk-memory"]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

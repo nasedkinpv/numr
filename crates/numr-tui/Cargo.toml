@@ -3,7 +3,9 @@ name = "numr-tui"
 description = "Terminal UI for numr calculator"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "numr"
@@ -19,5 +21,6 @@ clap.workspace = true
 directories = "6"
 tokio.workspace = true
 textwrap = "0.16"
-toml = "0.8"
+toml = "1"
 serde.workspace = true
+atomic-write-file.workspace = true

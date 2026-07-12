@@ -14,104 +14,58 @@ use ratatui::{
 use crate::app::KeybindingMode;
 use crate::ui::palette;
 
-/// Reusable popup frame with builder pattern.
-///
-/// Handles the common popup rendering: clearing, centering, background,
-/// optional title, and optional gradient separator.
-///
-/// # Example
-/// ```ignore
-/// let content_area = Popup::new(40, 10)
-///     .title("My Popup")
-///     .with_separator()
-///     .render_frame(frame, area);
-/// // Render your content in content_area
-/// ```
-pub struct Popup<'a> {
+/// Render the shared popup background and optional titled separator.
+fn render_popup_frame(
+    frame: &mut Frame,
+    area: Rect,
     width: u16,
     height: u16,
-    title: Option<&'a str>,
-    show_separator: bool,
-}
+    title: Option<&str>,
+) -> Rect {
+    let popup_area = centered_rect(area, width, height);
 
-impl<'a> Popup<'a> {
-    /// Create a new popup with the given dimensions.
-    pub fn new(width: u16, height: u16) -> Self {
-        Self {
-            width,
-            height,
-            title: None,
-            show_separator: false,
-        }
-    }
+    // Clear and background
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(
+        Block::new().style(Style::new().bg(palette::POPUP_BG)),
+        popup_area,
+    );
 
-    /// Set the popup title (displayed top-left with accent color).
-    pub fn title(mut self, title: &'a str) -> Self {
-        self.title = Some(title);
-        self
-    }
+    let mut content_start_y: u16 = 0;
 
-    /// Enable the gradient separator below the title.
-    pub fn with_separator(mut self) -> Self {
-        self.show_separator = true;
-        self
-    }
-
-    /// Render the popup frame and return the content area.
-    ///
-    /// This renders:
-    /// - Clear widget (prevents artifacts)
-    /// - Background block
-    /// - Title (if set)
-    /// - Gradient separator (if enabled)
-    ///
-    /// Returns the `Rect` where content should be rendered.
-    pub fn render_frame(self, frame: &mut Frame, area: Rect) -> Rect {
-        let popup_area = centered_rect(area, self.width, self.height);
-
-        // Clear and background
-        frame.render_widget(Clear, popup_area);
-        frame.render_widget(
-            Block::new().style(Style::new().bg(palette::POPUP_BG)),
-            popup_area,
-        );
-
-        let mut content_start_y: u16 = 0;
-
-        // Title
-        if let Some(title_text) = self.title {
-            let title_area = Rect {
-                x: popup_area.x,
-                y: popup_area.y,
-                width: popup_area.width,
-                height: 2,
-            };
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::from(""),
-                    Line::from(vec![
-                        "  ".into(),
-                        Span::styled(title_text, Style::new().fg(palette::ACCENT).bold()),
-                    ]),
-                ]),
-                title_area,
-            );
-            content_start_y = 2;
-        }
-
-        // Gradient separator
-        if self.show_separator && self.title.is_some() {
-            draw_separator(frame, popup_area, content_start_y);
-            content_start_y += 1;
-        }
-
-        // Return content area
-        Rect {
+    // Title
+    if let Some(title_text) = title {
+        let title_area = Rect {
             x: popup_area.x,
-            y: popup_area.y + content_start_y,
+            y: popup_area.y,
             width: popup_area.width,
-            height: popup_area.height.saturating_sub(content_start_y),
-        }
+            height: 2,
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(vec![
+                    "  ".into(),
+                    Span::styled(title_text, Style::new().fg(palette::ACCENT).bold()),
+                ]),
+            ]),
+            title_area,
+        );
+        content_start_y = 2;
+    }
+
+    // Gradient separator
+    if title.is_some() {
+        draw_separator(frame, popup_area, content_start_y);
+        content_start_y += 1;
+    }
+
+    // Return content area
+    Rect {
+        x: popup_area.x,
+        y: popup_area.y + content_start_y,
+        width: popup_area.width,
+        height: popup_area.height.saturating_sub(content_start_y),
     }
 }
 
@@ -136,7 +90,7 @@ fn draw_separator(frame: &mut Frame, area: Rect, y_offset: u16) {
 
 /// Draw the quit confirmation popup
 pub fn draw_quit_popup(frame: &mut Frame, area: Rect) {
-    let content_area = Popup::new(34, 8).render_frame(frame, area);
+    let content_area = render_popup_frame(frame, area, 34, 8, None);
 
     let text = vec![
         Line::from(""),
@@ -179,10 +133,7 @@ pub fn draw_help_popup(
     let content_width = 46_u16.min(area.width.saturating_sub(6));
 
     // Render popup frame (clear, background, title, separator)
-    let content_area = Popup::new(content_width, content_height)
-        .title(title)
-        .with_separator()
-        .render_frame(frame, area);
+    let content_area = render_popup_frame(frame, area, content_width, content_height, Some(title));
 
     // Slice rows based on scroll offset
     let visible_rows: Vec<Row> = all_rows
@@ -278,12 +229,14 @@ fn standard_help_rows() -> Vec<Row<'static>> {
         Row::new(vec!["Editing", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
         Row::new(vec!["Type directly", "Insert text"]),
         Row::new(vec!["Backspace / Delete", "Delete char"]),
-        Row::new(vec!["Ctrl+k", "Delete line"]),
+        Row::new(vec!["Option+Backspace / Ctrl+w", "Delete previous word"]),
+        Row::new(vec!["Ctrl+u / Ctrl+k", "Delete to line start/end"]),
         Row::new(vec!["Enter", "New line"]),
         Row::new(vec!["", ""]),
         Row::new(vec!["General", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
         Row::new(vec!["? / F1", "Toggle help"]),
-        Row::new(vec!["Ctrl+w/l/h", "Toggle wrap/numbers/header"]),
+        Row::new(vec!["Option+z", "Toggle wrap"]),
+        Row::new(vec!["Ctrl+l / Ctrl+h", "Toggle numbers/header"]),
         Row::new(vec!["Ctrl+s", "Save file"]),
         Row::new(vec!["Ctrl+r", "Refresh rates"]),
         Row::new(vec!["Ctrl+q", "Quit"]),

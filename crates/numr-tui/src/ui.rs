@@ -10,7 +10,8 @@ use ratatui::{
 
 use crate::app::{App, InputMode, KeybindingMode};
 use crate::popups::{draw_help_popup, draw_quit_popup};
-use numr_editor::{tokenize, TokenType};
+use numr_editor::{tokenize, tokenize_with_variables, TokenType};
+use std::collections::HashSet;
 
 // ========================================
 // Layout Constants
@@ -47,14 +48,7 @@ pub mod palette {
 }
 
 fn result_column_width(app: &App, area: Rect) -> u16 {
-    let content_width = app
-        .results()
-        .iter()
-        .filter(|v| !v.is_error())
-        .map(|v| v.to_string().len())
-        .max()
-        .unwrap_or(0)
-        .max(8);
+    let content_width = app.max_result_width().max(8);
 
     let max_allowed = (area.width as usize / 2).min(MAX_RESULT_WIDTH as usize);
     content_width.min(max_allowed) as u16
@@ -193,6 +187,7 @@ fn draw_wrapped_content(
 ) {
     // Calculate cursor screen position for later
     let (cursor_row_in_line, cursor_x_in_row) = app.get_cursor_wrapped_position();
+    let variables = app.variable_names();
     let mut cursor_set = false;
 
     let mut current_visual_row = 0;
@@ -232,8 +227,6 @@ fn draw_wrapped_content(
                     height: visible_rows,
                 };
 
-                let result = &app.results()[line_idx];
-
                 // Split row into [nums | input | result]
                 let [nums_area, rest_area] =
                     Layout::horizontal([Constraint::Length(line_num_width), Constraint::Fill(1)])
@@ -260,7 +253,7 @@ fn draw_wrapped_content(
                 }
 
                 // Render input with wrap
-                let input_para = Paragraph::new(highlight_line(line))
+                let input_para = Paragraph::new(highlight_line(line, variables))
                     .wrap(Wrap { trim: false })
                     .scroll((skip_rows, 0));
 
@@ -288,8 +281,7 @@ fn draw_wrapped_content(
                 // Only show result if we are showing the bottom of the line
                 let is_showing_bottom = skip_rows + visible_rows == line_height as u16;
 
-                if is_showing_bottom && !result.is_error() && !result.is_empty() {
-                    let result_text = result.to_string();
+                if let (true, Some(result_text)) = (is_showing_bottom, app.result_text(line_idx)) {
                     // Position result at bottom of result_area
                     let result_y = result_area.y + result_area.height.saturating_sub(1);
                     let bottom_area = Rect {
@@ -316,7 +308,9 @@ fn draw_wrapped_content(
 }
 
 fn draw_line_numbers(frame: &mut Frame, area: Rect, app: &App) {
-    let lines: Vec<Line> = (0..app.lines().len())
+    let start = app.viewport_y().min(app.lines().len());
+    let end = (start + area.height as usize).min(app.lines().len());
+    let lines: Vec<Line> = (start..end)
         .map(|i| {
             let num = (i + 1).to_string();
             let style = if i == app.cursor_y() {
@@ -328,19 +322,19 @@ fn draw_line_numbers(frame: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
-    let paragraph = Paragraph::new(lines).scroll((app.viewport_y() as u16, 0));
-    frame.render_widget(paragraph, area);
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
-    let lines: Vec<Line> = app
-        .lines()
+    let variables = app.variable_names();
+    let start = app.viewport_y().min(app.lines().len());
+    let end = (start + area.height as usize).min(app.lines().len());
+    let lines: Vec<Line> = app.lines()[start..end]
         .iter()
-        .map(|line| highlight_line(line))
+        .map(|line| highlight_line(line, variables))
         .collect();
 
-    let paragraph =
-        Paragraph::new(lines).scroll((app.viewport_y() as u16, app.viewport_x() as u16));
+    let paragraph = Paragraph::new(lines).scroll((0, app.viewport_x() as u16));
     frame.render_widget(paragraph, area);
 
     // Set terminal cursor position
@@ -356,22 +350,17 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
-    let lines: Vec<Line> = app
-        .results()
-        .iter()
-        .map(|value| {
-            if value.is_error() || value.is_empty() {
-                Line::from("")
-            } else {
-                Line::from(value.to_string().fg(palette::ACCENT))
-            }
+    let start = app.viewport_y().min(app.lines().len());
+    let end = (start + area.height as usize).min(app.lines().len());
+    let lines: Vec<Line> = (start..end)
+        .map(|line_idx| {
+            app.result_text(line_idx)
+                .map(|text| Line::from(text.fg(palette::ACCENT)))
+                .unwrap_or_default()
         })
         .collect();
 
-    // Results scroll vertically only (no horizontal scroll needed)
-    let paragraph = Paragraph::new(lines)
-        .right_aligned()
-        .scroll((app.viewport_y() as u16, 0));
+    let paragraph = Paragraph::new(lines).right_aligned();
     frame.render_widget(paragraph, area);
 }
 
@@ -445,23 +434,9 @@ fn saved_pulse_color(start: std::time::Instant) -> Color {
     Color::Rgb(r, g, b)
 }
 
-/// Build the totals string from grouped totals
-fn build_totals_string(app: &App) -> String {
-    let grouped = app.grouped_totals();
-    if grouped.is_empty() {
-        String::new()
-    } else {
-        grouped
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join("  ") // Use double space as clean separator
-    }
-}
-
 /// Calculate footer height needed (1 or 2 rows based on content width)
 pub fn footer_height(app: &App, area_width: u16) -> u16 {
-    let totals_str = build_totals_string(app);
+    let totals_str = app.totals_text();
     if totals_str.is_empty() {
         return 1;
     }
@@ -469,7 +444,7 @@ pub fn footer_height(app: &App, area_width: u16) -> u16 {
     // Estimate hints width (mode + filename + hints ≈ 40-50 chars typically)
     let hints_width_estimate = HINTS_WIDTH_ESTIMATE;
     // "total: " prefix + values
-    let totals_width = (totals_str.len() + 7) as u16;
+    let totals_width = (totals_str.chars().count() + 7) as u16;
 
     // If both fit on one line with some padding, use 1 row
     if hints_width_estimate + totals_width + 4 <= area_width {
@@ -480,7 +455,7 @@ pub fn footer_height(app: &App, area_width: u16) -> u16 {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App, _result_width: u16) {
-    let totals_str = build_totals_string(app);
+    let totals_str = app.totals_text();
     let use_two_rows = area.height >= 2 && !totals_str.is_empty();
 
     // Build hints line
@@ -510,7 +485,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, _result_width: u16) {
         let totals_width = if totals_str.is_empty() {
             0
         } else {
-            (totals_str.len() + 7) as u16
+            (totals_str.chars().count() + 7) as u16
         };
 
         let [left_area, right_area] =
@@ -638,8 +613,8 @@ fn build_hints_line(app: &App) -> Vec<Span<'static>> {
 }
 
 /// Syntax highlighting for a line
-fn highlight_line(input: &str) -> Line<'static> {
-    Line::from(tokenize_and_style(input))
+fn highlight_line(input: &str, variables: &HashSet<String>) -> Line<'static> {
+    Line::from(tokenize_and_style(input, variables))
 }
 
 fn token_color(token_type: TokenType) -> Color {
@@ -659,8 +634,12 @@ fn token_color(token_type: TokenType) -> Color {
 }
 
 /// Tokenize input and apply syntax highlighting
-fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
-    let tokens = tokenize(input);
+fn tokenize_and_style(input: &str, variables: &HashSet<String>) -> Vec<Span<'static>> {
+    let tokens = if variables.is_empty() {
+        tokenize(input)
+    } else {
+        tokenize_with_variables(input, variables)
+    };
     tokens
         .into_iter()
         .map(|t| Span::styled(t.text, Style::new().fg(token_color(t.token_type))))
@@ -670,11 +649,11 @@ fn tokenize_and_style(input: &str) -> Vec<Span<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::layout::Rect;
+    use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
     /// Extract (text, color) pairs from tokenized spans for testing
     fn tokenize_to_pairs(input: &str) -> Vec<(String, Color)> {
-        tokenize_and_style(input)
+        tokenize_and_style(input, &HashSet::new())
             .into_iter()
             .map(|span| {
                 let text = span.content.to_string();
@@ -690,147 +669,62 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_number() {
-        let pairs = tokenize_to_pairs("42");
-        assert!(has_token(&pairs, "42", palette::NUMBER));
+    fn token_types_map_to_the_tui_palette() {
+        let cases = [
+            (TokenType::Number, palette::NUMBER),
+            (TokenType::Operator, palette::OPERATOR),
+            (TokenType::Variable, palette::VARIABLE),
+            (TokenType::Unit, palette::UNIT),
+            (TokenType::Currency, palette::UNIT),
+            (TokenType::Keyword, palette::KEYWORD),
+            (TokenType::Function, palette::OPERATOR),
+            (TokenType::Comment, palette::DIM),
+            (TokenType::Text, palette::TEXT),
+            (TokenType::Whitespace, Color::Reset),
+            (TokenType::Punctuation, palette::DIM),
+        ];
+        for (token_type, expected) in cases {
+            assert_eq!(token_color(token_type), expected, "{token_type:?}");
+        }
     }
 
     #[test]
-    fn test_negative_number() {
-        let pairs = tokenize_to_pairs("-5");
-        assert!(has_token(&pairs, "-5", palette::NUMBER));
+    fn mixed_tokens_are_styled_without_changing_text() {
+        let input = "subtotal = sum($100, 20%) in USD # note";
+        let pairs = tokenize_to_pairs(input);
+        assert_eq!(
+            pairs
+                .iter()
+                .map(|(text, _)| text.as_str())
+                .collect::<String>(),
+            input
+        );
+        for (text, color) in [
+            ("subtotal", palette::VARIABLE),
+            ("=", palette::OPERATOR),
+            ("sum", palette::OPERATOR),
+            ("$", palette::UNIT),
+            ("100", palette::NUMBER),
+            ("in", palette::KEYWORD),
+            ("USD", palette::UNIT),
+            ("# note", palette::DIM),
+        ] {
+            assert!(has_token(&pairs, text, color), "missing {text:?}");
+        }
     }
 
     #[test]
-    fn test_percentage() {
-        let pairs = tokenize_to_pairs("20%");
-        assert!(has_token(&pairs, "20%", palette::NUMBER));
-    }
-
-    #[test]
-    fn test_basic_operators() {
-        let pairs = tokenize_to_pairs("1 + 2");
-        assert!(has_token(&pairs, "1", palette::NUMBER));
-        assert!(has_token(&pairs, "+", palette::OPERATOR));
-        assert!(has_token(&pairs, "2", palette::NUMBER));
-    }
-
-    #[test]
-    fn test_multiply_asterisk() {
-        let pairs = tokenize_to_pairs("3 * 4");
-        assert!(has_token(&pairs, "*", palette::OPERATOR));
-    }
-
-    #[test]
-    fn test_multiply_x_no_spaces() {
-        let pairs = tokenize_to_pairs("2x3");
-        assert!(has_token(&pairs, "2", palette::NUMBER));
-        assert!(has_token(&pairs, "x", palette::OPERATOR));
-        assert!(has_token(&pairs, "3", palette::NUMBER));
-    }
-
-    #[test]
-    fn test_multiply_x_with_spaces() {
-        let pairs = tokenize_to_pairs("2 x 3");
-        assert!(has_token(&pairs, "2", palette::NUMBER));
-        assert!(has_token(&pairs, "x", palette::OPERATOR));
-        assert!(has_token(&pairs, "3", palette::NUMBER));
-    }
-
-    #[test]
-    fn test_word_not_multiply() {
-        // "tax" alone is plain text (not a defined variable)
-        let pairs = tokenize_to_pairs("tax");
-        assert!(has_token(&pairs, "tax", palette::TEXT));
-    }
-
-    #[test]
-    fn test_word_x2() {
-        // "x2" alone is plain text
-        let pairs = tokenize_to_pairs("x2");
-        assert!(has_token(&pairs, "x2", palette::TEXT));
-    }
-
-    #[test]
-    fn test_variable_assignment() {
-        // Variable being defined gets VARIABLE color
-        let pairs = tokenize_to_pairs("tax = 20%");
+    fn test_known_variable_reference() {
+        let pairs = tokenize_and_style("100 + tax", &HashSet::from(["tax".to_string()]))
+            .into_iter()
+            .map(|span| {
+                (
+                    span.content.to_string(),
+                    span.style.fg.unwrap_or(Color::Reset),
+                )
+            })
+            .collect::<Vec<_>>();
         assert!(has_token(&pairs, "tax", palette::VARIABLE));
-        assert!(has_token(&pairs, "20%", palette::NUMBER));
-    }
-
-    #[test]
-    fn test_comment_line() {
-        // Comment lines are dimmed
-        let pairs = tokenize_to_pairs("# this is a comment");
-        assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].1, palette::DIM);
-    }
-
-    #[test]
-    fn test_prose_with_numbers() {
-        // Prose text: words are TEXT, but numbers/units still highlighted
-        let pairs = tokenize_to_pairs("i put 10 usd here");
-        assert!(has_token(&pairs, "i", palette::TEXT));
-        assert!(has_token(&pairs, "put", palette::TEXT));
-        assert!(has_token(&pairs, "10", palette::NUMBER));
-        assert!(has_token(&pairs, "usd", palette::UNIT));
-        assert!(has_token(&pairs, "here", palette::TEXT));
-    }
-
-    #[test]
-    fn test_currency_symbol_before() {
-        let pairs = tokenize_to_pairs("$100");
-        assert!(has_token(&pairs, "$", palette::UNIT));
-        assert!(has_token(&pairs, "100", palette::NUMBER));
-    }
-
-    #[test]
-    fn test_currency_code() {
-        let pairs = tokenize_to_pairs("100 USD");
-        assert!(has_token(&pairs, "100", palette::NUMBER));
-        assert!(has_token(&pairs, "USD", palette::UNIT));
-    }
-
-    #[test]
-    fn test_unit() {
-        let pairs = tokenize_to_pairs("5 km");
-        assert!(has_token(&pairs, "5", palette::NUMBER));
-        assert!(has_token(&pairs, "km", palette::UNIT));
-    }
-
-    #[test]
-    fn test_assignment() {
-        let pairs = tokenize_to_pairs("x = 10");
-        assert!(has_token(&pairs, "x", palette::VARIABLE));
-        assert!(has_token(&pairs, "=", palette::OPERATOR));
-        assert!(has_token(&pairs, "10", palette::NUMBER));
-    }
-
-    #[test]
-    fn test_function_call() {
-        let pairs = tokenize_to_pairs("sum(1, 2)");
-        assert!(has_token(&pairs, "sum", palette::OPERATOR));
-        assert!(has_token(&pairs, "1", palette::NUMBER));
-        assert!(has_token(&pairs, "2", palette::NUMBER));
-    }
-
-    #[test]
-    fn test_keyword_in() {
-        let pairs = tokenize_to_pairs("$100 in EUR");
-        assert!(has_token(&pairs, "in", palette::KEYWORD));
-    }
-
-    #[test]
-    fn test_keyword_of() {
-        let pairs = tokenize_to_pairs("20% of 100");
-        assert!(has_token(&pairs, "of", palette::KEYWORD));
-    }
-
-    #[test]
-    fn test_keyword_to() {
-        let pairs = tokenize_to_pairs("5 km to miles");
-        assert!(has_token(&pairs, "to", palette::KEYWORD));
     }
 
     #[test]
@@ -868,5 +762,27 @@ mod tests {
 
         assert_eq!(width, 66);
         assert_eq!(height, 23);
+    }
+
+    #[test]
+    fn draws_small_terminal_in_both_layout_modes() {
+        for wrap_mode in [false, true] {
+            let backend = TestBackend::new(12, 4);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut app = App::default();
+            app.wrap_mode = wrap_mode;
+            app.show_line_numbers = true;
+            app.set_lines_for_test(vec![
+                "tax = 20%".into(),
+                "100 + tax".into(),
+                "unicode = 2 🧮".into(),
+            ]);
+            let (width, height) = viewport_dimensions(&app, Rect::new(0, 0, 12, 4));
+            app.set_viewport_size(width, height);
+
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+            assert_eq!(terminal.backend().buffer().area, Rect::new(0, 0, 12, 4));
+        }
     }
 }

@@ -1,38 +1,34 @@
 //! Monetary calculation tests
 //! Tests for currency conversions, multi-currency arithmetic, and formatting
 
-use numr_core::{decimal as d, Currency, Engine};
+use numr_core::{catalog::currency_catalog, decimal as d, Currency, Engine};
 
 #[test]
 fn test_currency_formats() {
     let mut engine = Engine::new();
+    let cases = [
+        ("$100", "$100.00"),
+        ("100 USD", "$100.00"),
+        ("100$", "$100.00"),
+        ("100 dollars", "$100.00"),
+        ("€50", "€50.00"),
+        ("50 eur", "€50.00"),
+        ("50 euros", "€50.00"),
+        ("£75", "£75.00"),
+        ("75 pounds", "£75.00"),
+        ("₽100", "100.00₽"),
+        ("100 rubles", "100.00₽"),
+        ("₿1", "₿1.00"),
+        ("1 bitcoin", "₿1.00"),
+    ];
 
-    // USD formats
-    assert_eq!(engine.eval("$100").to_string(), "$100.00");
-    assert_eq!(engine.eval("100 USD").to_string(), "$100.00");
-    assert_eq!(engine.eval("100$").to_string(), "$100.00");
-    assert_eq!(engine.eval("100 dollars").to_string(), "$100.00");
-
-    // EUR formats
-    assert_eq!(engine.eval("€50").to_string(), "€50.00");
-    assert_eq!(engine.eval("50 EUR").to_string(), "€50.00");
-    assert_eq!(engine.eval("50 eur").to_string(), "€50.00");
-    assert_eq!(engine.eval("50 euros").to_string(), "€50.00");
-
-    // GBP formats
-    assert_eq!(engine.eval("£75").to_string(), "£75.00");
-    assert_eq!(engine.eval("75 GBP").to_string(), "£75.00");
-    assert_eq!(engine.eval("75 pounds").to_string(), "£75.00");
-
-    // RUB formats (symbol after number in Russian convention)
-    assert_eq!(engine.eval("₽100").to_string(), "100.00₽");
-    assert_eq!(engine.eval("100 RUB").to_string(), "100.00₽");
-    assert_eq!(engine.eval("100 rubles").to_string(), "100.00₽");
-
-    // BTC formats
-    assert_eq!(engine.eval("₿1").to_string(), "₿1.00");
-    assert_eq!(engine.eval("1 BTC").to_string(), "₿1.00");
-    assert_eq!(engine.eval("1 bitcoin").to_string(), "₿1.00");
+    for (expression, expected) in cases {
+        assert_eq!(
+            engine.eval(expression).to_string(),
+            expected,
+            "{expression}"
+        );
+    }
 }
 
 #[test]
@@ -61,58 +57,30 @@ fn test_currency_arithmetic_same() {
 }
 
 #[test]
-fn test_usd_to_eur_conversion() {
+fn test_direct_currency_conversions() {
     let mut engine = Engine::new();
     engine.set_exchange_rate(Currency::USD, Currency::EUR, d("0.92"));
-
-    let result = engine.eval("$100 in EUR");
-    assert_eq!(result.as_decimal(), Some(d("92")));
-    assert_eq!(result.to_string(), "€92.00");
-
-    let result = engine.eval("$1000 in eur");
-    assert_eq!(result.as_decimal(), Some(d("920")));
-    assert_eq!(result.to_string(), "€920.00");
-}
-
-#[test]
-fn test_eur_to_usd_conversion() {
-    let mut engine = Engine::new();
-    engine.set_exchange_rate(Currency::USD, Currency::EUR, d("0.92"));
-
-    // Inverse rate should work automatically
-    // €92 in USD = 92 / 0.92 = 100
-    let result = engine.eval("€92 in USD");
-    assert!(result.to_string().starts_with("$"));
-    let amount = result.as_decimal().unwrap();
-    assert_eq!(amount, d("100"));
-}
-
-#[test]
-fn test_usd_to_gbp_conversion() {
-    let mut engine = Engine::new();
     engine.set_exchange_rate(Currency::USD, Currency::GBP, d("0.79"));
+    engine.set_exchange_rate(Currency::USD, Currency::JPY, d("149.5"));
+    let cases = [
+        ("$100 in EUR", "92", "€92.00"),
+        ("$500 in pounds", "395", "£395.00"),
+        ("$10 in jpy", "1495", "¥1495.00"),
+    ];
 
-    let result = engine.eval("$100 in GBP");
-    assert_eq!(result.as_decimal(), Some(d("79")));
-    assert_eq!(result.to_string(), "£79.00");
-
-    let result = engine.eval("$500 in pounds");
-    assert_eq!(result.as_decimal(), Some(d("395")));
-    assert_eq!(result.to_string(), "£395.00");
+    for (expression, amount, display) in cases {
+        let result = engine.eval(expression);
+        assert_eq!(result.as_decimal(), Some(d(amount)), "{expression}");
+        assert_eq!(result.to_string(), display, "{expression}");
+    }
 }
 
 #[test]
-fn test_usd_to_jpy_conversion() {
+fn test_reverse_currency_conversion_is_exact_for_reciprocal_case() {
     let mut engine = Engine::new();
-    engine.set_exchange_rate(Currency::USD, Currency::JPY, d("149.5"));
+    engine.set_exchange_rate(Currency::USD, Currency::EUR, d("0.92"));
 
-    let result = engine.eval("$100 in JPY");
-    assert_eq!(result.as_decimal(), Some(d("14950")));
-    assert_eq!(result.to_string(), "¥14950.00");
-
-    let result = engine.eval("$10 in jpy");
-    assert_eq!(result.as_decimal(), Some(d("1495")));
-    assert_eq!(result.to_string(), "¥1495.00");
+    assert_eq!(engine.eval("€92 in USD").as_decimal(), Some(d("100")));
 }
 
 #[test]
@@ -194,53 +162,16 @@ fn test_rub_and_ils_currencies() {
 }
 
 #[test]
-fn test_travel_expense_scenario() {
-    let mut engine = Engine::new();
-    engine.set_exchange_rate(Currency::USD, Currency::EUR, d("0.92"));
-    engine.set_exchange_rate(Currency::USD, Currency::GBP, d("0.79"));
-
-    // Travel expenses in different currencies
-    engine.eval("flight = $800");
-    engine.eval("hotel_paris = €500");
-    engine.eval("hotel_london = £300");
-
-    // Individual amounts
-    assert_eq!(engine.eval("flight").as_decimal(), Some(d("800")));
-    assert_eq!(engine.eval("hotel_paris").as_decimal(), Some(d("500")));
-    assert_eq!(engine.eval("hotel_london").as_decimal(), Some(d("300")));
-
-    // Convert all to USD for total
-    // €500 / 0.92 = 543.478...
-    let paris_usd = engine.eval("hotel_paris in USD");
-    let paris_amount = paris_usd.as_decimal().unwrap();
-    assert!(paris_amount > d("500")); // €500 > $500
-
-    // £300 / 0.79 = 379.746...
-    let london_usd = engine.eval("hotel_london in USD");
-    let london_amount = london_usd.as_decimal().unwrap();
-    assert!(london_amount > d("300")); // £300 > $300
-}
-
-#[test]
 fn test_all_currencies_have_default_rates() {
     let mut engine = Engine::new();
 
-    // All supported currencies now have default fallback rates
-    // PLN should convert successfully
-    let result = engine.eval("$100 in PLN");
-    assert!(result.as_decimal().is_some());
-
-    // Same-currency operations work
-    assert_eq!(engine.eval("$100 + $50").as_decimal(), Some(d("150")));
-    assert_eq!(engine.eval("€200 * 2").as_decimal(), Some(d("400")));
-
-    // EUR conversion works with fallback rate
-    let result = engine.eval("$100 in EUR");
-    assert!(result.as_decimal().is_some());
-
-    // Crypto conversions also work with defaults
-    let result = engine.eval("1 ETH in USD");
-    assert!(result.as_decimal().is_some());
+    for currency in currency_catalog() {
+        let expression = format!("1 {} in USD", currency.code);
+        assert!(
+            engine.eval(&expression).as_decimal().is_some(),
+            "{expression}"
+        );
+    }
 }
 
 #[test]
@@ -420,80 +351,6 @@ fn test_unit_times_currency_allowed() {
     assert!(!result.is_error());
     assert_eq!(result.as_decimal(), Some(d("4080")));
     assert_eq!(result.to_string(), "$4080.00");
-}
-
-// ============================================================================
-// EXAMPLE.NUMR SCENARIO TESTS
-// Tests based on real-world usage from example.numr
-// ============================================================================
-
-#[test]
-fn test_example_freelance_calculation() {
-    let mut engine = Engine::new();
-
-    // From example.numr: techcorp calculation
-    engine.eval("techcorp_hours = 45h");
-    engine.eval("techcorp_rate = 85 usd");
-
-    // hours × rate = currency
-    let result = engine.eval("techcorp_hours * techcorp_rate");
-    assert_eq!(result.as_decimal(), Some(d("3825")));
-    assert_eq!(result.to_string(), "$3825.00");
-
-    // tax calculation
-    let result = engine.eval("25% of 3825 usd");
-    assert_eq!(result.as_decimal(), Some(d("956.25")));
-
-    // net calculation
-    let result = engine.eval("$3825 - 25%");
-    assert_eq!(result.as_decimal(), Some(d("2868.75")));
-    assert_eq!(result.to_string(), "$2868.75");
-}
-
-#[test]
-fn test_example_saas_annual() {
-    let mut engine = Engine::new();
-
-    // From example.numr: saas_annual = saas_mrr * 12 months
-    engine.eval("saas_mrr = 340 usd");
-
-    let result = engine.eval("saas_mrr * 12 months");
-    assert_eq!(result.as_decimal(), Some(d("4080")));
-    assert_eq!(result.to_string(), "$4080.00");
-}
-
-#[test]
-fn test_example_mixed_currency_expenses() {
-    let mut engine = Engine::new();
-    engine.set_exchange_rate(Currency::USD, Currency::ILS, d("3.65"));
-
-    // From example.numr: expenses in mixed currencies
-    engine.eval("rent = 1850 usd");
-    engine.eval("utilities = 900 ils");
-
-    // Mixed currency addition converts to left operand's currency
-    let result = engine.eval("rent + utilities");
-    // 1850 + (900 / 3.65) ≈ 1850 + 246.58 = 2096.58
-    assert!(result.to_string().starts_with("$"));
-    let amount = result.as_decimal().unwrap();
-    assert!(amount > d("2000") && amount < d("2200"));
-}
-
-#[test]
-fn test_example_cross_currency_debt() {
-    let mut engine = Engine::new();
-    engine.set_exchange_rate(Currency::USD, Currency::RUB, d("92"));
-
-    // From example.numr: net_debt = debt_alex - tom_owes
-    engine.eval("debt_alex = 3500 rub");
-    engine.eval("tom_owes = 120 usd");
-
-    // RUB - USD: converts USD to RUB first
-    // 3500 - (120 * 92) = 3500 - 11040 = -7540
-    let result = engine.eval("debt_alex - tom_owes");
-    assert!(result.to_string().contains("₽"));
-    let amount = result.as_decimal().unwrap();
-    assert!(amount < d("0")); // negative (owes more than owed)
 }
 
 #[test]

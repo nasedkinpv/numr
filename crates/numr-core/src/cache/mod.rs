@@ -4,8 +4,10 @@
 //! Cache expires after 1 hour, after which fresh rates should be fetched.
 //! On WASM, filesystem caching is not available - use defaults only.
 
+use crate::error::{EvalError, RateError};
 use crate::types::Currency;
 use rust_decimal::Decimal;
+#[cfg(not(target_arch = "wasm32"))]
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -14,7 +16,9 @@ use directories::ProjectDirs;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 #[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
+use std::io::Write;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::{Path, PathBuf};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const CACHE_EXPIRY_SECS: u64 = 3600;
 
 /// Cached rates file format
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Serialize, Deserialize)]
 struct CachedRates {
     /// Unix timestamp when rates were fetched
@@ -35,9 +40,6 @@ struct CachedRates {
 #[derive(Clone)]
 pub struct RateCache {
     pub(crate) rates: HashMap<(Currency, Currency), Decimal>,
-    /// Whether rates were loaded from a non-expired file cache
-    #[cfg(not(target_arch = "wasm32"))]
-    loaded_from_file: bool,
 }
 
 impl RateCache {
@@ -45,26 +47,48 @@ impl RateCache {
     pub fn new() -> Self {
         Self {
             rates: HashMap::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            loaded_from_file: false,
         }
     }
 
     /// Set an exchange rate
     pub fn set_rate(&mut self, from: Currency, to: Currency, rate: Decimal) {
+        let _ = self.try_set_rate(from, to, rate);
+    }
+
+    /// Set a rate and its reciprocal without allowing Decimal overflow.
+    pub fn try_set_rate(
+        &mut self,
+        from: Currency,
+        to: Currency,
+        rate: Decimal,
+    ) -> Result<(), EvalError> {
         if rate.is_sign_negative() || rate.is_zero() {
-            return;
+            return Err(EvalError::InvalidArgument(
+                "exchange rate must be positive".to_string(),
+            ));
         }
+        let inverse = Decimal::ONE.checked_div(rate).ok_or(EvalError::Overflow {
+            operation: "inverting an exchange rate",
+        })?;
         self.rates.insert((from, to), rate);
         // Also store the inverse rate
-        self.rates.insert((to, from), Decimal::ONE / rate);
+        self.rates.insert((to, from), inverse);
+        Ok(())
     }
 
     /// Get an exchange rate (uses BFS to find conversion path)
     #[must_use]
     pub fn get_rate(&self, from: Currency, to: Currency) -> Option<Decimal> {
+        self.try_get_rate(from, to).ok().flatten()
+    }
+
+    /// Resolve an exchange-rate path while reporting arithmetic overflow.
+    pub fn try_get_rate(&self, from: Currency, to: Currency) -> Result<Option<Decimal>, EvalError> {
         if from == to {
-            return Some(Decimal::ONE);
+            return Ok(Some(Decimal::ONE));
+        }
+        if let Some(rate) = self.rates.get(&(from, to)) {
+            return Ok(Some(*rate));
         }
 
         // BFS to find conversion path
@@ -78,7 +102,7 @@ impl RateCache {
 
         while let Some(current) = queue.pop_front() {
             if current == to {
-                return distances.get(&to).copied();
+                return Ok(distances.get(&to).copied());
             }
 
             let Some(&current_rate) = distances.get(&current) else {
@@ -88,13 +112,16 @@ impl RateCache {
             for ((start, end), rate) in &self.rates {
                 if *start == current && !visited.contains(end) {
                     visited.insert(*end);
-                    distances.insert(*end, current_rate * rate);
+                    let combined = current_rate.checked_mul(*rate).ok_or(EvalError::Overflow {
+                        operation: "combining exchange rates",
+                    })?;
+                    distances.insert(*end, combined);
                     queue.push_back(*end);
                 }
             }
         }
 
-        None
+        Ok(None)
     }
 
     /// Clear all cached rates
@@ -111,100 +138,122 @@ impl RateCache {
     /// Load rates from file cache if not expired (native only)
     /// Returns Some(()) if cache was loaded, None if expired or missing
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_from_file(&mut self) -> Option<()> {
-        let path = Self::cache_path()?;
-        let content = fs::read_to_string(&path).ok()?;
-        let cached: CachedRates = serde_json::from_str(&content).ok()?;
+    pub fn load_from_file(&mut self) -> Result<bool, RateError> {
+        let path = Self::cache_path().ok_or(RateError::CacheLocationUnavailable)?;
+        self.load_from_path(&path)
+    }
+
+    /// Load a cache from an explicit path. Useful for deterministic adapters and tests.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_from_path(&mut self, path: &Path) -> Result<bool, RateError> {
+        let content = match fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(RateError::Read(error)),
+        };
+        let cached: CachedRates = serde_json::from_str(&content).map_err(RateError::Deserialize)?;
 
         // Check if expired
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| RateError::Clock)?
+            .as_secs();
 
-        if now.saturating_sub(cached.timestamp) > CACHE_EXPIRY_SECS {
-            return None; // Expired
+        if cached.timestamp > now || now - cached.timestamp >= CACHE_EXPIRY_SECS {
+            return Ok(false); // Expired
         }
 
-        // Load rates
-        self.apply_raw_rates(&cached.rates);
-        self.loaded_from_file = true;
-        Some(())
+        self.apply_raw_rates(&cached.rates)?;
+        Ok(true)
     }
 
     /// Load rates from file cache (WASM stub - always returns None)
     #[cfg(target_arch = "wasm32")]
-    pub fn load_from_file(&mut self) -> Option<()> {
-        None
+    pub fn load_from_file(&mut self) -> Result<bool, RateError> {
+        Err(RateError::UnsupportedPlatform)
     }
 
     /// Save current rates to file cache (native only)
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn save_to_file(&self, raw_rates: &HashMap<String, Decimal>) {
-        let Some(path) = Self::cache_path() else {
-            return;
-        };
+    pub fn save_to_file(&self, raw_rates: &HashMap<String, Decimal>) -> Result<(), RateError> {
+        let path = Self::cache_path().ok_or(RateError::CacheLocationUnavailable)?;
+        self.save_to_path(&path, raw_rates)
+    }
 
-        // Ensure directory exists
+    /// Atomically persist a cache to an explicit path.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn save_to_path(
+        &self,
+        path: &Path,
+        raw_rates: &HashMap<String, Decimal>,
+    ) -> Result<(), RateError> {
+        let mut validation_cache = Self::new();
+        validation_cache.apply_raw_rates(raw_rates)?;
+
         if let Some(parent) = path.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                eprintln!("Warning: failed to create cache directory: {e}");
-                return;
-            }
+            fs::create_dir_all(parent).map_err(RateError::CreateDirectory)?;
         }
 
-        let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
-            eprintln!("Warning: system clock error, skipping cache write");
-            return;
-        };
+        let duration = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| RateError::Clock)?;
         let now = duration.as_secs();
 
+        let supported_rates = raw_rates
+            .iter()
+            .filter(|(code, _)| code.parse::<Currency>().is_ok())
+            .map(|(code, rate)| (code.clone(), *rate))
+            .collect();
         let cached = CachedRates {
             timestamp: now,
-            rates: raw_rates.clone(),
+            rates: supported_rates,
         };
 
-        match serde_json::to_string_pretty(&cached) {
-            Ok(content) => {
-                if let Err(e) = fs::write(&path, content) {
-                    eprintln!("Warning: failed to write rate cache: {e}");
-                }
-            }
-            Err(e) => eprintln!("Warning: failed to serialize rate cache: {e}"),
-        }
+        let content = serde_json::to_string_pretty(&cached).map_err(RateError::Serialize)?;
+        let mut file = atomic_write_file::AtomicWriteFile::open(path).map_err(RateError::Write)?;
+        file.write_all(content.as_bytes())
+            .map_err(RateError::Write)?;
+        file.flush().map_err(RateError::Write)?;
+        file.sync_all().map_err(RateError::Write)?;
+        file.commit().map_err(RateError::Write)?;
+        Ok(())
     }
 
     /// Save current rates to file cache (WASM stub - no-op)
     #[cfg(target_arch = "wasm32")]
-    pub fn save_to_file(&self, _raw_rates: &HashMap<String, Decimal>) {
-        // No filesystem in WASM
-    }
-
-    /// Whether a non-expired cache was successfully loaded during initialization
-    #[must_use]
-    pub fn has_cached_rates(&self) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.loaded_from_file
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            false
-        }
+    pub fn save_to_file(&self, _raw_rates: &HashMap<String, Decimal>) -> Result<(), RateError> {
+        Err(RateError::UnsupportedPlatform)
     }
 
     /// Apply raw rates from API response
     /// - Fiat rates: "1 USD = X currency" (from exchangerate-api)
     /// - Crypto rates: "1 TOKEN = X USD" (from coingecko)
-    pub fn apply_raw_rates(&mut self, raw_rates: &HashMap<String, Decimal>) {
+    pub fn apply_raw_rates(
+        &mut self,
+        raw_rates: &HashMap<String, Decimal>,
+    ) -> Result<usize, RateError> {
+        let mut staged = self.clone();
+        let mut applied = 0usize;
         for (code, rate) in raw_rates {
             if let Ok(currency) = code.parse::<Currency>() {
-                if currency.is_crypto() {
+                let result = if currency.is_crypto() {
                     // Crypto: 1 TOKEN = X USD
-                    self.set_rate(currency, Currency::USD, *rate);
+                    staged.try_set_rate(currency, Currency::USD, *rate)
                 } else {
                     // Fiat: 1 USD = X currency
-                    self.set_rate(Currency::USD, currency, *rate);
-                }
+                    staged.try_set_rate(Currency::USD, currency, *rate)
+                };
+                result.map_err(|error| RateError::InvalidRates(format!("{code}: {error}")))?;
+                applied += 1;
             }
         }
+        if applied == 0 {
+            return Err(RateError::InvalidRates(
+                "no supported currency rates were provided".to_string(),
+            ));
+        }
+        self.rates = staged.rates;
+        Ok(applied)
     }
 
     /// Load default/fallback rates (for offline use when no cache exists)
@@ -251,11 +300,8 @@ impl RateCache {
 impl Default for RateCache {
     fn default() -> Self {
         let mut cache = Self::new();
-        // Always load defaults first as a base
+        // Defaults are deterministic. Filesystem loading is an explicit adapter action.
         cache.load_defaults();
-        // Then try to load from file cache to override with fresher rates
-        // (This way we always have crypto rates even if cache only has fiat)
-        let _ = cache.load_from_file();
         cache
     }
 }
@@ -264,6 +310,17 @@ impl Default for RateCache {
 mod tests {
     use super::*;
     use std::str::FromStr;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_FILE_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temporary_cache_path(name: &str) -> PathBuf {
+        let id = TEMP_FILE_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "numr-cache-{name}-{}-{id}.json",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn test_rate_cache() {
@@ -308,5 +365,83 @@ mod tests {
         cache.load_defaults();
         // ETH -> RUB should work via USD
         assert!(cache.get_rate(Currency::ETH, Currency::RUB).is_some());
+    }
+
+    #[test]
+    fn future_and_expired_cache_timestamps_are_rejected() {
+        let path = temporary_cache_path("timestamps");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut rates = HashMap::new();
+        rates.insert("EUR".to_string(), Decimal::ONE);
+        for timestamp in [now + 60, now.saturating_sub(CACHE_EXPIRY_SECS)] {
+            let content = serde_json::to_string(&CachedRates {
+                timestamp,
+                rates: rates.clone(),
+            })
+            .unwrap();
+            fs::write(&path, content).unwrap();
+            assert!(!RateCache::new().load_from_path(&path).unwrap());
+        }
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn cache_save_is_atomic_and_leaves_no_temporary_file() {
+        let directory = temporary_cache_path("atomic").with_extension("");
+        let path = directory.join("rates.json");
+        let mut rates = HashMap::new();
+        rates.insert("EUR".to_string(), Decimal::new(92, 2));
+        RateCache::new().save_to_path(&path, &rates).unwrap();
+
+        assert!(RateCache::new().load_from_path(&path).unwrap());
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn cache_save_atomically_replaces_an_existing_file() {
+        let directory = temporary_cache_path("replace").with_extension("");
+        let path = directory.join("rates.json");
+        let first = HashMap::from([("EUR".to_string(), Decimal::new(92, 2))]);
+        let second = HashMap::from([("EUR".to_string(), Decimal::new(85, 2))]);
+        let cache = RateCache::new();
+        cache.save_to_path(&path, &first).unwrap();
+        cache.save_to_path(&path, &second).unwrap();
+
+        let mut loaded = RateCache::new();
+        assert!(loaded.load_from_path(&path).unwrap());
+        assert_eq!(
+            loaded.get_rate(Currency::USD, Currency::EUR),
+            Some(Decimal::new(85, 2))
+        );
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn raw_rates_are_validated_before_mutating_or_persisting() {
+        let mut cache = RateCache::new();
+        cache.load_defaults();
+        let original = cache.get_rate(Currency::USD, Currency::EUR);
+        let invalid = HashMap::from([
+            ("UNKNOWN".to_string(), Decimal::ONE),
+            ("EUR".to_string(), Decimal::ZERO),
+        ]);
+
+        assert!(matches!(
+            cache.apply_raw_rates(&invalid),
+            Err(RateError::InvalidRates(_))
+        ));
+        assert_eq!(cache.get_rate(Currency::USD, Currency::EUR), original);
+
+        let path = temporary_cache_path("invalid");
+        assert!(matches!(
+            cache.save_to_path(&path, &invalid),
+            Err(RateError::InvalidRates(_))
+        ));
+        assert!(!path.exists());
     }
 }

@@ -30,8 +30,9 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Compound units**: `5 m * 10 m = 50 m²`, `100 km / 2 h = 50 km/h`
 - **Currency conversions**: USD, EUR, GBP, JPY, CHF, CNY, CAD, AUD, INR, KRW, RUB, ILS, PLN, UAH + crypto (BTC, ETH, SOL, and more)
 - **Number base conversions**: `22 to hex`, `22 to bin`
-- **Math functions and constants**: `sin(pi / 2)`, `log_y(2, 8)`, `factorial(5)`, `mod(10, 3)`
-- **Live exchange rates**: Fetched automatically on startup
+- **Math functions and constants**: `median(1, 3, 2)`, `clamp(120, 0, 100)`, `sin(90°)`, `factorial(5)`
+- **Angle conversions**: `90° to rad`, `3.14159 rad to deg`, `rad(180)`, `deg(pi)`
+- **Live exchange rates**: Loaded and refreshed explicitly by each frontend, with a shared 1-hour cache
 - **Dual keybinding modes**: Vim (modal) or Standard (direct input) - toggle with `Shift+Tab`
 - **Mouse support**: Scroll with mouse wheel or trackpad
 - **File persistence**: Save with `Ctrl+S`, supports custom files
@@ -134,6 +135,8 @@ echo '{"jsonrpc":"2.0","method":"eval","params":{"expr":"20% of 150"},"id":1}' |
 # {"jsonrpc":"2.0","result":{"type":"number","value":"30","display":"30"},"id":1}
 ```
 
+The transport is newline-delimited JSON. It supports calls, notifications, `null` IDs, and JSON-RPC batches; each input frame is limited to 1 MiB. Notifications update server state but produce no response.
+
 **Available methods:**
 
 | Method | Params | Description |
@@ -144,6 +147,8 @@ echo '{"jsonrpc":"2.0","method":"eval","params":{"expr":"20% of 150"},"id":1}' |
 | `get_totals` | none | Get grouped totals |
 | `get_variables` | none | List variables |
 | `reload_rates` | none | Refresh exchange rates |
+
+See [docs/json-rpc.md](docs/json-rpc.md) for the complete protocol, result schema, limits, and error codes.
 
 ## Keybindings (TUI)
 
@@ -220,7 +225,7 @@ Direct input like traditional editors - no modal switching required.
 | Percentages | `20% of 150`, `$50 - 10%`, `100 + 15%` |
 | Variables | `tax = 8%` then `price + tax` |
 | Continuation | `$100` → `+ $50` → `* 2` (chains from previous) |
-| Functions | `sum()`, `avg()`, `min()`, `max()`, `sqrt()`, `abs()`, `round()`, `floor()`, `ceil()`, `sin()`, `cos()`, `tan()`, `ln()`, `log()`, `log_y()`, `factorial()`, `mod()` |
+| Functions | `sum()`, `avg()`, `min()`, `max()`, `median()`, `clamp()`, `sqrt()`, `abs()`, `round()`, `floor()`, `ceil()`, `sin()`, `cos()`, `tan()`, `rad()`, `deg()`, `ln()`, `log()`, `log_y()`, `factorial()`, `mod()` |
 | Base conversion | `22 to hex` → `0x16`, `22 to bin` → `0b10110` |
 | Unit conversion | `5 km in miles`, `22 C in F`, `1 TB in GB` |
 | Compound units | `5 m * 10 m` → `50 m²`, `100 km / 2 h` → `50 km/h` |
@@ -292,13 +297,18 @@ sum(10, 20, 30)   → 60
 avg(10, 20, 30)   → 20
 min(5, 3, 8)      → 3
 max(5, 3, 8)      → 8
+median(5, 3, 8)   → 5
+clamp(120, 0, 100) → 100
 sqrt(16)          → 4
 abs(-5)           → 5
 round(3.7)        → 4
 floor(3.7)        → 3
 ceil(3.2)         → 4
 sin(pi / 2)       → 1
+sin(90°)          → 1
 cos(0)            → 1
+90° to rad        → 1.57 rad
+deg(pi)           → 180
 ln(e)             → 1
 log(100)          → 2
 log_y(2, 8)       → 3
@@ -340,33 +350,24 @@ Constants: `pi`, `e`, `phi`.
 ## Architecture
 
 ```mermaid
-graph TB
-    subgraph Frontends
-        CLI[numr-cli<br/>CLI · REPL · JSON-RPC]
-        TUI[numr-tui<br/>Terminal UI · Vim/Standard]
-        Web[numr-web<br/>WASM web app]
-    end
+flowchart TB
+    Core["numr-core<br/>parser · evaluator · values · catalogs"]
+    Editor["numr-editor<br/>highlighting · UTF-8 text primitives"]
+    CLI["numr-cli<br/>CLI · REPL · JSON-RPC"]
+    TUI["numr-tui<br/>event-driven terminal UI"]
+    Web["numr-web<br/>NumrSession · RatesService · views"]
+    Wasm["WASM adapters"]
+    Rates["rate providers and caches"]
 
-    Editor[numr-editor<br/>Syntax highlighting]
-
-    subgraph Core[numr-core]
-        Engine[Engine]
-        Engine --> Parser[PEG Parser]
-        Parser --> Eval[Evaluator]
-        Eval --> Types[Currency · Units · Values]
-        Eval --> Cache[(Rate Cache)]
-    end
-
-    Fiat[open.er-api.com]
-    Crypto[CoinGecko]
-
-    CLI --> Engine
-    TUI --> Engine
+    CLI --> Core
+    TUI --> Core
     TUI --> Editor
-    Web --> Engine
-    Web --> Editor
-    Cache -.-> Fiat
-    Cache -.-> Crypto
+    Web --> Wasm
+    Wasm --> Core
+    Wasm --> Editor
+    CLI -. "explicit I/O" .-> Rates
+    TUI -. "background worker" .-> Rates
+    Web -. "browser service" .-> Rates
 ```
 
 ```
@@ -379,12 +380,18 @@ numr/
 │   │   ├── cache/      # Exchange rate caching with BFS path finding
 │   │   ├── fetch.rs    # HTTP rate fetching (optional "fetch" feature)
 │   │   └── wasm.rs     # WASM bindings (optional "wasm" feature)
-│   ├── numr-editor/    # Syntax highlighting and text buffer (WASM-compatible)
+│   ├── numr-editor/    # Syntax highlighting and UTF-8 text primitives (WASM-compatible)
 │   ├── numr-tui/       # Terminal UI (Ratatui) with vim/standard modes
 │   └── numr-cli/       # CLI, interactive REPL, and JSON-RPC server
 ```
 
-The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, GUI, or WASM contexts. The `fetch` feature flag enables HTTP fetching (adds reqwest dependency, not WASM-compatible).
+The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, GUI, or WASM contexts. `Engine::new()` is deterministic and performs no filesystem or network I/O. Frontends opt into cache loading, persistence, and rate fetching explicitly. The stable document boundary is `DocumentResult`, produced by `evaluate_document`; streaming adapters can use `append_lines`. Language metadata is shared through the core catalog instead of duplicated in frontends.
+
+The parser rejects inputs above 16 KiB, more than 256 operations, or nesting deeper than 128 levels before recursive evaluation. Parsing, evaluation, and rate/cache failures use the typed `ParseError`, `EvalError`, and `RateError` APIs. The native-only `fetch` feature enables HTTP fetching; `numr-core` and `numr-editor` otherwise compile for `wasm32-unknown-unknown` with their `wasm` feature.
+
+The TUI redraws on events and active animations instead of a fixed frame loop. It caches document-derived render data, renders visible content, saves documents/configuration atomically, and uses one persistent current-thread Tokio rate worker with coalesced refresh requests.
+
+The web frontend lives in the separate [numr-web repository](https://github.com/nasedkinpv/numr-web), checked out as `numr/numr-web` for local and CI builds; it is not a Git submodule. Its shared `NumrSession` wraps generated WASM contracts, while `RatesService` owns browser cache/network policy. See [docs/architecture.md](docs/architecture.md) for component boundaries and data flows.
 
 Config and cache are stored in the OS config directory (`~/.config/numr/` on Linux, `~/Library/Application Support/numr/` on macOS). Settings persist automatically when toggled in the TUI.
 
@@ -410,10 +417,11 @@ coingecko_api_key = "your-key-here"
 
 CoinGecko API key header (demo vs pro) is selected automatically based on the URL host.
 
-Exchange rates are cached to `rates.json` in the same config directory with 1-hour expiry. Both TUI and CLI share this cache:
+Exchange rates are cached to `rates.json` in the same config directory with 1-hour expiry. Cache I/O is explicit and writes use atomic replacement. The native adapters share this cache:
 
-- **TUI**: Fetches fresh rates on startup
-- **CLI**: Fetches only if cache is expired
+- **TUI**: Starts a background refresh without blocking the event loop
+- **CLI**: Loads the cache, then fetches only if no usable cached rates exist
+- **JSON-RPC server**: Loads the cache at startup; network access occurs only through `reload_rates`
 
 Rate sources:
 

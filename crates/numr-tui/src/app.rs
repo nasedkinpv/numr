@@ -1,13 +1,14 @@
 //! Application state and logic
 
 use crate::config::Config;
-use numr_core::{Decimal, Engine, FetchConfig, Value};
+use crate::persistence::atomic_write;
+use numr_core::{Decimal, Engine, FetchConfig, RateError, Value};
 use numr_editor::char_to_byte_idx;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use textwrap::{wrap, Options, WordSplitter};
 
 // ========================================
@@ -61,9 +62,20 @@ fn char_count(s: &str) -> usize {
 struct Document {
     lines: Vec<String>,
     results: Vec<Value>,
+    render_state: DocumentRenderState,
     path: Option<PathBuf>,
     dirty: bool,
+    persist_rates: bool,
     engine: Engine,
+}
+
+#[derive(Default)]
+struct DocumentRenderState {
+    variable_names: HashSet<String>,
+    result_texts: Vec<Option<String>>,
+    error_texts: Vec<Option<String>>,
+    max_result_width: usize,
+    totals_text: String,
 }
 
 impl Document {
@@ -71,8 +83,10 @@ impl Document {
         let mut document = Self {
             lines: vec![String::new()],
             results: vec![Value::Empty],
+            render_state: DocumentRenderState::default(),
             path,
             dirty: false,
+            persist_rates: true,
             engine: Engine::new(),
         };
         document.refresh_results();
@@ -88,8 +102,10 @@ impl Document {
                 lines
             },
             results: Vec::new(),
+            render_state: DocumentRenderState::default(),
             path: None,
             dirty: false,
+            persist_rates: false,
             engine: Engine::new(),
         };
         document.refresh_results();
@@ -100,6 +116,7 @@ impl Document {
         &self.lines
     }
 
+    #[cfg(test)]
     pub fn results(&self) -> &[Value] {
         &self.results
     }
@@ -124,16 +141,30 @@ impl Document {
         self.dirty
     }
 
-    pub fn grouped_totals(&self) -> Vec<Value> {
-        self.engine.grouped_totals()
+    pub fn totals_text(&self) -> &str {
+        &self.render_state.totals_text
+    }
+
+    pub fn variable_names(&self) -> &HashSet<String> {
+        &self.render_state.variable_names
+    }
+
+    pub fn result_text(&self, line_idx: usize) -> Option<&str> {
+        self.render_state
+            .result_texts
+            .get(line_idx)
+            .and_then(Option::as_deref)
+    }
+
+    pub fn max_result_width(&self) -> usize {
+        self.render_state.max_result_width
     }
 
     pub fn current_line_error(&self, line_idx: usize) -> Option<&str> {
-        if let Some(Value::Error(msg)) = self.results.get(line_idx) {
-            Some(msg.as_str())
-        } else {
-            None
-        }
+        self.render_state
+            .error_texts
+            .get(line_idx)
+            .and_then(Option::as_deref)
     }
 
     pub fn load(&mut self) -> io::Result<()> {
@@ -150,24 +181,33 @@ impl Document {
     }
 
     pub fn save(&mut self) -> io::Result<()> {
-        if let Some(path) = &self.path {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            let mut file = fs::File::create(path)?;
-            for line in &self.lines {
-                writeln!(file, "{line}")?;
-            }
-            self.dirty = false;
-        }
+        let path = self.path.as_ref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "document has no save path")
+        })?;
+        let mut contents = self.lines.join("\n");
+        contents.push('\n');
+        atomic_write(path, contents.as_bytes())?;
+        self.dirty = false;
         Ok(())
     }
 
-    pub fn update_rates(&mut self, raw_rates: &HashMap<String, Decimal>) {
-        self.engine.apply_raw_rates(raw_rates);
-        self.engine.save_rates_to_cache(raw_rates);
+    pub fn load_rates_from_cache(&mut self) -> Result<bool, RateError> {
+        let loaded = self.engine.load_rates_from_cache()?;
+        if loaded {
+            self.refresh_results();
+        }
+        Ok(loaded)
+    }
+
+    pub fn update_rates(&mut self, raw_rates: &HashMap<String, Decimal>) -> Result<(), RateError> {
+        self.engine.apply_raw_rates(raw_rates)?;
+        let cache_result = if self.persist_rates {
+            self.engine.save_rates_to_cache(raw_rates)
+        } else {
+            Ok(())
+        };
         self.refresh_results();
+        cache_result
     }
 
     /// Re-evaluate all lines after a user edit. Marks document as dirty.
@@ -292,12 +332,60 @@ impl Document {
             };
             self.results.push(value);
         }
+
+        let variable_names = self
+            .engine
+            .variables()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let result_texts: Vec<Option<String>> = self
+            .results
+            .iter()
+            .map(|value| {
+                if value.is_error() || value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                }
+            })
+            .collect();
+        let max_result_width = result_texts
+            .iter()
+            .filter_map(Option::as_deref)
+            .map(|text| text.chars().count())
+            .max()
+            .unwrap_or(0);
+        let error_texts = self
+            .results
+            .iter()
+            .map(|value| match value {
+                Value::Error(error) => Some(error.to_string()),
+                _ => None,
+            })
+            .collect();
+        let totals_text = self
+            .engine
+            .grouped_totals()
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join("  ");
+        self.render_state = DocumentRenderState {
+            variable_names,
+            result_texts,
+            error_texts,
+            max_result_width,
+            totals_text,
+        };
     }
 }
 
 impl Default for Document {
     fn default() -> Self {
-        Self::new(None)
+        let mut document = Self::new(None);
+        document.persist_rates = false;
+        document
     }
 }
 
@@ -685,6 +773,10 @@ impl App {
             ..Self::default()
         };
 
+        if let Err(error) = app.document.load_rates_from_cache() {
+            app.set_status(&format!("Rates cache error: {error}"));
+        }
+
         if let Some(path) = app.document.path() {
             if path.exists() {
                 if let Err(_e) = app.load() {
@@ -697,10 +789,6 @@ impl App {
 
     pub fn lines(&self) -> &[String] {
         self.document.lines()
-    }
-
-    pub fn results(&self) -> &[Value] {
-        self.document.results()
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -749,8 +837,8 @@ impl App {
         self.config.preferences.show_line_numbers = self.show_line_numbers;
         self.config.preferences.show_header = self.show_header;
         self.config.preferences.debug_mode = self.debug_mode;
-        if let Err(_e) = self.config.save() {
-            self.set_status("Config error");
+        if let Err(error) = self.config.save() {
+            self.set_status(&format!("Config error: {error}"));
         }
     }
 
@@ -787,7 +875,7 @@ impl App {
 
     /// Clear status message if it has expired
     /// "Saved" expires after STATUS_SAVED_TIMEOUT_MS, others after STATUS_TIMEOUT_MS
-    pub fn clear_status_if_expired(&mut self) {
+    pub fn clear_status_if_expired(&mut self) -> bool {
         if let (Some(start), Some(msg)) = (self.status_start, &self.status_message) {
             let timeout_ms = if msg == STATUS_SAVED {
                 STATUS_SAVED_TIMEOUT_MS
@@ -797,8 +885,20 @@ impl App {
             if start.elapsed().as_millis() >= timeout_ms {
                 self.status_message = None;
                 self.status_start = None;
+                return true;
             }
         }
+        false
+    }
+
+    /// Whether time alone can change the next rendered frame.
+    pub fn has_active_animation(&self) -> bool {
+        self.status_message.is_some() || self.fetch_status == FetchStatus::Fetching
+    }
+
+    pub fn animation_interval(&self) -> Option<Duration> {
+        self.has_active_animation()
+            .then_some(Duration::from_millis(80))
     }
 
     /// Toggle help popup
@@ -874,6 +974,40 @@ impl App {
         {
             self.view
                 .ensure_cursor_visible(&self.document, self.wrap_mode);
+        }
+    }
+
+    /// Delete whitespace and the previous word, matching terminal Alt+Backspace/Ctrl+W.
+    pub fn delete_word_backward(&mut self) {
+        if self.view.cursor_x == 0 {
+            self.delete_char();
+            return;
+        }
+
+        while self.view.cursor_x > 0
+            && self
+                .document
+                .line(self.view.cursor_y)
+                .and_then(|line| line.chars().nth(self.view.cursor_x - 1))
+                .is_some_and(char::is_whitespace)
+        {
+            self.delete_char();
+        }
+        while self.view.cursor_x > 0
+            && self
+                .document
+                .line(self.view.cursor_y)
+                .and_then(|line| line.chars().nth(self.view.cursor_x - 1))
+                .is_some_and(|c| !c.is_whitespace())
+        {
+            self.delete_char();
+        }
+    }
+
+    /// Delete from the cursor to the beginning of the current line.
+    pub fn delete_to_line_start(&mut self) {
+        while self.view.cursor_x > 0 {
+            self.delete_char();
         }
     }
 
@@ -1006,8 +1140,20 @@ impl App {
     }
 
     /// Get totals grouped by type (currency, unit, etc.)
-    pub fn grouped_totals(&self) -> Vec<Value> {
-        self.document.grouped_totals()
+    pub fn totals_text(&self) -> &str {
+        self.document.totals_text()
+    }
+
+    pub fn variable_names(&self) -> &HashSet<String> {
+        self.document.variable_names()
+    }
+
+    pub fn result_text(&self, line_idx: usize) -> Option<&str> {
+        self.document.result_text(line_idx)
+    }
+
+    pub fn max_result_width(&self) -> usize {
+        self.document.max_result_width()
     }
 
     /// Get errors for the current line (for debug panel)
@@ -1019,10 +1165,19 @@ impl App {
     pub fn update_rates(&mut self, result: Result<numr_core::FetchResult, String>) {
         match result {
             Ok(fetch_result) => {
-                self.document.update_rates(&fetch_result.rates);
+                let cache_error = self.document.update_rates(&fetch_result.rates).err();
                 self.fetch_status = FetchStatus::Success;
-                if fetch_result.warning.is_some() {
-                    self.set_status("Rates partial");
+                match (fetch_result.warning.as_deref(), cache_error) {
+                    (Some(warning), Some(error)) => {
+                        self.set_status(&format!("Rates partial: {warning}; cache: {error}"));
+                    }
+                    (Some(warning), None) => {
+                        self.set_status(&format!("Rates partial: {warning}"));
+                    }
+                    (None, Some(error)) => {
+                        self.set_status(&format!("Rates cache error: {error}"));
+                    }
+                    (None, None) => {}
                 }
             }
             Err(e) => {
@@ -1059,6 +1214,18 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temporary_directory(test_name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "numr-document-{test_name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn test_get_wrapped_height() {
@@ -1099,6 +1266,81 @@ mod tests {
     fn test_default_app_starts_clean() {
         let app = App::default();
         assert!(!app.is_dirty());
+    }
+
+    #[test]
+    fn document_save_atomically_replaces_contents() {
+        let directory = temporary_directory("save");
+        let path = directory.join("calculation.numr");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&path, "old\n").unwrap();
+
+        let mut document = Document::from_lines(vec!["1 + 1".into(), "€20".into()]);
+        document.path = Some(path.clone());
+        document.recalculate();
+        document.save().unwrap();
+
+        assert_eq!(fs::read_to_string(path).unwrap(), "1 + 1\n€20\n");
+        assert!(!document.dirty());
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn failed_document_save_keeps_original_and_dirty_state() {
+        let directory = temporary_directory("save-failure");
+        let destination = directory.join("calculation.numr");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("sentinel"), "untouched").unwrap();
+
+        let mut document = Document::from_lines(vec!["replacement".into()]);
+        document.path = Some(destination.clone());
+        document.recalculate();
+        let error = document.save().unwrap_err();
+
+        assert!(!error.to_string().is_empty());
+        assert_eq!(
+            fs::read_to_string(destination.join("sentinel")).unwrap(),
+            "untouched"
+        );
+        assert!(document.dirty());
+        assert!(fs::read_dir(&directory).unwrap().count() >= 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn document_edits_respect_unicode_character_boundaries() {
+        let mut document = Document::from_lines(vec!["aé🧮z".into()]);
+
+        assert!(document.insert_char(0, 2, '+'));
+        assert_eq!(document.line(0), Some("aé+🧮z"));
+        assert_eq!(document.delete_char_before(0, 4), Some((0, 3)));
+        assert_eq!(document.line(0), Some("aé+z"));
+        assert!(!document.delete_char_forward(3, 0));
+    }
+
+    #[test]
+    fn render_state_is_refreshed_once_with_document_results() {
+        let document = Document::from_lines(vec!["tax = 20%".into(), "100 + tax".into()]);
+
+        assert!(document.variable_names().contains("tax"));
+        assert_eq!(document.result_text(1), Some("120"));
+        assert!(document.max_result_width() >= 3);
+    }
+
+    #[test]
+    fn animation_only_runs_for_time_varying_status() {
+        let mut app = App::default();
+        assert!(!app.has_active_animation());
+        assert!(app.animation_interval().is_none());
+
+        app.set_status("Saved");
+        assert!(app.has_active_animation());
+        assert!(app.animation_interval().is_some());
+
+        app.status_start = Some(Instant::now() - Duration::from_secs(4));
+        assert!(app.clear_status_if_expired());
+        assert!(!app.has_active_animation());
     }
 
     #[test]
@@ -1145,8 +1387,10 @@ mod tests {
         assert!(matches!(app.fetch_status, FetchStatus::Success));
         assert_eq!(
             app.status_message.as_deref(),
-            Some("Rates partial"),
-            "warning should be surfaced in status bar"
+            Some(
+                "Rates partial: crypto rates unavailable: 403 Forbidden; cache: invalid exchange rates: no supported currency rates were provided"
+            ),
+            "provider and validation failures should both be surfaced"
         );
     }
 

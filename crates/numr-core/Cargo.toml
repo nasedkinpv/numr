@@ -3,17 +3,19 @@ name = "numr-core"
 description = "Core calculation engine for numr - expression parsing, evaluation, and unit handling"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-Oz", "--enable-bulk-memory"]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-fetch = ["reqwest"]
+fetch = ["reqwest", "dep:tokio"]
 wasm = ["dep:wasm-bindgen", "dep:console_error_panic_hook"]
 
 [dependencies]
@@ -22,6 +24,7 @@ serde_json.workspace = true
 pest.workspace = true
 pest_derive.workspace = true
 rust_decimal.workspace = true
+thiserror.workspace = true
 
 # WASM support (optional)
 wasm-bindgen = { version = "0.2", optional = true }
@@ -30,11 +33,13 @@ console_error_panic_hook = { version = "0.1", optional = true }
 # Filesystem caching (not available in WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 directories = "6"
+atomic-write-file.workspace = true
 
 # Optional: for fetching exchange rates
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.reqwest]
 workspace = true
 optional = true
 
-[dev-dependencies]
-pretty_assertions.workspace = true
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies.tokio]
+workspace = true
+optional = true

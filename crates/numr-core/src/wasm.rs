@@ -50,23 +50,15 @@ impl WasmEngine {
     /// Evaluate multiple lines from a document, returns JSON array of results
     #[wasm_bindgen]
     pub fn eval_document(&mut self, content: &str) -> String {
-        // Clear and re-evaluate all lines
-        self.engine.clear();
+        let document = self.evaluate_document_json(content);
+        serde_json::to_string(&document.results).unwrap_or_else(|_| "[]".to_string())
+    }
 
-        let results: Vec<LineResultJson> = content
-            .lines()
-            .map(|line| {
-                let value = self.engine.eval(line);
-                LineResultJson {
-                    input: line.to_string(),
-                    result: format_value(&value),
-                    is_error: value.is_error(),
-                    is_empty: matches!(value, Value::Empty),
-                }
-            })
-            .collect();
-
-        serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string())
+    /// Evaluate a document and return results, totals, and variable names together.
+    #[wasm_bindgen]
+    pub fn eval_document_full(&mut self, content: &str) -> String {
+        serde_json::to_string(&self.evaluate_document_json(content))
+            .unwrap_or_else(|_| r#"{"results":[],"totals":[],"variable_names":""}"#.to_string())
     }
 
     /// Get grouped totals as JSON
@@ -92,6 +84,24 @@ impl WasmEngine {
         serde_json::to_string(&vars).unwrap_or_else(|_| "[]".to_string())
     }
 
+    /// Get user variable names, one per line.
+    #[wasm_bindgen]
+    pub fn get_variable_names(&self) -> String {
+        self.engine
+            .variables()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Currency and rate-provider metadata from the core registry.
+    #[wasm_bindgen]
+    pub fn get_currency_catalog(&self) -> String {
+        serde_json::to_string(&crate::catalog::currency_catalog())
+            .unwrap_or_else(|_| "[]".to_string())
+    }
+
     /// Clear all state
     #[wasm_bindgen]
     pub fn clear(&mut self) {
@@ -100,10 +110,12 @@ impl WasmEngine {
 
     /// Apply exchange rates from JSON object: {"EUR": 0.92, "BTC": 95000, ...}
     #[wasm_bindgen]
-    pub fn apply_rates(&mut self, rates_json: &str) {
-        if let Ok(rates) = serde_json::from_str::<HashMap<String, Decimal>>(rates_json) {
-            self.engine.apply_raw_rates(&rates);
-        }
+    pub fn apply_rates(&mut self, rates_json: &str) -> Result<usize, String> {
+        let rates = serde_json::from_str::<HashMap<String, Decimal>>(rates_json)
+            .map_err(|error| format!("invalid rates JSON: {error}"))?;
+        self.engine
+            .apply_raw_rates(&rates)
+            .map_err(|error| error.to_string())
     }
 
     /// Get all line results as JSON
@@ -124,6 +136,26 @@ impl WasmEngine {
     }
 }
 
+impl WasmEngine {
+    fn evaluate_document_json(&mut self, content: &str) -> DocumentResultJson {
+        let document = self.engine.evaluate_document(content);
+        DocumentResultJson {
+            results: document
+                .lines
+                .into_iter()
+                .map(LineResultJson::from)
+                .collect(),
+            totals: document.totals.iter().map(format_value).collect(),
+            variable_names: document
+                .variables
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
 impl Default for WasmEngine {
     fn default() -> Self {
         Self::new()
@@ -137,6 +169,24 @@ struct LineResultJson {
     result: String,
     is_error: bool,
     is_empty: bool,
+}
+
+impl From<crate::LineResult> for LineResultJson {
+    fn from(line: crate::LineResult) -> Self {
+        Self {
+            input: line.input,
+            result: format_value(&line.value),
+            is_error: line.value.is_error(),
+            is_empty: matches!(line.value, Value::Empty),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct DocumentResultJson {
+    results: Vec<LineResultJson>,
+    totals: Vec<String>,
+    variable_names: String,
 }
 
 /// JSON representation of a variable
@@ -194,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_format_value_error() {
-        let value = Value::Error("Division by zero".to_string());
+        let value = Value::error("Division by zero");
         assert_eq!(format_value(&value), "Error: Division by zero");
     }
 
@@ -234,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_value_to_json_error() {
-        let value = Value::Error("Test error".to_string());
+        let value = Value::error("Test error");
         let json = value_to_json(&value);
 
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -275,6 +325,17 @@ mod tests {
     }
 
     #[test]
+    fn test_wasm_engine_eval_document_full() {
+        let mut engine = WasmEngine::new();
+        let result = engine.eval_document_full("price = $10\nprice + $5");
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["results"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["totals"], serde_json::json!(["$25.00"]));
+        assert_eq!(parsed["variable_names"], "price");
+    }
+
+    #[test]
     fn test_wasm_engine_variables() {
         let mut engine = WasmEngine::new();
         engine.eval("x = 42");
@@ -301,7 +362,7 @@ mod tests {
     #[test]
     fn test_wasm_engine_apply_rates() {
         let mut engine = WasmEngine::new();
-        engine.apply_rates(r#"{"EUR":0.92,"GBP":0.79}"#);
+        assert_eq!(engine.apply_rates(r#"{"EUR":0.92,"GBP":0.79}"#).unwrap(), 2);
 
         let result = engine.eval("$100 in EUR");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();

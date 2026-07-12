@@ -7,6 +7,7 @@ use rust_decimal::Decimal;
 use rust_decimal::MathematicalOps;
 
 use crate::cache::RateCache;
+use crate::error::EvalError;
 use crate::parser::{Ast, BinaryOp, Expr};
 use crate::types::{unit, Currency, NumberBase, Unit, Value};
 
@@ -26,9 +27,26 @@ impl EvalContext {
         }
     }
 
+    #[must_use]
+    pub fn with_rate_cache(rate_cache: RateCache) -> Self {
+        Self {
+            variables: HashMap::new(),
+            rate_cache,
+        }
+    }
+
     /// Set exchange rates (for testing or offline mode)
     pub fn set_exchange_rate(&mut self, from: Currency, to: Currency, rate: Decimal) {
         self.rate_cache.set_rate(from, to, rate);
+    }
+
+    pub fn try_set_exchange_rate(
+        &mut self,
+        from: Currency,
+        to: Currency,
+        rate: Decimal,
+    ) -> Result<(), EvalError> {
+        self.rate_cache.try_set_rate(from, to, rate)
     }
 
     /// Get a variable value
@@ -81,7 +99,7 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
             .get_variable(name)
             .cloned()
             .or_else(|| math_constant(name))
-            .unwrap_or_else(|| Value::Error(format!("Unknown variable: {name}"))),
+            .unwrap_or_else(|| Value::Error(EvalError::UnknownVariable(name.clone()))),
 
         Expr::BinaryOp { op, left, right } => {
             let lval = eval_expr(left, ctx);
@@ -92,15 +110,25 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
         Expr::PercentageOf { percentage, value } => {
             let val = eval_expr(value, ctx);
             match val {
-                Value::Number(n) => Value::Number(n * percentage),
+                Value::Number(n) => checked_mul(n, *percentage, "calculating a percentage")
+                    .map(Value::Number)
+                    .unwrap_or_else(error_value),
                 Value::Currency { amount, currency } => {
-                    Value::currency(amount * percentage, currency)
+                    checked_mul(amount, *percentage, "calculating a percentage")
+                        .map(|amount| Value::currency(amount, currency))
+                        .unwrap_or_else(error_value)
                 }
-                Value::WithUnit { amount, unit } => Value::with_unit(amount * percentage, unit),
+                Value::WithUnit { amount, unit } => {
+                    checked_mul(amount, *percentage, "calculating a percentage")
+                        .map(|amount| Value::with_unit(amount, unit))
+                        .unwrap_or_else(error_value)
+                }
                 Value::WithCompoundUnit { amount, unit } => {
-                    Value::with_compound_unit(amount * percentage, unit)
+                    checked_mul(amount, *percentage, "calculating a percentage")
+                        .map(|amount| Value::with_compound_unit(amount, unit))
+                        .unwrap_or_else(error_value)
                 }
-                _ => Value::Error("Cannot calculate percentage of this value".to_string()),
+                _ => Value::error("Cannot calculate percentage of this value"),
             }
         }
 
@@ -114,6 +142,19 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
             eval_function(name, &evaluated_args)
         }
     }
+}
+
+fn error_value(error: EvalError) -> Value {
+    Value::Error(error)
+}
+
+fn checked_mul(
+    left: Decimal,
+    right: Decimal,
+    operation: &'static str,
+) -> Result<Decimal, EvalError> {
+    left.checked_mul(right)
+        .ok_or(EvalError::Overflow { operation })
 }
 
 fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) -> Value {
@@ -138,13 +179,13 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
     // Coerce operands to compatible types
     let (l_val, r_val, result_type) = match coerce_operands(&left, &right, op, ctx) {
         Ok(vals) => vals,
-        Err(e) => return Value::Error(e),
+        Err(e) => return error_value(e),
     };
 
     // Perform the arithmetic operation
     let result = match apply_op(op, l_val, r_val) {
         Ok(r) => r,
-        Err(e) => return Value::Error(e),
+        Err(e) => return error_value(e),
     };
 
     // Wrap result in appropriate type
@@ -166,15 +207,28 @@ fn try_percentage_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Value>
     }
     let base = left.as_decimal()?;
 
-    Some(match op {
-        BinaryOp::Add => left.with_scaled_amount(base * (Decimal::ONE + p)),
-        BinaryOp::Subtract => left.with_scaled_amount(base * (Decimal::ONE - p)),
-        BinaryOp::Multiply => left.with_scaled_amount(base * p),
-        BinaryOp::Divide if p.is_zero() => Value::Error("Division by zero".to_string()),
-        BinaryOp::Divide => left.with_scaled_amount(base / p),
-        BinaryOp::Power => left.with_scaled_amount(base.powd(*p)), // 100 ^ 50% = 100^0.5 = 10
+    let amount = match op {
+        BinaryOp::Add => base
+            .checked_mul(*p)
+            .and_then(|delta| base.checked_add(delta)),
+        BinaryOp::Subtract => base
+            .checked_mul(*p)
+            .and_then(|delta| base.checked_sub(delta)),
+        BinaryOp::Multiply => base.checked_mul(*p),
+        BinaryOp::Divide if p.is_zero() => return Some(error_value(EvalError::DivisionByZero)),
+        BinaryOp::Divide => base.checked_div(*p),
+        BinaryOp::Power => base.checked_powd(*p),
         BinaryOp::Conversion => return None,
-    })
+    };
+    Some(
+        amount
+            .map(|amount| left.with_scaled_amount(amount))
+            .unwrap_or_else(|| {
+                error_value(EvalError::Overflow {
+                    operation: "applying a percentage",
+                })
+            }),
+    )
 }
 
 /// Try to handle mixed-type multiplication (unit × currency, currency × number)
@@ -194,7 +248,11 @@ fn try_multiply_mixed(left: &Value, right: &Value) -> Option<Value> {
                 currency,
             },
             Value::WithUnit { amount: r, .. },
-        ) => Some(Value::currency(l * r, *currency)),
+        ) => Some(
+            checked_mul(*l, *r, "multiplying a unit and currency")
+                .map(|amount| Value::currency(amount, *currency))
+                .unwrap_or_else(error_value),
+        ),
         // compound unit × currency → currency
         (
             Value::WithCompoundUnit { amount: l, .. },
@@ -209,14 +267,20 @@ fn try_multiply_mixed(left: &Value, right: &Value) -> Option<Value> {
                 currency,
             },
             Value::WithCompoundUnit { amount: r, .. },
-        ) => Some(Value::currency(l * r, *currency)),
+        ) => Some(
+            checked_mul(*l, *r, "multiplying a unit and currency")
+                .map(|amount| Value::currency(amount, *currency))
+                .unwrap_or_else(error_value),
+        ),
         // currency × number → currency
         (Value::Currency { amount, currency }, Value::Number(n))
         | (Value::Currency { amount, currency }, Value::BaseNumber { amount: n, .. })
         | (Value::Number(n), Value::Currency { amount, currency })
-        | (Value::BaseNumber { amount: n, .. }, Value::Currency { amount, currency }) => {
-            Some(Value::currency(amount * n, *currency))
-        }
+        | (Value::BaseNumber { amount: n, .. }, Value::Currency { amount, currency }) => Some(
+            checked_mul(*amount, *n, "multiplying currency")
+                .map(|amount| Value::currency(amount, *currency))
+                .unwrap_or_else(error_value),
+        ),
         _ => None,
     }
 }
@@ -232,15 +296,21 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
             // Number × Unit → preserve unit
             if let Value::WithUnit { amount, unit } = right {
                 return match op {
-                    BinaryOp::Multiply => Some(Value::with_unit(*n * *amount, *unit)),
+                    BinaryOp::Multiply => Some(
+                        checked_mul(*n, *amount, "multiplying a unit")
+                            .map(|amount| Value::with_unit(amount, *unit))
+                            .unwrap_or_else(error_value),
+                    ),
                     _ => None,
                 };
             }
             if let Value::WithCompoundUnit { amount, unit } = right {
                 return match op {
-                    BinaryOp::Multiply => {
-                        Some(Value::with_compound_unit(*n * *amount, unit.clone()))
-                    }
+                    BinaryOp::Multiply => Some(
+                        checked_mul(*n, *amount, "multiplying a unit")
+                            .map(|amount| Value::with_compound_unit(amount, unit.clone()))
+                            .unwrap_or_else(error_value),
+                    ),
                     _ => None,
                 };
             }
@@ -260,27 +330,49 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
                         let Value::WithUnit { amount, unit } = left else {
                             unreachable!()
                         };
-                        Some(Value::with_unit(*amount * *n, *unit))
+                        Some(
+                            checked_mul(*amount, *n, "multiplying a unit")
+                                .map(|amount| Value::with_unit(amount, *unit))
+                                .unwrap_or_else(error_value),
+                        )
                     } else {
-                        Some(Value::with_compound_unit(l_amount * *n, l_unit))
+                        Some(
+                            checked_mul(l_amount, *n, "multiplying a unit")
+                                .map(|amount| Value::with_compound_unit(amount, l_unit))
+                                .unwrap_or_else(error_value),
+                        )
                     }
                 }
-                BinaryOp::Divide if n.is_zero() => {
-                    Some(Value::Error("Division by zero".to_string()))
-                }
+                BinaryOp::Divide if n.is_zero() => Some(error_value(EvalError::DivisionByZero)),
                 BinaryOp::Divide => {
                     if matches!(left, Value::WithUnit { .. }) {
                         let Value::WithUnit { amount, unit } = left else {
                             unreachable!()
                         };
-                        Some(Value::with_unit(*amount / *n, *unit))
+                        Some(
+                            amount
+                                .checked_div(*n)
+                                .map(|amount| Value::with_unit(amount, *unit))
+                                .unwrap_or_else(|| {
+                                    error_value(EvalError::Overflow {
+                                        operation: "dividing a unit",
+                                    })
+                                }),
+                        )
                     } else {
-                        Some(Value::with_compound_unit(l_amount / *n, l_unit))
+                        Some(
+                            l_amount
+                                .checked_div(*n)
+                                .map(|amount| Value::with_compound_unit(amount, l_unit))
+                                .unwrap_or_else(|| {
+                                    error_value(EvalError::Overflow {
+                                        operation: "dividing a unit",
+                                    })
+                                }),
+                        )
                     }
                 }
-                BinaryOp::Power => Some(Value::Error(
-                    "Power not supported for unit values".to_string(),
-                )),
+                BinaryOp::Power => Some(Value::error("Power not supported for unit values")),
                 _ => None,
             };
         }
@@ -291,7 +383,7 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
         BinaryOp::Add | BinaryOp::Subtract => {
             // Can only add/subtract compound units with same dimensions
             if l_unit.dimensions != r_unit.dimensions {
-                return Some(Value::Error(format!(
+                return Some(Value::error(format!(
                     "Cannot {} {} and {} (incompatible dimensions)",
                     if op == BinaryOp::Add {
                         "add"
@@ -307,37 +399,69 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
                 r_amount
             } else {
                 // Convert through SI base
-                let r_si = r_unit.to_si(r_amount);
-                l_unit.from_si(r_si)
+                match r_unit.try_convert_to(r_amount, &l_unit) {
+                    Ok(Some(converted)) => converted,
+                    Ok(None) => return Some(Value::error("Incompatible unit scales")),
+                    Err(error) => return Some(error_value(error)),
+                }
             };
             let result_amount = match op {
-                BinaryOp::Add => l_amount + r_converted,
-                BinaryOp::Subtract => l_amount - r_converted,
+                BinaryOp::Add => l_amount.checked_add(r_converted),
+                BinaryOp::Subtract => l_amount.checked_sub(r_converted),
                 _ => unreachable!(),
             };
-            Some(Value::with_compound_unit(result_amount, l_unit))
+            Some(
+                result_amount
+                    .map(|amount| Value::with_compound_unit(amount, l_unit))
+                    .unwrap_or_else(|| {
+                        error_value(EvalError::Overflow {
+                            operation: "adding unit values",
+                        })
+                    }),
+            )
         }
         BinaryOp::Multiply => {
-            let result_amount = l_amount * r_amount;
-            let result_unit = l_unit.multiply(&r_unit);
-            Some(Value::with_compound_unit(result_amount, result_unit))
+            let result_amount = checked_mul(l_amount, r_amount, "multiplying unit values");
+            let result_unit = l_unit.try_multiply(&r_unit);
+            Some(match (result_amount, result_unit) {
+                (Ok(amount), Ok(unit)) => Value::with_compound_unit(amount, unit),
+                (Err(error), _) | (_, Err(error)) => error_value(error),
+            })
         }
         BinaryOp::Divide => {
             if r_amount.is_zero() {
-                return Some(Value::Error("Division by zero".to_string()));
+                return Some(error_value(EvalError::DivisionByZero));
             }
-            let result_amount = l_amount / r_amount;
-            let result_unit = l_unit.divide(&r_unit);
+            let result_unit = match l_unit.try_divide(&r_unit) {
+                Ok(unit) => unit,
+                Err(error) => return Some(error_value(error)),
+            };
             // If the result is dimensionless, return a plain number
             if result_unit.dimensions.is_dimensionless() {
-                Some(Value::Number(result_amount))
+                let result = l_unit.checked_to_si(l_amount).and_then(|left| {
+                    r_unit
+                        .checked_to_si(r_amount)
+                        .and_then(|right| left.checked_div(right))
+                });
+                Some(result.map(Value::Number).unwrap_or_else(|| {
+                    error_value(EvalError::Overflow {
+                        operation: "dividing unit values",
+                    })
+                }))
             } else {
-                Some(Value::with_compound_unit(result_amount, result_unit))
+                Some(
+                    l_amount
+                        .checked_div(r_amount)
+                        .map(|amount| Value::with_compound_unit(amount, result_unit))
+                        .unwrap_or_else(|| {
+                            error_value(EvalError::Overflow {
+                                operation: "dividing unit values",
+                            })
+                        }),
+                )
             }
         }
-        BinaryOp::Power => Some(Value::Error(
-            "Power not supported for unit values".to_string(),
-        )),
+        BinaryOp::Power => Some(Value::error("Power not supported for unit values")),
         BinaryOp::Conversion => None,
     }
 }
@@ -356,7 +480,7 @@ fn coerce_operands(
     right: &Value,
     op: BinaryOp,
     ctx: &EvalContext,
-) -> Result<(Decimal, Decimal, ResultType), String> {
+) -> Result<(Decimal, Decimal, ResultType), EvalError> {
     match (left, right) {
         // Same currency
         (
@@ -369,13 +493,28 @@ fn coerce_operands(
                 currency: rc,
             },
         ) => {
-            if lc == rc {
-                Ok((*l, *r, ResultType::Currency(*lc)))
-            } else if let Some(rate) = ctx.rate_cache.get_rate(*rc, *lc) {
-                Ok((*l, *r * rate, ResultType::Currency(*lc)))
-            } else {
-                Err(format!("No exchange rate for {rc} to {lc}"))
+            if op == BinaryOp::Multiply {
+                return Err(EvalError::InvalidOperands(
+                    "cannot multiply currency by currency".to_string(),
+                ));
             }
+            let right = if lc == rc {
+                *r
+            } else if let Some(rate) = ctx.rate_cache.try_get_rate(*rc, *lc)? {
+                r.checked_mul(rate).ok_or(EvalError::Overflow {
+                    operation: "converting currency",
+                })?
+            } else {
+                return Err(EvalError::InvalidOperands(format!(
+                    "no exchange rate for {rc} to {lc}"
+                )));
+            };
+            let result_type = if op == BinaryOp::Divide {
+                ResultType::Number
+            } else {
+                ResultType::Currency(*lc)
+            };
+            Ok((*l, right, result_type))
         }
 
         // Same unit type
@@ -391,11 +530,14 @@ fn coerce_operands(
         ) => {
             if lu == ru {
                 Ok((*l, *r, ResultType::Unit(*lu)))
-            } else if let Some(converted) = unit::convert(*r, &ru.to_compound(), &lu.to_compound())
+            } else if let Some(converted) =
+                unit::try_convert(*r, &ru.to_compound(), &lu.to_compound())?
             {
                 Ok((*l, converted, ResultType::Unit(*lu)))
             } else {
-                Err(format!("Cannot convert {ru} to {lu}"))
+                Err(EvalError::InvalidOperands(format!(
+                    "cannot convert {ru} to {lu}"
+                )))
             }
         }
 
@@ -403,41 +545,70 @@ fn coerce_operands(
         (Value::WithUnit { .. }, Value::Currency { .. })
         | (Value::Currency { .. }, Value::WithUnit { .. }) => {
             if matches!(op, BinaryOp::Add | BinaryOp::Subtract) {
-                Err("Cannot add/subtract units and currency".to_string())
+                Err(EvalError::InvalidOperands(
+                    "cannot add/subtract units and currency".to_string(),
+                ))
             } else {
-                Err("Invalid operands".to_string())
+                Err(EvalError::InvalidOperands("invalid operands".to_string()))
             }
         }
 
         // Number + Currency: propagate currency
         (
-            Value::Number(l),
-            Value::Currency {
-                amount: r,
-                currency,
-            },
-        )
-        | (
-            Value::BaseNumber { amount: l, .. },
-            Value::Currency {
-                amount: r,
-                currency,
-            },
-        )
-        | (
             Value::Currency {
                 amount: l,
                 currency,
             },
             Value::Number(r),
-        ) => Ok((*l, *r, ResultType::Currency(*currency))),
+        ) => {
+            if matches!(
+                op,
+                BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
+            ) {
+                Ok((*l, *r, ResultType::Currency(*currency)))
+            } else {
+                Err(EvalError::InvalidOperands(
+                    "invalid currency operation".to_string(),
+                ))
+            }
+        }
         (
             Value::Currency {
                 amount: l,
                 currency,
             },
             Value::BaseNumber { amount: r, .. },
-        ) => Ok((*l, *r, ResultType::Currency(*currency))),
+        ) => {
+            if matches!(
+                op,
+                BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
+            ) {
+                Ok((*l, *r, ResultType::Currency(*currency)))
+            } else {
+                Err(EvalError::InvalidOperands(
+                    "invalid currency operation".to_string(),
+                ))
+            }
+        }
+        (
+            Value::Number(left) | Value::BaseNumber { amount: left, .. },
+            Value::Currency {
+                amount: right,
+                currency,
+            },
+        ) => {
+            let result_type = if op == BinaryOp::Divide {
+                ResultType::Number
+            } else {
+                ResultType::Currency(*currency)
+            };
+            Ok((*left, *right, result_type))
+        }
+
+        (Value::WithCompoundUnit { .. }, Value::Currency { .. })
+        | (Value::Currency { .. }, Value::WithCompoundUnit { .. }) => {
+            Err(EvalError::InvalidOperands("invalid operands".to_string()))
+        }
 
         // Number + Unit: propagate unit
         (Value::Number(l), Value::WithUnit { amount: r, unit })
@@ -455,24 +626,38 @@ fn coerce_operands(
         // Plain numbers
         _ => match (left.as_decimal(), right.as_decimal()) {
             (Some(l), Some(r)) => Ok((l, r, ResultType::Number)),
-            _ => Err("Invalid operands".to_string()),
+            _ => Err(EvalError::InvalidOperands("invalid operands".to_string())),
         },
     }
 }
 
 /// Apply arithmetic operation
-fn apply_op(op: BinaryOp, l: Decimal, r: Decimal) -> Result<Decimal, String> {
+fn apply_op(op: BinaryOp, l: Decimal, r: Decimal) -> Result<Decimal, EvalError> {
     match op {
-        BinaryOp::Add => Ok(l + r),
-        BinaryOp::Subtract => Ok(l - r),
-        BinaryOp::Multiply => Ok(l * r),
-        BinaryOp::Divide if r.is_zero() => Err("Division by zero".to_string()),
-        BinaryOp::Divide => Ok(l / r),
+        BinaryOp::Add => l.checked_add(r).ok_or(EvalError::Overflow {
+            operation: "adding values",
+        }),
+        BinaryOp::Subtract => l.checked_sub(r).ok_or(EvalError::Overflow {
+            operation: "subtracting values",
+        }),
+        BinaryOp::Multiply => l.checked_mul(r).ok_or(EvalError::Overflow {
+            operation: "multiplying values",
+        }),
+        BinaryOp::Divide if r.is_zero() => Err(EvalError::DivisionByZero),
+        BinaryOp::Divide => l.checked_div(r).ok_or(EvalError::Overflow {
+            operation: "dividing values",
+        }),
         BinaryOp::Power if l.is_sign_negative() && r.fract() != Decimal::ZERO => {
-            Err("Cannot raise negative number to fractional power".to_string())
+            Err(EvalError::InvalidOperands(
+                "cannot raise negative number to a fractional power".to_string(),
+            ))
         }
-        BinaryOp::Power => Ok(l.powd(r)),
-        BinaryOp::Conversion => unreachable!("Conversions are handled by eval_conversion"),
+        BinaryOp::Power => l.checked_powd(r).ok_or(EvalError::Overflow {
+            operation: "raising a value to a power",
+        }),
+        BinaryOp::Conversion => Err(EvalError::InvalidOperands(
+            "conversion is not an arithmetic operation".to_string(),
+        )),
     }
 }
 
@@ -487,10 +672,21 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
             if currency == target_currency {
                 return Value::currency(amount, target_currency);
             }
-            if let Some(rate) = ctx.rate_cache.get_rate(currency, target_currency) {
-                return Value::currency(amount * rate, target_currency);
+            match ctx.rate_cache.try_get_rate(currency, target_currency) {
+                Ok(Some(rate)) => {
+                    return amount
+                        .checked_mul(rate)
+                        .map(|amount| Value::currency(amount, target_currency))
+                        .unwrap_or_else(|| {
+                            error_value(EvalError::Overflow {
+                                operation: "converting currency",
+                            })
+                        });
+                }
+                Err(error) => return error_value(error),
+                Ok(None) => {}
             }
-            return Value::Error(format!(
+            return Value::error(format!(
                 "No exchange rate for {currency} to {target_currency}"
             ));
         }
@@ -503,16 +699,18 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
                 amount,
                 unit: from_unit,
             } => {
-                if let Some(converted) =
-                    unit::convert(amount, &from_unit.to_compound(), &target_compound)
-                {
-                    // If target is a simple unit, return WithUnit for backward compat
-                    if let Some(target_unit) = Unit::parse(target) {
-                        return Value::with_unit(converted, target_unit);
+                match unit::try_convert(amount, &from_unit.to_compound(), &target_compound) {
+                    Ok(Some(converted)) => {
+                        // If target is a simple unit, return WithUnit for backward compat
+                        if let Some(target_unit) = Unit::parse(target) {
+                            return Value::with_unit(converted, target_unit);
+                        }
+                        return Value::with_compound_unit(converted, target_compound);
                     }
-                    return Value::with_compound_unit(converted, target_compound);
+                    Err(error) => return error_value(error),
+                    Ok(None) => {}
                 }
-                return Value::Error(format!(
+                return Value::error(format!(
                     "Cannot convert {from_unit} to {}",
                     target_compound.symbol
                 ));
@@ -521,14 +719,18 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
                 amount,
                 unit: from_unit,
             } => {
-                if let Some(converted) = unit::convert(amount, &from_unit, &target_compound) {
-                    // If target is a simple unit, return WithUnit for backward compat
-                    if let Some(target_unit) = Unit::parse(target) {
-                        return Value::with_unit(converted, target_unit);
+                match unit::try_convert(amount, &from_unit, &target_compound) {
+                    Ok(Some(converted)) => {
+                        // If target is a simple unit, return WithUnit for backward compat
+                        if let Some(target_unit) = Unit::parse(target) {
+                            return Value::with_unit(converted, target_unit);
+                        }
+                        return Value::with_compound_unit(converted, target_compound);
                     }
-                    return Value::with_compound_unit(converted, target_compound);
+                    Err(error) => return error_value(error),
+                    Ok(None) => {}
                 }
-                return Value::Error(format!(
+                return Value::error(format!(
                     "Cannot convert {} to {}",
                     from_unit.symbol, target_compound.symbol
                 ));
@@ -551,17 +753,17 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
         }
     }
 
-    Value::Error(format!("Unknown target unit: {target}"))
+    Value::Error(EvalError::UnknownTarget(target.to_string()))
 }
 
 fn eval_number_base_conversion(value: Value, base: NumberBase) -> Value {
     let amount = match value {
         Value::Number(n) | Value::BaseNumber { amount: n, .. } => n,
-        _ => return Value::Error("Base conversion requires a plain integer number".to_string()),
+        _ => return Value::error("Base conversion requires a plain integer number"),
     };
 
     if !amount.fract().is_zero() {
-        return Value::Error("Base conversion requires an integer".to_string());
+        return Value::error("Base conversion requires an integer");
     }
 
     Value::with_base(amount, base)
@@ -580,25 +782,69 @@ fn math_constant(name: &str) -> Option<Value> {
 fn decimal_from_f64(value: f64, name: &str) -> Value {
     Decimal::from_f64(value)
         .map(Value::Number)
-        .unwrap_or_else(|| Value::Error(format!("{name} failed")))
+        .unwrap_or_else(|| Value::error(format!("{name} failed")))
 }
 
 fn require_number(name: &str, args: &[Value], f: impl Fn(Decimal) -> Value) -> Value {
     if args.len() != 1 {
-        return Value::Error(format!("{name} requires exactly one argument"));
+        return Value::error(format!("{name} requires exactly one argument"));
     }
     args[0]
         .as_decimal()
         .map(f)
-        .unwrap_or_else(|| Value::Error(format!("{name} requires a number")))
+        .unwrap_or_else(|| Value::error(format!("{name} requires a number")))
+}
+
+fn plain_decimal(value: &Value) -> Option<Decimal> {
+    match value {
+        Value::Number(value) | Value::BaseNumber { amount: value, .. } => Some(*value),
+        _ => None,
+    }
+}
+
+fn angle_in_radians(value: &Value) -> Result<f64, EvalError> {
+    match value {
+        Value::Number(value) | Value::BaseNumber { amount: value, .. } => value
+            .to_f64()
+            .ok_or_else(|| EvalError::InvalidArgument("angle requires a number".to_string())),
+        Value::WithCompoundUnit {
+            amount,
+            unit: angle_unit,
+        } if angle_unit.dimensions == unit::Dimensions::angle(1) => angle_unit
+            .checked_to_si(*amount)
+            .and_then(|value| value.to_f64())
+            .ok_or(EvalError::Overflow {
+                operation: "converting an angle to radians",
+            }),
+        _ => Err(EvalError::InvalidArgument(
+            "trigonometric functions require a number or angle".to_string(),
+        )),
+    }
 }
 
 fn eval_function(name: &str, args: &[Value]) -> Value {
     let require_f64 = |f: fn(f64) -> f64| -> Value {
         require_number(name, args, |n| match n.to_f64() {
             Some(v) => decimal_from_f64(f(v), name),
-            None => Value::Error(format!("{name} requires a number")),
+            None => Value::error(format!("{name} requires a number")),
         })
+    };
+    let require_plain_f64 = |f: fn(f64) -> f64| -> Value {
+        if args.len() != 1 {
+            return Value::error(format!("{name} requires exactly one argument"));
+        }
+        plain_decimal(&args[0])
+            .and_then(|value| value.to_f64())
+            .map(|value| decimal_from_f64(f(value), name))
+            .unwrap_or_else(|| Value::error(format!("{name} requires a plain number")))
+    };
+    let require_angle = |f: fn(f64) -> f64| -> Value {
+        if args.len() != 1 {
+            return Value::error(format!("{name} requires exactly one argument"));
+        }
+        angle_in_radians(&args[0])
+            .map(|value| decimal_from_f64(f(value), name))
+            .unwrap_or_else(error_value)
     };
 
     // Check for error values in args before processing aggregates
@@ -612,44 +858,106 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
     // checking all args share the same type and preserving it in the result.
     let numbers = || args.iter().filter_map(|v| v.as_decimal());
 
+    let checked_sum = |values: &[Decimal]| -> Result<Decimal, EvalError> {
+        values.iter().try_fold(Decimal::ZERO, |sum, value| {
+            sum.checked_add(*value).ok_or(EvalError::Overflow {
+                operation: "summing values",
+            })
+        })
+    };
+
     match name.to_lowercase().as_str() {
         // Aggregate functions
         "sum" | "total" => {
             let vals: Vec<_> = numbers().collect();
             if vals.is_empty() {
-                Value::Error(format!("{name} requires at least one value"))
+                Value::error(format!("{name} requires at least one value"))
             } else {
-                Value::Number(vals.into_iter().sum())
+                checked_sum(&vals)
+                    .map(Value::Number)
+                    .unwrap_or_else(error_value)
             }
         }
 
         "avg" | "average" => {
             let vals: Vec<_> = numbers().collect();
             if vals.is_empty() {
-                Value::Error(format!("{name} requires at least one value"))
+                Value::error(format!("{name} requires at least one value"))
             } else {
-                Value::Number(vals.iter().sum::<Decimal>() / Decimal::from(vals.len()))
+                checked_sum(&vals)
+                    .and_then(|sum| {
+                        sum.checked_div(Decimal::from(vals.len()))
+                            .ok_or(EvalError::Overflow {
+                                operation: "averaging values",
+                            })
+                    })
+                    .map(Value::Number)
+                    .unwrap_or_else(error_value)
             }
         }
 
         "min" => numbers()
             .min()
             .map(Value::Number)
-            .unwrap_or_else(|| Value::Error("No values for min".to_string())),
+            .unwrap_or_else(|| Value::error("No values for min")),
 
         "max" => numbers()
             .max()
             .map(Value::Number)
-            .unwrap_or_else(|| Value::Error("No values for max".to_string())),
+            .unwrap_or_else(|| Value::error("No values for max")),
+
+        "median" => {
+            let mut vals: Vec<_> = args.iter().filter_map(plain_decimal).collect();
+            if vals.is_empty() {
+                return Value::error("median requires at least one value");
+            }
+            if vals.len() != args.len() {
+                return Value::error("median requires numbers");
+            }
+            vals.sort_unstable();
+            let middle = vals.len() / 2;
+            if vals.len() % 2 == 1 {
+                Value::Number(vals[middle])
+            } else {
+                vals[middle - 1]
+                    .checked_add(vals[middle])
+                    .and_then(|sum| sum.checked_div(Decimal::TWO))
+                    .map(Value::Number)
+                    .unwrap_or_else(|| {
+                        error_value(EvalError::Overflow {
+                            operation: "calculating a median",
+                        })
+                    })
+            }
+        }
+
+        "clamp" => {
+            if args.len() != 3 {
+                return Value::error("clamp requires exactly three arguments");
+            }
+            match (
+                plain_decimal(&args[0]),
+                plain_decimal(&args[1]),
+                plain_decimal(&args[2]),
+            ) {
+                (Some(value), Some(min), Some(max)) if min <= max => {
+                    Value::Number(value.clamp(min, max))
+                }
+                (Some(_), Some(_), Some(_)) => Value::error("clamp minimum cannot exceed maximum"),
+                _ => Value::error("clamp requires numbers"),
+            }
+        }
 
         // Single-value math functions
         "abs" => require_number(name, args, |n| Value::Number(n.abs())),
         "round" => require_number(name, args, |n| Value::Number(n.round())),
         "floor" => require_number(name, args, |n| Value::Number(n.floor())),
         "ceil" => require_number(name, args, |n| Value::Number(n.ceil())),
-        "sin" => require_f64(f64::sin),
-        "cos" => require_f64(f64::cos),
-        "tan" => require_f64(f64::tan),
+        "sin" => require_angle(f64::sin),
+        "cos" => require_angle(f64::cos),
+        "tan" => require_angle(f64::tan),
+        "rad" | "radians" => require_plain_f64(f64::to_radians),
+        "deg" | "degrees" => require_plain_f64(f64::to_degrees),
         "sinh" => require_f64(f64::sinh),
         "cosh" => require_f64(f64::cosh),
         "tanh" => require_f64(f64::tanh),
@@ -659,47 +967,60 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
 
         "sqrt" => require_number(name, args, |n| {
             if n.is_sign_negative() {
-                Value::Error("Cannot take sqrt of negative number".to_string())
+                Value::error("Cannot take sqrt of negative number")
             } else {
                 match n.sqrt() {
                     Some(v) => Value::Number(v),
-                    None => Value::Error(format!("sqrt({n}) failed")),
+                    None => Value::error(format!("sqrt({n}) failed")),
                 }
             }
         }),
 
         "factorial" => require_number(name, args, |n| {
             let Some(n) = n.to_u64().filter(|_| n.fract().is_zero()) else {
-                return Value::Error("factorial requires a non-negative integer".to_string());
+                return Value::error("factorial requires a non-negative integer");
             };
-            Value::Number((1..=n).map(Decimal::from).product())
+            (1..=n)
+                .try_fold(Decimal::ONE, |product, value| {
+                    product
+                        .checked_mul(Decimal::from(value))
+                        .ok_or(EvalError::Overflow {
+                            operation: "calculating factorial",
+                        })
+                })
+                .map(Value::Number)
+                .unwrap_or_else(error_value)
         }),
 
         "mod" => {
             if args.len() != 2 {
-                return Value::Error("mod requires exactly two arguments".to_string());
+                return Value::error("mod requires exactly two arguments");
             }
             match (args[0].as_decimal(), args[1].as_decimal()) {
-                (Some(_), Some(r)) if r.is_zero() => Value::Error("Division by zero".to_string()),
-                (Some(l), Some(r)) => Value::Number(l % r),
-                _ => Value::Error("mod requires numbers".to_string()),
+                (Some(_), Some(r)) if r.is_zero() => Value::Error(EvalError::DivisionByZero),
+                (Some(l), Some(r)) => l.checked_rem(r).map(Value::Number).unwrap_or_else(|| {
+                    error_value(EvalError::Overflow {
+                        operation: "calculating a remainder",
+                    })
+                }),
+                _ => Value::error("mod requires numbers"),
             }
         }
 
         "log_y" => {
             if args.len() != 2 {
-                return Value::Error("log_y requires exactly two arguments".to_string());
+                return Value::error("log_y requires exactly two arguments");
             }
             match (args[0].as_decimal(), args[1].as_decimal()) {
                 (Some(base), Some(value)) => match (base.to_f64(), value.to_f64()) {
                     (Some(base), Some(value)) => decimal_from_f64(value.log(base), name),
-                    _ => Value::Error("log_y requires numbers".to_string()),
+                    _ => Value::error("log_y requires numbers"),
                 },
-                _ => Value::Error("log_y requires numbers".to_string()),
+                _ => Value::error("log_y requires numbers"),
             }
         }
 
-        _ => Value::Error(format!("Unknown function: {name}")),
+        _ => Value::Error(EvalError::UnknownFunction(name.to_string())),
     }
 }
 
@@ -1023,6 +1344,49 @@ mod tests {
         assert_close("log_y(2, 8)", 3.0);
         assert_eq!(eval_str("factorial(5)").as_f64(), Some(120.0));
         assert_eq!(eval_str("mod(10, 3)").as_f64(), Some(1.0));
+    }
+
+    #[test]
+    fn test_median_and_clamp_functions() {
+        assert_eq!(eval_str("median(3, 1, 2)").as_f64(), Some(2.0));
+        assert_eq!(eval_str("median(1, 4, 2, 3)").as_f64(), Some(2.5));
+        assert_eq!(eval_str("clamp(120, 0, 100)").as_f64(), Some(100.0));
+        assert_eq!(eval_str("clamp(-5, 0, 100)").as_f64(), Some(0.0));
+        assert_eq!(eval_str("clamp(40, 0, 100)").as_f64(), Some(40.0));
+
+        assert!(eval_str("median()").is_error());
+        assert!(eval_str("clamp(1, 10, 0)").is_error());
+        assert!(eval_str("clamp(1, 2)").is_error());
+    }
+
+    #[test]
+    fn test_degree_radian_conversion_composes_with_trigonometry() {
+        assert_close("deg(pi)", 180.0);
+        assert_close("rad(180)", std::f64::consts::PI);
+        assert_close("sin(rad(90))", 1.0);
+        assert_close("cos(rad(180))", -1.0);
+
+        assert!(eval_str("rad()").is_error());
+        assert!(eval_str("deg(1, 2)").is_error());
+    }
+
+    #[test]
+    fn test_angle_units_convert_and_work_with_trigonometry() {
+        assert_close("90 deg to rad", std::f64::consts::FRAC_PI_2);
+        assert_close("3.141592653589793 rad to deg", 180.0);
+        assert_close("sin(90deg)", 1.0);
+        assert_close("cos(180 deg)", -1.0);
+        assert_eq!(eval_str("180 degrees").to_string(), "180°");
+        assert_eq!(eval_str("1 radian").to_string(), "1 rad");
+    }
+
+    #[test]
+    fn test_new_math_functions_do_not_strip_unrelated_types() {
+        assert!(eval_str("90 deg to m").is_error());
+        assert!(eval_str("sin(1 m)").is_error());
+        assert!(eval_str("deg(1 m)").is_error());
+        assert!(eval_str("median(1, 2 m)").is_error());
+        assert!(eval_str("clamp($5, 0, 10)").is_error());
     }
 
     #[test]

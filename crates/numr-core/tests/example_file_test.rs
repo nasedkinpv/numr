@@ -1,17 +1,10 @@
 //! Test that the example.numr file evaluates correctly
 //!
 //! This test uses a real-world example file to drive development (TDD).
-//! Tests define EXPECTED behavior - features that don't work yet are in KNOWN_ISSUES.
 
 use numr_core::{decimal as d, Engine, Value};
 
 const EXAMPLE_FILE: &str = include_str!("../../../example.numr");
-
-/// Known issues / features to implement
-/// These lines from example.numr currently don't produce correct results
-const KNOWN_ISSUES: &[&str] = &[
-    // All known issues resolved!
-];
 
 fn create_engine() -> Engine {
     let mut engine = Engine::new();
@@ -35,11 +28,6 @@ fn create_engine() -> Engine {
     engine
 }
 
-fn is_known_issue(line: &str) -> bool {
-    let trimmed = line.trim();
-    KNOWN_ISSUES.contains(&trimmed)
-}
-
 // ============================================================================
 // EXAMPLE FILE INTEGRATION TESTS
 // ============================================================================
@@ -50,10 +38,6 @@ fn test_example_file_parses_without_errors() {
     let mut errors = Vec::new();
 
     for (line_num, line) in EXAMPLE_FILE.lines().enumerate() {
-        if is_known_issue(line) {
-            continue;
-        }
-
         let result = engine.eval(line);
         if let Value::Error(msg) = result {
             let trimmed = line.trim();
@@ -77,9 +61,7 @@ fn test_example_file_variables_resolve() {
     let mut engine = create_engine();
 
     for line in EXAMPLE_FILE.lines() {
-        if !is_known_issue(line) {
-            engine.eval(line);
-        }
+        engine.eval(line);
     }
 
     // Key variables should be defined with reasonable values
@@ -114,9 +96,7 @@ fn test_example_file_comma_separated_values() {
     let mut engine = create_engine();
 
     for line in EXAMPLE_FILE.lines() {
-        if !is_known_issue(line) {
-            engine.eval(line);
-        }
+        engine.eval(line);
     }
 
     // Verify comma-separated numbers are parsed correctly from example.numr
@@ -148,9 +128,7 @@ fn test_example_file_math_correctness() {
     let mut engine = create_engine();
 
     for line in EXAMPLE_FILE.lines() {
-        if !is_known_issue(line) {
-            engine.eval(line);
-        }
+        engine.eval(line);
     }
 
     // === Bank accounts ===

@@ -7,7 +7,10 @@
 
 use wasm_bindgen::prelude::*;
 
-use crate::highlight::{tokenize as tokenize_line, Token, TokenType};
+use crate::highlight::{
+    tokenize as tokenize_line, tokenize_with_variables as tokenize_line_with_variables,
+};
+use std::collections::HashSet;
 
 /// Initialize panic hook for better error messages in the browser console
 #[wasm_bindgen(start)]
@@ -18,39 +21,16 @@ pub fn init() {
 /// Tokenize a line and return JSON array of tokens
 #[wasm_bindgen]
 pub fn tokenize(input: &str) -> String {
-    let tokens = tokenize_line(input);
-    let json_tokens: Vec<TokenJson> = tokens.into_iter().map(TokenJson::from).collect();
-    serde_json::to_string(&json_tokens).unwrap_or_else(|_| "[]".to_string())
+    tokens_to_json(tokenize_line(input))
 }
 
-/// JSON representation of a token
-#[derive(serde::Serialize)]
-struct TokenJson {
-    text: String,
-    token_type: String,
+/// Tokenize a line and promote known variable references.
+#[wasm_bindgen(js_name = tokenizeWithVariables)]
+pub fn tokenize_with_variables(input: &str, variable_names: &str) -> String {
+    let variables: HashSet<String> = variable_names.lines().map(str::to_owned).collect();
+    tokens_to_json(tokenize_line_with_variables(input, &variables))
 }
 
-impl From<Token> for TokenJson {
-    fn from(token: Token) -> Self {
-        Self {
-            text: token.text,
-            token_type: token_type_to_str(token.token_type).to_owned(),
-        }
-    }
-}
-
-const fn token_type_to_str(tt: TokenType) -> &'static str {
-    match tt {
-        TokenType::Number => "number",
-        TokenType::Operator => "operator",
-        TokenType::Variable => "variable",
-        TokenType::Unit => "unit",
-        TokenType::Currency => "currency",
-        TokenType::Keyword => "keyword",
-        TokenType::Function => "function",
-        TokenType::Comment => "comment",
-        TokenType::Text => "text",
-        TokenType::Whitespace => "whitespace",
-        TokenType::Punctuation => "punctuation",
-    }
+fn tokens_to_json(tokens: impl serde::Serialize) -> String {
+    serde_json::to_string(&tokens).unwrap_or_else(|_| "[]".to_string())
 }

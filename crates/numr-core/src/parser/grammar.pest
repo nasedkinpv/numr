@@ -32,6 +32,7 @@ atom = _{
     | parenthesized     // "(1 + 2)"
     | percentage        // "20%"
     | currency_value    // "$100" or "100 USD"
+    | angle_value       // "90°"
     | suffixed_number   // "5 km" or "100 USD"
     | number            // "42.5"
     | variable_ref      // "tax"
@@ -80,6 +81,9 @@ number = @{
 
 // Percentages: "20%"
 percentage = { number ~ "%" }
+
+// Degree symbol is not an ASCII identifier and, per SI convention, has no space.
+angle_value = { number ~ "°" }
 
 // Currency values: "$100", "100 USD", "100$"
 // Currency values with symbols: "$100", "100$"

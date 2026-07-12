@@ -12,6 +12,7 @@ jobs:
   # Build and test before releasing
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -19,18 +20,33 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Verify tag matches Cargo version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
+          test -n "$cargo_version"
+          test "$tag_version" = "$cargo_version"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Build
         run: cargo build --release --locked --workspace
 
       - name: Test
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --all-features
+
+      - name: Check WASM targets
+        run: |
+          cargo check --locked -p numr-core --target wasm32-unknown-unknown --no-default-features --features wasm
+          cargo check --locked -p numr-editor --target wasm32-unknown-unknown --no-default-features --features wasm
 
   # Create GitHub Release first (before uploading binaries)
   create-release:
@@ -71,6 +87,7 @@ jobs:
           bin: numr,numr-cli
           target: ${{ matrix.target }}
           archive: numr-$tag-$target
+          locked: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # Update AUR package (binary) - skip for pre-releases
@@ -88,7 +105,7 @@ jobs:
       - name: Download binary and get sha256
         id: sha256
         run: |
-          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/numr-v${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz" -o binary.tar.gz
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/numr-v${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz" -o binary.tar.gz
           echo "sha256=$(sha256sum binary.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Update PKGBUILD
@@ -136,8 +153,8 @@ jobs:
       - name: Download binaries and get sha256
         id: sha256
         run: |
-          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/numr-v${{ steps.version.outputs.version }}-aarch64-apple-darwin.tar.gz" -o arm.tar.gz
-          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/numr-v${{ steps.version.outputs.version }}-x86_64-apple-darwin.tar.gz" -o intel.tar.gz
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/numr-v${{ steps.version.outputs.version }}-aarch64-apple-darwin.tar.gz" -o arm.tar.gz
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/numr-v${{ steps.version.outputs.version }}-x86_64-apple-darwin.tar.gz" -o intel.tar.gz
           echo "sha256_arm=$(sha256sum arm.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
           echo "sha256_intel=$(sha256sum intel.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 

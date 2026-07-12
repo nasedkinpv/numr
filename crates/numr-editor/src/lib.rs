@@ -1,8 +1,8 @@
-pub mod buffer;
 pub mod highlight;
+mod text;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-pub use buffer::{char_to_byte_idx, TextBuffer};
-pub use highlight::{tokenize, Token, TokenType};
+pub use highlight::{tokenize, tokenize_with_variables, Token, TokenType};
+pub use text::char_to_byte_idx;

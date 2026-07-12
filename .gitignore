@@ -2,6 +2,7 @@
 /target/
 /.cargo/
 **/*.rs.bk
+/aur/.SRCINFO
 
 # Separate repo (not a submodule)
 /numr-web/
@@ -15,9 +16,9 @@
 # Claude
 .claude/
 
-# Documentation (keep private for now)
-*.md
-!README.md
+# Private local notes; public documentation under docs/ remains trackable.
+/CLAUDE.md
+/TODO.md
 
 # OS
 .DS_Store

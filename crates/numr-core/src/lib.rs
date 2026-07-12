@@ -26,21 +26,29 @@
 //! ```
 
 use rust_decimal::prelude::FromPrimitive;
+use serde::Serialize;
 use std::str::FromStr;
 
 pub mod cache;
+pub mod catalog;
+pub mod error;
 pub mod eval;
 pub mod parser;
 pub mod types;
 
-#[cfg(feature = "fetch")]
+#[cfg(all(feature = "fetch", not(target_arch = "wasm32")))]
 pub mod fetch;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
+pub use cache::RateCache;
+pub use error::{EvalError, ParseError, RateError};
 pub use eval::EvalContext;
-pub use parser::{parse_line, try_parse_exact, Ast, BinaryOp, Expr};
+pub use parser::{
+    parse_line, parse_line_with_limits, try_parse_exact, try_parse_exact_with_limits, Ast,
+    BinaryOp, Expr, ParseLimits,
+};
 pub use types::{
     format_currency_value, format_number, CompoundUnit, Currency, CurrencyDef, Dimensions,
     NumberBase, RuntimeUnitDef, Unit, UnitType, Value, CURRENCIES, UNITS,
@@ -64,7 +72,7 @@ pub fn decimal(s: &str) -> Decimal {
     Decimal::from_str(s).expect("Invalid decimal string")
 }
 
-#[cfg(feature = "fetch")]
+#[cfg(all(feature = "fetch", not(target_arch = "wasm32")))]
 pub use fetch::{
     fetch_rates, fetch_rates_with_config, FetchConfig, FetchResult, DEFAULT_CRYPTO_RATES_URL,
     DEFAULT_FIAT_RATES_URL,
@@ -77,12 +85,22 @@ pub struct Engine {
 }
 
 /// Result of evaluating a single line
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LineResult {
     pub input: String,
     pub value: Value,
     /// True if this line's value was consumed by a continuation (next line used it as `_`)
     pub is_continuation_source: bool,
+    /// Aggregate query results are display-only and never feed another aggregate.
+    pub is_aggregate: bool,
+}
+
+/// Serializable result shared by CLI, TUI, and WASM document adapters.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DocumentResult {
+    pub lines: Vec<LineResult>,
+    pub totals: Vec<Value>,
+    pub variables: Vec<(String, Value)>,
 }
 
 impl Engine {
@@ -95,10 +113,22 @@ impl Engine {
         }
     }
 
+    /// Create an engine with a caller-owned rate table/cache.
+    #[must_use]
+    pub fn with_rate_cache(rate_cache: cache::RateCache) -> Self {
+        Self {
+            context: EvalContext::with_rate_cache(rate_cache),
+            lines: Vec::new(),
+        }
+    }
+
     /// Evaluate a single line and store the result
     pub fn eval(&mut self, input: &str) -> Value {
-        // Update 'total' variable with current sum
-        self.context.set_variable("total".to_string(), self.sum());
+        // Computing the document sum is linear in history, so materialize the
+        // magic variable only for lines that can actually reference it.
+        if Self::references_total(input) {
+            self.context.set_variable("total".to_string(), self.sum());
+        }
 
         // Set '_', 'ANS', and 'ans' to the last valid result
         if let Some(last_value) = self.last_valid_line().map(|lr| lr.value.clone()) {
@@ -113,7 +143,7 @@ impl Engine {
         let (result, continuation_succeeded) = self.eval_with_continuation(input);
 
         // Mark previous line as consumed if continuation succeeded or input uses '_'
-        if continuation_succeeded || Self::references_underscore(input) {
+        if !result.is_error() && (continuation_succeeded || Self::references_underscore(input)) {
             if let Some(last) = self.last_valid_line_mut() {
                 last.is_continuation_source = true;
             }
@@ -123,6 +153,7 @@ impl Engine {
             input: input.to_string(),
             value: result.clone(),
             is_continuation_source: false,
+            is_aggregate: Self::is_aggregate_query(input),
         });
 
         result
@@ -157,6 +188,9 @@ impl Engine {
                 if !result.is_error() {
                     return (result, true);
                 }
+                // A valid continuation that fails evaluation must retain its useful
+                // error and must not consume the source line.
+                return (result, false);
             }
         }
         // Fall back to normal parsing
@@ -209,6 +243,16 @@ impl Engine {
             .any(|word| word == "_" || word.eq_ignore_ascii_case("ans"))
     }
 
+    fn is_aggregate_query(input: &str) -> bool {
+        input.trim().eq_ignore_ascii_case("total")
+    }
+
+    fn references_total(input: &str) -> bool {
+        input
+            .split(|character: char| !character.is_alphanumeric() && character != '_')
+            .any(|word| word.eq_ignore_ascii_case("total"))
+    }
+
     /// Find the last valid (non-empty, non-error) line result
     fn last_valid_line(&self) -> Option<&LineResult> {
         self.lines
@@ -229,7 +273,7 @@ impl Engine {
     fn parse_and_eval_with(input: &str, ctx: &mut eval::EvalContext) -> Value {
         match parse_line(input) {
             Ok(ast) => eval::evaluate(&ast, ctx),
-            Err(e) => Value::Error(e),
+            Err(e) => Value::Error(EvalError::Parse(e)),
         }
     }
 
@@ -254,22 +298,37 @@ impl Engine {
     /// Excludes lines that were consumed by continuations
     #[must_use]
     pub fn sum(&self) -> Value {
-        let total: Decimal = self
-            .lines
-            .iter()
-            .filter(|lr| !lr.is_continuation_source)
-            .filter_map(|lr| lr.value.as_decimal())
-            .sum();
-        Value::Number(total)
+        self.try_sum()
+            .map(Value::Number)
+            .unwrap_or_else(Value::Error)
     }
 
-    /// Get totals grouped by type (currency, unit, plain numbers)
+    /// Checked variant of [`Engine::sum`].
+    pub fn try_sum(&self) -> Result<Decimal, EvalError> {
+        self.lines
+            .iter()
+            .filter(|lr| !lr.is_continuation_source && !lr.is_aggregate)
+            .filter_map(|lr| lr.value.as_decimal())
+            .try_fold(Decimal::ZERO, |total, value| {
+                total.checked_add(value).ok_or(EvalError::Overflow {
+                    operation: "summing document lines",
+                })
+            })
+    }
+
+    /// Get totals grouped by currency and physical dimension.
     /// - Currencies are converted and summed to the last used currency
     /// - Units of the same type are converted to the last used unit
-    /// - Plain numbers and percentages are summed separately
+    /// - Plain numbers and percentages are intentionally omitted
     /// - Excludes lines that were consumed by continuations
     #[must_use]
     pub fn grouped_totals(&self) -> Vec<Value> {
+        self.try_grouped_totals()
+            .unwrap_or_else(|error| vec![Value::Error(error)])
+    }
+
+    /// Checked variant of [`Engine::grouped_totals`].
+    pub fn try_grouped_totals(&self) -> Result<Vec<Value>, EvalError> {
         use std::collections::HashMap;
 
         let mut currency_amounts: Vec<(Currency, Decimal)> = Vec::new();
@@ -282,22 +341,33 @@ impl Engine {
 
         // Collect all values, tracking last used currency/unit
         // Skip lines that were consumed by continuations
-        for lr in self.lines.iter().filter(|lr| !lr.is_continuation_source) {
+        for lr in self
+            .lines
+            .iter()
+            .filter(|lr| !lr.is_continuation_source && !lr.is_aggregate)
+        {
             match &lr.value {
                 Value::Currency { amount, currency } => {
                     currency_amounts.push((*currency, *amount));
                 }
                 Value::WithUnit { amount, unit } => {
-                    *unit_totals.entry(*unit).or_insert(Decimal::ZERO) += amount;
+                    let total = unit_totals.entry(*unit).or_insert(Decimal::ZERO);
+                    *total = total.checked_add(*amount).ok_or(EvalError::Overflow {
+                        operation: "summing unit values",
+                    })?;
                     last_unit_by_type.insert(unit.unit_type(), *unit);
                 }
                 Value::WithCompoundUnit { amount, unit } => {
                     // Group by dimensions, convert to SI for summing
-                    let si_amount = unit.to_si(*amount);
+                    let si_amount = unit.checked_to_si(*amount).ok_or(EvalError::Overflow {
+                        operation: "converting unit totals to a base scale",
+                    })?;
                     let entry = compound_totals
                         .entry(unit.dimensions)
                         .or_insert_with(|| (Decimal::ZERO, unit.clone()));
-                    entry.0 += si_amount;
+                    entry.0 = entry.0.checked_add(si_amount).ok_or(EvalError::Overflow {
+                        operation: "summing unit values",
+                    })?;
                     // Keep the last unit for display
                     entry.1 = unit.clone();
                 }
@@ -319,14 +389,32 @@ impl Engine {
 
             for (currency, amount) in &currency_amounts {
                 if *currency == target_currency {
-                    total_in_target += amount;
-                } else if let Some(rate) =
-                    self.context.rate_cache.get_rate(*currency, target_currency)
+                    total_in_target =
+                        total_in_target
+                            .checked_add(*amount)
+                            .ok_or(EvalError::Overflow {
+                                operation: "summing currency values",
+                            })?;
+                } else if let Some(rate) = self
+                    .context
+                    .rate_cache
+                    .try_get_rate(*currency, target_currency)?
                 {
-                    total_in_target += amount * rate;
+                    let converted = amount.checked_mul(rate).ok_or(EvalError::Overflow {
+                        operation: "converting currency totals",
+                    })?;
+                    total_in_target =
+                        total_in_target
+                            .checked_add(converted)
+                            .ok_or(EvalError::Overflow {
+                                operation: "summing currency values",
+                            })?;
                 } else {
                     // Can't convert - keep this currency separate instead of corrupting totals
-                    *unconverted.entry(*currency).or_insert(Decimal::ZERO) += amount;
+                    let total = unconverted.entry(*currency).or_insert(Decimal::ZERO);
+                    *total = total.checked_add(*amount).ok_or(EvalError::Overflow {
+                        operation: "summing unconverted currencies",
+                    })?;
                 }
             }
 
@@ -354,14 +442,17 @@ impl Engine {
             let converted = if unit == target_unit {
                 *amount
             } else if let Some(converted_amount) =
-                types::unit::convert(*amount, &unit.to_compound(), &target_unit.to_compound())
+                types::unit::try_convert(*amount, &unit.to_compound(), &target_unit.to_compound())?
             {
                 converted_amount
             } else {
                 *amount // Can't convert, keep as is
             };
 
-            *unit_by_type.entry(unit_type).or_insert(Decimal::ZERO) += converted;
+            let total = unit_by_type.entry(unit_type).or_insert(Decimal::ZERO);
+            *total = total.checked_add(converted).ok_or(EvalError::Overflow {
+                operation: "summing unit values",
+            })?;
         }
 
         // Add unit totals (one per unit type, using last used unit)
@@ -377,7 +468,12 @@ impl Engine {
         for (_dims, (si_total, last_unit)) in compound_totals {
             if !si_total.is_zero() {
                 // Convert from SI back to the last used unit
-                let display_amount = last_unit.from_si(si_total);
+                let display_amount =
+                    last_unit
+                        .checked_from_si(si_total)
+                        .ok_or(EvalError::Overflow {
+                            operation: "converting unit totals from a base scale",
+                        })?;
                 result.push(Value::WithCompoundUnit {
                     amount: display_amount,
                     unit: last_unit,
@@ -423,13 +519,38 @@ impl Engine {
             _ => std::cmp::Ordering::Equal,
         });
 
-        result
+        Ok(result)
     }
 
     /// Get all line results
     #[must_use]
     pub fn lines(&self) -> &[LineResult] {
         &self.lines
+    }
+
+    /// Replace engine state by evaluating a full document.
+    pub fn evaluate_document(&mut self, content: &str) -> DocumentResult {
+        self.clear();
+        for line in content.lines() {
+            self.eval(line);
+        }
+        DocumentResult {
+            lines: self.lines.clone(),
+            totals: self.grouped_totals(),
+            variables: self.variables(),
+        }
+    }
+
+    /// Append independent lines without clearing existing state.
+    pub fn append_lines<'a>(
+        &mut self,
+        lines: impl IntoIterator<Item = &'a str>,
+    ) -> Vec<LineResult> {
+        let start = self.lines.len();
+        for line in lines {
+            self.eval(line);
+        }
+        self.lines[start..].to_vec()
     }
 
     /// Clear all lines and variables
@@ -441,19 +562,31 @@ impl Engine {
     /// Get all user-defined variables (excludes 'total', '_', 'ANS', and 'ans')
     #[must_use]
     pub fn variables(&self) -> Vec<(String, Value)> {
-        self.context
+        let mut variables: Vec<_> = self
+            .context
             .variables
             .iter()
             .filter(|(name, _)| {
                 *name != "total" && *name != "_" && *name != "ANS" && *name != "ans"
             })
             .map(|(name, value)| (name.clone(), value.clone()))
-            .collect()
+            .collect();
+        variables.sort_by(|left, right| left.0.cmp(&right.0));
+        variables
     }
 
     /// Set an exchange rate
     pub fn set_exchange_rate(&mut self, from: Currency, to: Currency, rate: Decimal) {
         self.context.set_exchange_rate(from, to, rate);
+    }
+
+    pub fn try_set_exchange_rate(
+        &mut self,
+        from: Currency,
+        to: Currency,
+        rate: Decimal,
+    ) -> Result<(), EvalError> {
+        self.context.try_set_exchange_rate(from, to, rate)
     }
 
     /// Set an exchange rate from f64 (convenience for API compatibility)
@@ -464,19 +597,24 @@ impl Engine {
     }
 
     /// Apply raw rates from API response (delegates to rate cache)
-    pub fn apply_raw_rates(&mut self, raw_rates: &std::collections::HashMap<String, Decimal>) {
-        self.context.rate_cache.apply_raw_rates(raw_rates);
+    pub fn apply_raw_rates(
+        &mut self,
+        raw_rates: &std::collections::HashMap<String, Decimal>,
+    ) -> Result<usize, RateError> {
+        self.context.rate_cache.apply_raw_rates(raw_rates)
     }
 
     /// Save rates to file cache (delegates to rate cache)
-    pub fn save_rates_to_cache(&self, raw_rates: &std::collections::HashMap<String, Decimal>) {
-        self.context.rate_cache.save_to_file(raw_rates);
+    pub fn save_rates_to_cache(
+        &self,
+        raw_rates: &std::collections::HashMap<String, Decimal>,
+    ) -> Result<(), RateError> {
+        self.context.rate_cache.save_to_file(raw_rates)
     }
 
-    /// Whether a non-expired cache was loaded during engine initialization
-    #[must_use]
-    pub fn has_cached_rates(&self) -> bool {
-        self.context.rate_cache.has_cached_rates()
+    /// Explicitly load a non-expired filesystem cache over deterministic defaults.
+    pub fn load_rates_from_cache(&mut self) -> Result<bool, RateError> {
+        self.context.rate_cache.load_from_file()
     }
 }
 
@@ -547,8 +685,8 @@ mod tests {
         let expected_km = Decimal::from(6);
         let tolerance = Decimal::from_str("0.01").unwrap();
         assert!(totals.iter().any(|v| matches!(v,
-            Value::WithUnit { amount, unit }
-            if *unit == Unit::Kilometer && (*amount - expected_km).abs() < tolerance
+            Value::WithCompoundUnit { amount, unit }
+            if unit.symbol == "km" && (*amount - expected_km).abs() < tolerance
         )));
     }
 
@@ -622,8 +760,8 @@ mod tests {
         let mut engine = Engine::new();
         engine.eval("5 km");
         let result = engine.eval("to m");
-        assert!(matches!(result, Value::WithUnit { amount, unit }
-            if unit == Unit::Meter && (amount - Decimal::from(5000)).abs() < Decimal::ONE
+        assert!(matches!(result, Value::WithCompoundUnit { amount, unit }
+            if unit.symbol == "m" && (amount - Decimal::from(5000)).abs() < Decimal::ONE
         ));
     }
 

@@ -7,12 +7,82 @@ pub use ast::{Ast, BinaryOp, Expr};
 use pest::Parser;
 use pest_derive::Parser;
 
+use crate::ParseError;
+
 #[derive(Parser)]
 #[grammar = "parser/grammar.pest"]
 pub struct NumrParser;
 
+/// Resource limits applied before pest or the recursive evaluator see input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseLimits {
+    pub max_input_bytes: usize,
+    pub max_operations: usize,
+    pub max_nesting: usize,
+}
+
+impl Default for ParseLimits {
+    fn default() -> Self {
+        Self {
+            max_input_bytes: 16 * 1024,
+            max_operations: 256,
+            max_nesting: 128,
+        }
+    }
+}
+
+fn validate_limits(input: &str, limits: ParseLimits) -> Result<(), ParseError> {
+    if input.len() > limits.max_input_bytes {
+        return Err(ParseError::InputTooLong {
+            actual: input.len(),
+            max: limits.max_input_bytes,
+        });
+    }
+
+    let trimmed = input.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
+        return Ok(());
+    }
+
+    let mut nesting = 0usize;
+    let mut max_nesting = 0usize;
+    let mut operations = 0usize;
+    for ch in input.chars() {
+        match ch {
+            '(' => {
+                nesting = nesting.saturating_add(1);
+                max_nesting = max_nesting.max(nesting);
+            }
+            ')' => nesting = nesting.saturating_sub(1),
+            '+' | '-' | '*' | '/' | '÷' | '×' | '^' | ',' | '=' => {
+                operations = operations.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+    if max_nesting > limits.max_nesting {
+        return Err(ParseError::TooDeep {
+            actual: max_nesting,
+            max: limits.max_nesting,
+        });
+    }
+    if operations > limits.max_operations {
+        return Err(ParseError::TooComplex {
+            actual: operations,
+            max: limits.max_operations,
+        });
+    }
+    Ok(())
+}
+
 /// Parse a single line of input (with fuzzy fallback for user input)
-pub fn parse_line(input: &str) -> Result<Ast, String> {
+pub fn parse_line(input: &str) -> Result<Ast, ParseError> {
+    parse_line_with_limits(input, ParseLimits::default())
+}
+
+/// Parse with caller-supplied resource limits.
+pub fn parse_line_with_limits(input: &str, limits: ParseLimits) -> Result<Ast, ParseError> {
+    validate_limits(input, limits)?;
     // Try parsing the full line first
     if let Ok(pairs) = NumrParser::parse(Rule::line, input) {
         if let Ok(ast) = ast::build_ast(pairs) {
@@ -24,7 +94,7 @@ pub fn parse_line(input: &str) -> Result<Ast, String> {
     // This strips leading prose (e.g., "pay rate = $85/hr" → "$85/hr") while
     // avoiding O(n) parse attempts on every byte offset.
     let bytes = input.as_bytes();
-    for (i, _) in input.char_indices().skip(1) {
+    for (i, _) in input.char_indices().skip(1).take(128) {
         // Only try boundaries after whitespace or punctuation
         if i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
             continue;
@@ -43,14 +113,19 @@ pub fn parse_line(input: &str) -> Result<Ast, String> {
 
     // If all else fails, return the original error from the full line parse
     // or a generic error
-    Err("Parse error: Could not understand line".to_string())
+    Err(ParseError::InvalidSyntax)
 }
 
 /// Parse a line exactly (no fuzzy fallback) - used for continuation detection
-pub fn try_parse_exact(input: &str) -> Result<Ast, String> {
+pub fn try_parse_exact(input: &str) -> Result<Ast, ParseError> {
+    try_parse_exact_with_limits(input, ParseLimits::default())
+}
+
+pub fn try_parse_exact_with_limits(input: &str, limits: ParseLimits) -> Result<Ast, ParseError> {
+    validate_limits(input, limits)?;
     match NumrParser::parse(Rule::line_no_prose, input) {
-        Ok(pairs) => ast::build_ast(pairs),
-        Err(_) => Err("Parse error".to_string()),
+        Ok(pairs) => ast::build_ast(pairs).map_err(ParseError::InvalidExpression),
+        Err(_) => Err(ParseError::InvalidSyntax),
     }
 }
 
@@ -74,6 +149,16 @@ mod tests {
     fn test_parse_assignment() {
         let result = parse_line("tax = 15%");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn comments_only_consume_the_input_size_budget() {
+        let comment = format!(
+            "# {}",
+            "+".repeat(ParseLimits::default().max_operations + 1)
+        );
+        assert!(parse_line(&comment).is_ok());
+        assert!(try_parse_exact(&comment).is_ok());
     }
 
     /// Verify grammar.pest currency_symbol rule matches CURRENCIES registry.

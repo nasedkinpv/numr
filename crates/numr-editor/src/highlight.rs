@@ -26,12 +26,17 @@
 //! assert!(tokens.iter().any(|t| t.token_type == TokenType::Number));
 //! ```
 
-use numr_core::{Currency, Unit};
+use numr_core::{
+    catalog::{is_builtin_function, ANSWER_ALIASES, KEYWORDS, MATH_CONSTANTS},
+    Currency, Unit,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Semantic token types (UI-agnostic)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "wasm", derive(serde::Serialize))]
+#[cfg_attr(feature = "wasm", serde(rename_all = "snake_case"))]
 pub enum TokenType {
     Number,
     Operator,
@@ -48,6 +53,7 @@ pub enum TokenType {
 
 /// A token with its text and semantic type
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "wasm", derive(serde::Serialize))]
 pub struct Token {
     pub text: String,
     pub token_type: TokenType,
@@ -90,34 +96,6 @@ fn is_currency_word(word: &str) -> bool {
 fn is_unit_word(word: &str) -> bool {
     UNIT_WORDS.contains(&word.to_lowercase())
 }
-
-/// Keywords for syntax highlighting
-static KEYWORDS: &[&str] = &["of", "in", "to"];
-static FUNCTIONS: &[&str] = &[
-    "sum",
-    "avg",
-    "average",
-    "min",
-    "max",
-    "abs",
-    "sqrt",
-    "round",
-    "floor",
-    "ceil",
-    "total",
-    "sin",
-    "cos",
-    "tan",
-    "sinh",
-    "cosh",
-    "tanh",
-    "exp",
-    "log",
-    "log_y",
-    "ln",
-    "factorial",
-    "mod",
-];
 
 /// Tokenize input and apply syntax highlighting
 pub fn tokenize(input: &str) -> Vec<Token> {
@@ -176,6 +154,13 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                 token_type: TokenType::Currency,
             });
             i += 1;
+        } else if !c.is_alphanumeric() && is_unit_word(&c.to_string()) {
+            // Non-alphabetic unit symbols such as the plane-angle degree sign.
+            tokens.push(Token {
+                text: c.to_string(),
+                token_type: TokenType::Unit,
+            });
+            i += 1;
         } else if c == '+' || c == '*' || c == '/' || c == '^' || c == '×' || c == '÷' {
             tokens.push(Token {
                 text: c.to_string(),
@@ -209,11 +194,21 @@ pub fn tokenize(input: &str) -> Vec<Token> {
             }
             let word: String = chars[start..i].iter().collect();
             let lower = word.to_lowercase();
+            let is_function_call = chars[i..]
+                .iter()
+                .find(|c| !c.is_whitespace())
+                .is_some_and(|c| *c == '(');
 
             let token_type = if KEYWORDS.contains(&lower.as_str()) {
                 TokenType::Keyword
-            } else if FUNCTIONS.contains(&lower.as_str()) {
+            } else if is_builtin_function(&lower) && is_function_call {
                 TokenType::Function
+            } else if MATH_CONSTANTS.contains(&lower.as_str())
+                || ANSWER_ALIASES
+                    .iter()
+                    .any(|alias| alias.eq_ignore_ascii_case(&word))
+            {
+                TokenType::Variable
             } else if is_unit_word(&word) {
                 TokenType::Unit
             } else if is_currency_word(&word) {
@@ -257,6 +252,19 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     }
 
     tokens
+}
+
+/// Tokenize input and promote known variable references.
+pub fn tokenize_with_variables(input: &str, variables: &HashSet<String>) -> Vec<Token> {
+    tokenize(input)
+        .into_iter()
+        .map(|mut token| {
+            if token.token_type == TokenType::Text && variables.contains(&token.text) {
+                token.token_type = TokenType::Variable;
+            }
+            token
+        })
+        .collect()
 }
 
 /// Find variable name if line is an assignment (e.g., "tax = 20%" returns Some("tax"))
@@ -379,6 +387,38 @@ mod tests {
     }
 
     #[test]
+    fn test_known_variable_reference() {
+        let variables = HashSet::from(["tax".to_string()]);
+        let tokens = tokenize_with_variables("100 + tax", &variables);
+        assert!(has_token(&tokens, "tax", TokenType::Variable));
+    }
+
+    #[test]
+    fn test_language_catalog_constants_and_answer_aliases() {
+        for input in ["pi", "e", "phi", "_", "ANS", "ans"] {
+            let tokens = tokenize(input);
+            assert!(has_token(&tokens, input, TokenType::Variable), "{input}");
+        }
+    }
+
+    #[test]
+    fn tokenization_preserves_input_exactly() {
+        for input in [
+            "total = €12.50 + tax // café 🧮",
+            "2×3 in km",
+            "π is prose, but 42% isn't",
+            "aé🧮z",
+            "",
+        ] {
+            let reconstructed = tokenize(input)
+                .into_iter()
+                .map(|token| token.text)
+                .collect::<String>();
+            assert_eq!(reconstructed, input);
+        }
+    }
+
+    #[test]
     fn test_comment() {
         let tokens = tokenize("# this is a comment");
         assert_eq!(tokens.len(), 1);
@@ -425,6 +465,11 @@ mod tests {
         let tokens = tokenize("5 km");
         assert!(has_token(&tokens, "5", TokenType::Number));
         assert!(has_token(&tokens, "km", TokenType::Unit));
+
+        let tokens = tokenize("sin(90°) + 1 rad");
+        assert!(has_token(&tokens, "sin", TokenType::Function));
+        assert!(has_token(&tokens, "°", TokenType::Unit));
+        assert!(has_token(&tokens, "rad", TokenType::Unit));
     }
 
     #[test]

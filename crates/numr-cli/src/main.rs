@@ -7,14 +7,11 @@
 //!   numr-cli -i                      # Interactive REPL
 //!   numr-cli --server                # JSON-RPC server mode
 
-mod server;
-
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 
-use anyhow::Result;
-use clap::Parser;
-use numr_core::Engine;
+use clap::{CommandFactory, Parser};
+use numr_core::{Engine, Value};
 
 #[derive(Parser, Debug)]
 #[command(name = "numr-cli")]
@@ -44,28 +41,40 @@ struct Args {
     total: bool,
 }
 
-fn main() -> Result<()> {
+fn main() -> io::Result<()> {
     let args = Args::parse();
 
     let mut engine = Engine::new();
+    let cache_loaded = match engine.load_rates_from_cache() {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            eprintln!("Warning: failed to load the exchange-rate cache: {error}");
+            false
+        }
+    };
 
-    // Server mode: start immediately, let clients call reload_rates if needed
+    // Server mode uses deterministic defaults plus an explicitly loaded cache. Clients can request
+    // a network refresh through `reload_rates` when they need one.
     if args.server {
-        server::run_server(&mut engine)?;
+        numr_cli::server::run_server(&mut engine)?;
         return Ok(());
     }
 
-    // Fetch fresh rates if cache is expired (skip for server mode - handled above)
-    if !engine.has_cached_rates() {
+    // Fetch fresh rates if the explicit cache load found no usable entry.
+    if !cache_loaded {
         let rt = tokio::runtime::Runtime::new()?;
         match rt.block_on(numr_core::fetch_rates()) {
-            Ok(result) => {
-                engine.apply_raw_rates(&result.rates);
-                engine.save_rates_to_cache(&result.rates);
-                if let Some(warning) = result.warning {
-                    eprintln!("Warning: {warning}");
+            Ok(result) => match engine.apply_raw_rates(&result.rates) {
+                Ok(_) => {
+                    if let Err(error) = engine.save_rates_to_cache(&result.rates) {
+                        eprintln!("Warning: failed to persist the exchange-rate cache: {error}");
+                    }
+                    if let Some(warning) = result.warning {
+                        eprintln!("Warning: {warning}");
+                    }
                 }
-            }
+                Err(error) => eprintln!("Warning: rejected exchange rates: {error}"),
+            },
             Err(e) => eprintln!("Warning: {e}"),
         }
     }
@@ -77,10 +86,10 @@ fn main() -> Result<()> {
         eval_and_print(&mut engine, expr, !args.verbose);
     } else if let Some(path) = &args.file {
         // File mode — verbose by default
-        let quiet = false;
         let content = std::fs::read_to_string(path)?;
-        for line in content.lines() {
-            eval_and_print(&mut engine, line, quiet);
+        let document = engine.evaluate_document(&content);
+        for line in document.lines {
+            print_evaluated(&line.input, &line.value, false);
         }
     } else if args.interactive {
         // Interactive REPL
@@ -93,12 +102,8 @@ fn main() -> Result<()> {
             eval_and_print(&mut engine, &line, !args.verbose);
         }
     } else {
-        // No input, show help
-        eprintln!("Usage: numr-cli <expression>");
-        eprintln!("       numr-cli -f <file>");
-        eprintln!("       numr-cli -i");
-        eprintln!("       numr-cli --server");
-        eprintln!("       echo \"100 + 50\" | numr-cli");
+        Args::command().print_help()?;
+        println!();
         std::process::exit(1);
     }
 
@@ -114,7 +119,10 @@ fn main() -> Result<()> {
 
 fn eval_and_print(engine: &mut Engine, input: &str, quiet: bool) {
     let result = engine.eval(input);
+    print_evaluated(input, &result, quiet);
+}
 
+fn print_evaluated(input: &str, result: &Value, quiet: bool) {
     if quiet {
         if !result.is_empty() {
             println!("{result}");
@@ -131,7 +139,7 @@ fn eval_and_print(engine: &mut Engine, input: &str, quiet: bool) {
     }
 }
 
-fn run_repl(engine: &mut Engine) -> Result<()> {
+fn run_repl(engine: &mut Engine) -> io::Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 

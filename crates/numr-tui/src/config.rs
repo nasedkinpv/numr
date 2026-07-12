@@ -7,6 +7,8 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use crate::persistence::atomic_write;
+
 /// Main configuration struct
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -101,11 +103,8 @@ impl Config {
             )
         })?;
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let content = toml::to_string_pretty(self).map_err(io::Error::other)?;
-        fs::write(path, content)
+        atomic_write(&path, content.as_bytes())
     }
 }
 

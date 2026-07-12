@@ -9,9 +9,17 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -35,10 +43,49 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Build
         run: cargo build --locked --workspace
 
       - name: Test
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --all-features
+
+  wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - name: Check numr-core WASM boundary
+        run: cargo clippy --locked -p numr-core --target wasm32-unknown-unknown --no-default-features --features wasm -- -D warnings
+      - name: Check numr-editor WASM boundary
+        run: cargo clippy --locked -p numr-editor --target wasm32-unknown-unknown --no-default-features --features wasm -- -D warnings
+      - name: Verify all-features cfg remains target-safe
+        run: cargo check --locked -p numr-core --target wasm32-unknown-unknown --all-features
+
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+      - name: Check declared MSRV
+        run: cargo check --locked --workspace --all-targets
+
+  windows-persistence:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify atomic replacement of existing files
+        shell: bash
+        run: |
+          cargo test --locked -p numr-core cache::tests::cache_save_atomically_replaces_an_existing_file
+          cargo test --locked -p numr-tui persistence::tests::replaces_complete_file_and_cleans_temporary_file

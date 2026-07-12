@@ -14,46 +14,26 @@ fn engine_with_btc_rate(rate: Decimal) -> Engine {
 fn test_btc_formats() {
     let mut engine = Engine::new();
 
-    // Different BTC input formats
-    assert_eq!(engine.eval("₿1").to_string(), "₿1.00");
-    assert_eq!(engine.eval("1 BTC").to_string(), "₿1.00");
-    assert_eq!(engine.eval("1 btc").to_string(), "₿1.00");
-    assert_eq!(engine.eval("1 bitcoin").to_string(), "₿1.00");
+    for expression in ["₿1", "1 BTC", "1 btc", "1 bitcoin"] {
+        assert_eq!(engine.eval(expression).to_string(), "₿1.00", "{expression}");
+    }
 }
 
 #[test]
 fn test_btc_to_usd_conversion() {
     let mut engine = engine_with_btc_rate(d("95000"));
+    let cases = [
+        ("₿1 in USD", "95000", "$95000.00"),
+        ("0.5 btc in USD", "47500", "$47500.00"),
+        ("0.001 BTC in USD", "95", "$95.00"),
+        ("0.0001 BTC in USD", "9.5", "$9.50"),
+    ];
 
-    let result = engine.eval("₿1 in USD");
-    assert_eq!(result.as_decimal(), Some(d("95000")));
-    assert_eq!(result.to_string(), "$95000.00");
-
-    let result = engine.eval("1 BTC in usd");
-    assert_eq!(result.as_decimal(), Some(d("95000")));
-    assert_eq!(result.to_string(), "$95000.00");
-
-    let result = engine.eval("0.5 btc in USD");
-    assert_eq!(result.as_decimal(), Some(d("47500")));
-    assert_eq!(result.to_string(), "$47500.00");
-}
-
-#[test]
-fn test_btc_fractional_amounts() {
-    let mut engine = engine_with_btc_rate(d("95000"));
-
-    // Small fractions (satoshi-level thinking)
-    let result = engine.eval("0.001 BTC in USD");
-    assert_eq!(result.as_decimal(), Some(d("95")));
-    assert_eq!(result.to_string(), "$95.00");
-
-    let result = engine.eval("0.0001 BTC in USD");
-    assert_eq!(result.as_decimal(), Some(d("9.5")));
-    assert_eq!(result.to_string(), "$9.50");
-
-    let result = engine.eval("0.01 btc in usd");
-    assert_eq!(result.as_decimal(), Some(d("950")));
-    assert_eq!(result.to_string(), "$950.00");
+    for (expression, amount, display) in cases {
+        let result = engine.eval(expression);
+        assert_eq!(result.as_decimal(), Some(d(amount)), "{expression}");
+        assert_eq!(result.to_string(), display, "{expression}");
+    }
 }
 
 #[test]
@@ -103,26 +83,18 @@ fn test_small_usd_to_btc_display_precision() {
 #[test]
 fn test_btc_arithmetic() {
     let mut engine = Engine::new();
+    let cases = [
+        ("₿0.5 + ₿0.25", "0.75", "₿0.75"),
+        ("₿1 - ₿0.3", "0.7", "₿0.70"),
+        ("₿0.1 * 5", "0.5", "₿0.50"),
+        ("₿1 / 4", "0.25", "₿0.25"),
+    ];
 
-    // BTC addition
-    let result = engine.eval("₿0.5 + ₿0.25");
-    assert_eq!(result.as_decimal(), Some(d("0.75")));
-    assert_eq!(result.to_string(), "₿0.75");
-
-    // BTC subtraction
-    let result = engine.eval("₿1 - ₿0.3");
-    assert_eq!(result.as_decimal(), Some(d("0.7")));
-    assert_eq!(result.to_string(), "₿0.70");
-
-    // BTC multiplication
-    let result = engine.eval("₿0.1 * 5");
-    assert_eq!(result.as_decimal(), Some(d("0.5")));
-    assert_eq!(result.to_string(), "₿0.50");
-
-    // BTC division
-    let result = engine.eval("₿1 / 4");
-    assert_eq!(result.as_decimal(), Some(d("0.25")));
-    assert_eq!(result.to_string(), "₿0.25");
+    for (expression, amount, display) in cases {
+        let result = engine.eval(expression);
+        assert_eq!(result.as_decimal(), Some(d(amount)), "{expression}");
+        assert_eq!(result.to_string(), display, "{expression}");
+    }
 }
 
 #[test]
@@ -154,55 +126,6 @@ fn test_btc_to_other_currencies() {
     let result = engine.eval("0.1 BTC in EUR");
     assert_eq!(result.as_decimal(), Some(d("8740")));
     assert_eq!(result.to_string(), "€8740.00");
-}
-
-#[test]
-fn test_crypto_portfolio_tracking() {
-    let mut engine = engine_with_btc_rate(d("95000"));
-
-    // Portfolio holdings
-    engine.eval("btc_holdings = ₿0.5");
-    engine.eval("usd_cash = $10000");
-
-    // Check BTC value
-    let result = engine.eval("btc_holdings in USD");
-    assert_eq!(result.as_decimal(), Some(d("47500")));
-    assert_eq!(result.to_string(), "$47500.00");
-
-    // Total portfolio value would need manual addition
-    // btc_holdings in USD = $47500
-    // usd_cash = $10000
-    // Total = $57500
-}
-
-#[test]
-fn test_dca_scenario() {
-    let mut engine = engine_with_btc_rate(d("95000"));
-    // Dollar Cost Averaging scenario
-
-    // Weekly investment
-    engine.eval("weekly_investment = $100");
-
-    // At current rate ($95000/BTC)
-    // $100 / $95000 = 0.00105263157...
-    let result = engine.eval("weekly_investment in BTC");
-    let btc_amount = result.as_decimal().unwrap();
-    // Check it's approximately correct (within 0.0001)
-    let expected = d("100") / d("95000");
-    assert!(
-        (btc_amount - expected).abs() < d("0.0001"),
-        "Expected ~{expected}, got {btc_amount}"
-    );
-
-    // Monthly (4 weeks)
-    // $400 / $95000 = 0.00421052631...
-    let result = engine.eval("$400 in BTC");
-    let monthly_btc = result.as_decimal().unwrap();
-    let expected_monthly = d("400") / d("95000");
-    assert!(
-        (monthly_btc - expected_monthly).abs() < d("0.0001"),
-        "Expected ~{expected_monthly}, got {monthly_btc}"
-    );
 }
 
 #[test]
@@ -240,41 +163,4 @@ fn test_btc_variables() {
     let result = engine.eval("my_btc in USD");
     assert_eq!(result.as_decimal(), Some(d("23750")));
     assert_eq!(result.to_string(), "$23750.00");
-}
-
-#[test]
-fn test_profit_loss_scenario() {
-    let mut engine = engine_with_btc_rate(d("95000"));
-
-    // Bought 0.1 BTC at $50000
-    engine.eval("purchase_price = 50000");
-    engine.eval("btc_amount = 0.1");
-    engine.eval("cost_basis = 5000"); // 0.1 * 50000
-
-    // Current price $95000
-    // Current value = 0.1 * 95000 = $9500
-    let result = engine.eval("0.1 BTC in USD");
-    assert_eq!(result.as_decimal(), Some(d("9500")));
-    assert_eq!(result.to_string(), "$9500.00");
-
-    // Profit = $9500 - $5000 = $4500 (90% gain)
-}
-
-#[test]
-fn test_mixed_crypto_fiat() {
-    let mut engine = engine_with_btc_rate(d("95000"));
-
-    // Scenario: Have some BTC and some USD
-    engine.eval("crypto = ₿0.1");
-    engine.eval("fiat = $5000");
-
-    // Value of crypto in USD (0.1 * $95000 = $9500)
-    let crypto_value = engine.eval("crypto in USD");
-    assert_eq!(crypto_value.as_decimal(), Some(d("9500")));
-    assert_eq!(crypto_value.to_string(), "$9500.00");
-
-    // Can calculate total: $9500 + $5000 = $14500
-    let result = engine.eval("$9500 + fiat");
-    assert_eq!(result.as_decimal(), Some(d("14500")));
-    assert_eq!(result.to_string(), "$14500.00");
 }

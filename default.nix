@@ -12,7 +12,6 @@ pkgs.rustPlatform.buildRustPackage {
   cargoLock.lockFile = ./Cargo.lock;
   src = pkgs.lib.cleanSource ./.;
 
-  buildInputs = [ pkgs.openssl ];
   nativeBuildInputs = [
     pkgs.rust-bin.stable.latest.default
     pkgs.pkg-config

@@ -33,7 +33,7 @@ pub enum Expr {
     Percentage(Decimal),
     /// Currency value
     Currency { amount: Decimal, currency: Currency },
-    /// Value with simple unit
+    /// Legacy boundary representation. New parsing emits `WithCompoundUnit`.
     WithUnit { amount: Decimal, unit: Unit },
     /// Value with compound unit (e.g., 50 km/h, 100 m²)
     WithCompoundUnit { amount: Decimal, unit: CompoundUnit },
@@ -161,6 +161,18 @@ fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, St
             Rule::currency_value => {
                 let (amount, currency) = parse_currency_value(pair)?;
                 terms.push(Expr::Currency { amount, currency });
+            }
+            Rule::angle_value => {
+                let amount = parse_number_str(
+                    pair.into_inner()
+                        .next()
+                        .ok_or("Expected angle value")?
+                        .as_str(),
+                )?;
+                terms.push(Expr::WithCompoundUnit {
+                    amount,
+                    unit: unit::parse_unit("deg").ok_or("Degree unit is not registered")?,
+                });
             }
             Rule::suffixed_number => {
                 terms.push(parse_suffixed_number(pair)?);
@@ -344,11 +356,8 @@ fn parse_suffixed_number(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, 
 
     if let Some(currency) = Currency::parse(suffix) {
         Ok(Expr::Currency { amount, currency })
-    } else if let Some(unit) = Unit::parse(suffix) {
-        // Simple unit from legacy enum
-        Ok(Expr::WithUnit { amount, unit })
     } else if let Some(compound_unit) = unit::parse_unit(suffix) {
-        // Compound unit from new registry (e.g., kph, m2, mps)
+        // All physical quantities use the canonical dimensional model.
         Ok(Expr::WithCompoundUnit {
             amount,
             unit: compound_unit,
@@ -410,6 +419,18 @@ fn build_term(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
         Rule::currency_value => {
             let (amount, currency) = parse_currency_value(pair)?;
             Ok(Expr::Currency { amount, currency })
+        }
+        Rule::angle_value => {
+            let amount = parse_number_str(
+                pair.into_inner()
+                    .next()
+                    .ok_or("Expected angle value")?
+                    .as_str(),
+            )?;
+            Ok(Expr::WithCompoundUnit {
+                amount,
+                unit: unit::parse_unit("deg").ok_or("Degree unit is not registered")?,
+            })
         }
         Rule::suffixed_number => parse_suffixed_number(pair),
         Rule::variable_ref => {
@@ -722,11 +743,11 @@ mod tests {
     fn test_unit_suffix() {
         let ast = parse_line("5 km").unwrap();
         let expr = get_expr(&ast).unwrap();
-        let Expr::WithUnit { amount, unit } = expr else {
-            panic!("Expected WithUnit, got {:?}", expr);
+        let Expr::WithCompoundUnit { amount, unit } = expr else {
+            panic!("Expected WithCompoundUnit, got {:?}", expr);
         };
         assert_eq!(*amount, Decimal::from(5));
-        assert_eq!(*unit, Unit::Kilometer);
+        assert_eq!(unit.symbol, "km");
     }
 
     // ========================================
@@ -752,7 +773,7 @@ mod tests {
             panic!("Expected Conversion, got {:?}", expr);
         };
         assert_eq!(target_unit, "miles");
-        assert!(matches!(**value, Expr::WithUnit { .. }));
+        assert!(matches!(**value, Expr::WithCompoundUnit { .. }));
     }
 
     // ========================================

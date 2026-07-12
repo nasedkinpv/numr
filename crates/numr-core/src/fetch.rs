@@ -3,6 +3,7 @@
 //! This module provides async functions to fetch exchange rates from external APIs.
 //! It's gated behind the "fetch" feature to keep numr-core WASM-compatible by default.
 
+use crate::error::RateError;
 use crate::types::Currency;
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -54,20 +55,24 @@ pub struct FetchResult {
 /// Returns rates as HashMap where key is currency code (e.g., "EUR", "BTC").
 /// - Fiat rates: "1 USD = X units" (e.g., EUR -> 0.92)
 /// - Crypto rates: "1 TOKEN = X USD" (e.g., BTC -> 92000, ETH -> 3000)
-pub async fn fetch_rates() -> Result<FetchResult, String> {
+pub async fn fetch_rates() -> Result<FetchResult, RateError> {
     fetch_rates_with_config(&FetchConfig::default()).await
 }
 
 /// Fetch exchange rates using custom API endpoints and optional credentials.
-pub async fn fetch_rates_with_config(config: &FetchConfig) -> Result<FetchResult, String> {
+pub async fn fetch_rates_with_config(config: &FetchConfig) -> Result<FetchResult, RateError> {
     let client = reqwest::Client::builder()
         .user_agent("numr")
         .timeout(Duration::from_secs(10))
         .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-    let mut rates = fetch_fiat_rates(&client, &config.fiat_rates_url).await?;
+        .map_err(|e| RateError::Network(format!("failed to build HTTP client: {e}")))?;
+    let (fiat_result, crypto_result) = tokio::join!(
+        fetch_fiat_rates(&client, &config.fiat_rates_url),
+        fetch_crypto_prices(&client, config)
+    );
+    let mut rates = fiat_result?;
 
-    let warning = match fetch_crypto_prices(&client, config).await {
+    let warning = match crypto_result {
         Ok(crypto_rates) => {
             rates.extend(crypto_rates);
             None
@@ -81,25 +86,30 @@ pub async fn fetch_rates_with_config(config: &FetchConfig) -> Result<FetchResult
 async fn fetch_fiat_rates(
     client: &reqwest::Client,
     url: &str,
-) -> Result<HashMap<String, Decimal>, String> {
+) -> Result<HashMap<String, Decimal>, RateError> {
     let response = client
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch fiat rates: {e}"))?
+        .map_err(|e| RateError::Network(format!("failed to fetch fiat rates: {e}")))?
         .error_for_status()
-        .map_err(|e| format!("Fiat rates API error: {e}"))?;
+        .map_err(|e| RateError::Response(format!("fiat rates API error: {e}")))?;
     let data: FiatRatesResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse fiat rates: {e}"))?;
+        .map_err(|e| RateError::Response(format!("failed to parse fiat rates: {e}")))?;
+    if data.rates.is_empty() {
+        return Err(RateError::Response(
+            "fiat rates API returned no rates".to_string(),
+        ));
+    }
     Ok(data.rates)
 }
 
 async fn fetch_crypto_prices(
     client: &reqwest::Client,
     config: &FetchConfig,
-) -> Result<HashMap<String, Decimal>, String> {
+) -> Result<HashMap<String, Decimal>, RateError> {
     // Get crypto IDs from the currency registry (single source of truth)
     let crypto_currencies: Vec<_> = Currency::all()
         .filter(|c| c.is_crypto())
@@ -114,15 +124,15 @@ async fn fetch_crypto_prices(
     let response = build_crypto_prices_request(client, config, &ids)
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch crypto prices: {e}"))?
+        .map_err(|e| RateError::Network(format!("failed to fetch crypto prices: {e}")))?
         .error_for_status()
-        .map_err(|e| format!("Crypto prices API error: {e}"))?;
+        .map_err(|e| RateError::Response(format!("crypto prices API error: {e}")))?;
     let text = response
         .text()
         .await
-        .map_err(|e| format!("Failed to read crypto response: {e}"))?;
-    let data: CryptoPricesResponse =
-        serde_json::from_str(&text).map_err(|e| format!("Failed to parse crypto prices: {e}"))?;
+        .map_err(|e| RateError::Response(format!("failed to read crypto response: {e}")))?;
+    let data: CryptoPricesResponse = serde_json::from_str(&text)
+        .map_err(|e| RateError::Response(format!("failed to parse crypto prices: {e}")))?;
 
     let mut rates = HashMap::new();
     for (coingecko_id, code) in &crypto_currencies {
@@ -131,6 +141,12 @@ async fn fetch_crypto_prices(
                 rates.insert(code.to_string(), usd);
             }
         }
+    }
+
+    if rates.is_empty() {
+        return Err(RateError::Response(
+            "crypto prices API returned no usable prices".to_string(),
+        ));
     }
 
     Ok(rates)

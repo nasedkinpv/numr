@@ -3,16 +3,13 @@ name = "numr-cli"
 description = "Command-line interface for numr calculator"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
-
-[[bin]]
-name = "numr-cli"
-path = "src/main.rs"
+repository.workspace = true
 
 [dependencies]
 numr-core = { path = "../numr-core", features = ["fetch"] }
 clap.workspace = true
-anyhow.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

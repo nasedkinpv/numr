@@ -110,6 +110,13 @@ to miles
 * 12
 hosting_annual = _
 
+# Statistics, ranges, and angles
+median(10, 30, 20)
+clamp(120, 0, 100)
+90° to rad
+sin(90°)
+deg(pi)
+
 # --------------------------------------------
 # Summary
 # --------------------------------------------

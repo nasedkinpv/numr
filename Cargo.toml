@@ -3,8 +3,9 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/nasedkinpv/numr"
 
@@ -21,23 +22,22 @@ pest = "2"
 pest_derive = "2"
 
 # Async/HTTP (for currency rates)
-tokio = { version = "1", features = ["rt-multi-thread"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
+atomic-write-file = "0.3"
 
 # TUI
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = "0.30"
+crossterm = "0.29"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
 
-# Testing
-pretty_assertions = "1"
-
-# Optimized release profile (especially for WASM)
+# Runtime-oriented native release profile. WASM builds override opt-level to
+# `z` in numr-web's build entrypoints before wasm-opt performs its final pass.
 [profile.release]
 panic = "abort"
 codegen-units = 1
-opt-level = "z"
+opt-level = 3
 lto = true
 strip = true

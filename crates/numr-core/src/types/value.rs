@@ -1,6 +1,7 @@
 //! Core value representation
 
 use super::{CompoundUnit, Currency, Unit};
+use crate::EvalError;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +25,7 @@ impl NumberBase {
 }
 
 /// A computed value with optional unit/currency
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Value {
     /// Plain number
     Number(Decimal),
@@ -34,14 +35,14 @@ pub enum Value {
     Percentage(Decimal),
     /// Value with currency
     Currency { amount: Decimal, currency: Currency },
-    /// Value with simple unit (from parser)
+    /// Legacy serialized boundary representation. New values use `WithCompoundUnit`.
     WithUnit { amount: Decimal, unit: Unit },
     /// Value with compound unit (from computation, e.g., m², km/h)
     WithCompoundUnit { amount: Decimal, unit: CompoundUnit },
     /// No value (empty line or comment)
     Empty,
     /// Error during evaluation
-    Error(String),
+    Error(EvalError),
 }
 
 impl Value {
@@ -65,14 +66,22 @@ impl Value {
         Value::Currency { amount, currency }
     }
 
-    /// Create a value with simple unit
+    /// Create a quantity from a legacy unit identifier.
     pub fn with_unit(amount: Decimal, unit: Unit) -> Self {
-        Value::WithUnit { amount, unit }
+        Value::WithCompoundUnit {
+            amount,
+            unit: unit.to_compound(),
+        }
     }
 
     /// Create a value with compound unit
     pub fn with_compound_unit(amount: Decimal, unit: CompoundUnit) -> Self {
         Value::WithCompoundUnit { amount, unit }
+    }
+
+    /// Create a typed evaluation error from a compatibility message.
+    pub fn error(error: impl Into<EvalError>) -> Self {
+        Value::Error(error.into())
     }
 
     /// Get the numeric value as Decimal, ignoring units
@@ -104,6 +113,15 @@ impl Value {
         matches!(self, Value::Error(_))
     }
 
+    /// Return the structured error, if this value represents one.
+    #[must_use]
+    pub fn as_error(&self) -> Option<&EvalError> {
+        match self {
+            Value::Error(error) => Some(error),
+            _ => None,
+        }
+    }
+
     /// Return a new value with the same type but different amount
     /// Used for percentage operations that preserve the value type
     pub fn with_scaled_amount(&self, new_amount: Decimal) -> Value {
@@ -125,7 +143,12 @@ impl std::fmt::Display for Value {
             Value::BaseNumber { amount, base } => {
                 write!(f, "{}", format_number_base(*amount, *base))
             }
-            Value::Percentage(p) => write!(f, "{}%", format_number(*p * Decimal::from(100))),
+            Value::Percentage(p) => match p.checked_mul(Decimal::from(100)) {
+                Some(percent) => write!(f, "{}%", format_number(percent)),
+                // Programmatic callers can construct a percentage outside the
+                // representable display range. Formatting must remain total.
+                None => write!(f, "{}×100%", format_number(*p)),
+            },
             Value::Currency { amount, currency } => {
                 let formatted = format_currency_value(*amount, *currency);
                 if currency.symbol_after() {
@@ -138,7 +161,11 @@ impl std::fmt::Display for Value {
                 write!(f, "{} {}", format_number(*amount), unit)
             }
             Value::WithCompoundUnit { amount, unit } => {
-                write!(f, "{} {}", format_number(*amount), unit)
+                if unit.symbol == "°" {
+                    write!(f, "{}°", format_number(*amount))
+                } else {
+                    write!(f, "{} {}", format_number(*amount), unit)
+                }
             }
             Value::Empty => Ok(()),
             Value::Error(msg) => write!(f, "Error: {msg}"),
@@ -257,6 +284,14 @@ mod tests {
         assert_eq!(
             format_currency_with_precision(Decimal::from_str("0.0042105263").unwrap(), 8),
             "0.00421053"
+        );
+    }
+
+    #[test]
+    fn percentage_formatting_never_overflows() {
+        assert_eq!(
+            Value::Percentage(Decimal::MAX).to_string(),
+            format!("{}×100%", Decimal::MAX)
         );
     }
 }
