@@ -58,15 +58,25 @@ For 0.7.0, use `0.7.0`/`v0.7.0` in the commands below. For later releases, repla
    cargo build --release --locked --workspace
    ```
 
-6. Commit `Cargo.toml` and `Cargo.lock` together in the main repository. Commit the compatible source and generated WASM artifacts in the separate `numr-web` repository, then push both repositories before tagging the main release.
-7. Create and push the main repository tag:
+6. Commit `Cargo.toml` and `Cargo.lock` together in the main repository. Commit the compatible source and generated WASM artifacts in the separate `numr-web` repository.
+7. Push in this strict order so Web CI never checks out the previous core release:
+
+   1. push the main repository branch without a tag;
+   2. push the compatible `numr-web` branch;
+   3. wait for both repositories' CI runs to pass;
+   4. tag `numr-web` with the same version;
+   5. only then create and push the main release tag.
+
+   `numr-web/scripts/check-version-sync.mjs` must continue comparing the checked-out workspace version with Web, desktop, and generated WASM package versions.
+
+8. Create and push the main repository tag:
 
    ```bash
    git tag vX.Y.Z
    git push origin master --tags
    ```
 
-8. Monitor `.github/workflows/release.yml`. The tag-triggered workflow owns the release: it validates tag/version alignment, runs Rust/WASM gates, creates the GitHub Release, uploads locked binary builds, and then updates AUR and the Homebrew tap for stable tags.
+9. Monitor `.github/workflows/release.yml`. The tag-triggered workflow owns the release: it validates tag/version alignment, runs Rust/WASM gates, creates the GitHub Release, uploads locked binary builds, and then updates AUR and the Homebrew tap for stable tags.
 
 `gh release create` is recovery-only. Use it only if the automated release-creation job cannot be rerun and the GitHub Release is still missing.
 
