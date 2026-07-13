@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "numr-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "numr-core",
@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "numr-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "atomic-write-file",
  "console_error_panic_hook",
@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "numr-editor"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "console_error_panic_hook",
  "numr-core",
@@ -1462,7 +1462,7 @@ dependencies = [
 
 [[package]]
 name = "numr-tui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "atomic-write-file",

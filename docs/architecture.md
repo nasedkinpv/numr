@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the 0.7.0 component boundaries and the interfaces intended for reuse. The main rule is simple: calculation semantics live in `numr-core`; frontends own presentation and I/O policy.
+This document describes the 0.8.0 component boundaries and the interfaces intended for reuse. The main rule is simple: calculation semantics live in `numr-core`; frontends own presentation and I/O policy.
 
 ## Component Map
 
@@ -12,12 +12,14 @@ flowchart LR
     end
 
     subgraph Browser["numr-web (separate repository)"]
-        Views["app and web component"]
+        Views["web · Electrobun · custom element"]
+        BrowserEditor["NumrEditor<br/>CodeMirror buffer · gutters · keymap"]
         Session["NumrSession"]
         Rates["RatesService"]
         CoreWasm["numr-core WASM"]
         EditorWasm["numr-editor WASM"]
-        Views --> Session
+        Views --> BrowserEditor
+        BrowserEditor --> Session
         Views --> Rates
         Session --> CoreWasm
         Session --> EditorWasm
@@ -94,9 +96,11 @@ Rate refreshes use one long-lived background thread with one current-thread Toki
 
 `RatesService` is the single browser policy for rate cache age, provider requests, timeouts, concurrent fiat/crypto loading, partial-provider success, coalesced refreshes, and cleanup. It obtains crypto provider IDs from the core currency catalog, retaining a compatibility fallback only for older WASM packages.
 
-Token-to-HTML rendering and WASM module loading are also shared modules. A failed WASM import is removed from the loader cache so a later attempt can recover.
+`NumrEditor` is the only browser editor implementation. It owns the CodeMirror document/history, standard platform keymap, visible-range semantic decorations, line/error gutter, result gutter, and scrolling. It calls `NumrSession` for whole-document evaluation and tokenization; it does not introduce a JavaScript parser. The standalone site and Electrobun use the same application entrypoint, while the native custom element is a thin Shadow DOM shell around the same editor controller.
 
-The npm package file list includes the web component, TypeScript declarations, shared JavaScript adapters, and both generated WASM packages under `pkg/core` and `pkg/editor`.
+Safe token DOM/range mapping and WASM module loading are shared modules. A failed WASM import is removed from the loader cache so a later attempt can recover.
+
+Bun locally bundles CodeMirror into the committed standalone and custom-element entrypoints. There are no runtime CDN dependencies. The npm package file list contains the self-contained custom element, TypeScript declarations, and both generated WASM packages under `pkg/core` and `pkg/editor`.
 
 ## Rate Data Flow
 
@@ -132,7 +136,7 @@ cargo check --locked -p numr-editor --target wasm32-unknown-unknown --no-default
 cargo check --locked -p numr-core --target wasm32-unknown-unknown --all-features
 ```
 
-The separate web CI checks out both repositories into the required sibling layout, runs JavaScript contract tests, rebuilds both WASM packages with `--locked`, and fails if generated bindings or asset-version stamps differ from committed files.
+The separate web CI checks out both repositories into the required sibling layout, installs the frozen Bun lockfile, runs JavaScript contract tests, rebuilds both WASM packages and browser entrypoints with `--locked`, and fails if generated bindings or asset-version stamps differ from committed files.
 
 ## Dependency Direction
 

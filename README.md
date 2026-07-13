@@ -355,7 +355,7 @@ flowchart TB
     Editor["numr-editor<br/>highlighting · UTF-8 text primitives"]
     CLI["numr-cli<br/>CLI · REPL · JSON-RPC"]
     TUI["numr-tui<br/>event-driven terminal UI"]
-    Web["numr-web<br/>NumrSession · RatesService · views"]
+    Web["numr-web<br/>NumrEditor · NumrSession · RatesService"]
     Wasm["WASM adapters"]
     Rates["rate providers and caches"]
 
@@ -391,7 +391,7 @@ The parser rejects inputs above 16 KiB, more than 256 operations, or nesting dee
 
 The TUI redraws on events and active animations instead of a fixed frame loop. It caches document-derived render data, renders visible content, saves documents/configuration atomically, and uses one persistent current-thread Tokio rate worker with coalesced refresh requests.
 
-The web frontend lives in the separate [numr-web repository](https://github.com/nasedkinpv/numr-web), checked out as `numr/numr-web` for local and CI builds; it is not a Git submodule. Its shared `NumrSession` wraps generated WASM contracts, while `RatesService` owns browser cache/network policy. See [docs/architecture.md](docs/architecture.md) for component boundaries and data flows.
+The web frontend lives in the separate [numr-web repository](https://github.com/nasedkinpv/numr-web), checked out as `numr/numr-web` for local and CI builds; it is not a Git submodule. Web, Electrobun, and the native custom element share one CodeMirror-based `NumrEditor`; `NumrSession` wraps generated WASM contracts, while `RatesService` owns browser cache/network policy. The browser bundles are local and have no runtime CDN dependency. See [docs/architecture.md](docs/architecture.md) for component boundaries and data flows.
 
 Config and cache are stored in the OS config directory (`~/.config/numr/` on Linux, `~/Library/Application Support/numr/` on macOS). Settings persist automatically when toggled in the TUI.
 
