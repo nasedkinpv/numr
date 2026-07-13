@@ -3,16 +3,24 @@
 mod app;
 mod config;
 mod handlers;
+mod line_layout;
 mod persistence;
 mod popups;
+mod theme;
 mod ui;
 
 use anyhow::Result;
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
@@ -51,6 +59,7 @@ type CrosstermTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 struct TerminalGuard {
     terminal: CrosstermTerminal,
     active: bool,
+    keyboard_enhancement: bool,
 }
 
 impl TerminalGuard {
@@ -73,12 +82,33 @@ impl TerminalGuard {
             return Err(error.into());
         }
 
+        let keyboard_enhancement = matches!(supports_keyboard_enhancement(), Ok(true));
+        if keyboard_enhancement {
+            if let Err(error) = execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            ) {
+                let _ = disable_raw_mode();
+                let _ = execute!(
+                    io::stdout(),
+                    LeaveAlternateScreen,
+                    DisableMouseCapture,
+                    SetCursorStyle::DefaultUserShape
+                );
+                return Err(error.into());
+            }
+        }
+
         match Terminal::new(CrosstermBackend::new(stdout)) {
             Ok(terminal) => Ok(Self {
                 terminal,
                 active: true,
+                keyboard_enhancement,
             }),
             Err(error) => {
+                if keyboard_enhancement {
+                    let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+                }
                 let _ = disable_raw_mode();
                 let _ = execute!(
                     io::stdout(),
@@ -102,6 +132,12 @@ impl TerminalGuard {
         self.active = false;
 
         let mut first_error = None;
+        if self.keyboard_enhancement {
+            remember_first_error(
+                execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags),
+                &mut first_error,
+            );
+        }
         remember_first_error(disable_raw_mode(), &mut first_error);
         remember_first_error(
             execute!(
@@ -272,6 +308,10 @@ fn save_and_report(app: &mut App) {
     }
 }
 
+fn accepts_text_input(modifiers: KeyModifiers) -> bool {
+    modifiers.difference(KeyModifiers::SHIFT).is_empty()
+}
+
 /// Handle Standard mode keys (direct input like traditional editors)
 fn handle_standard_mode<B: ratatui::backend::Backend>(
     key: crossterm::event::KeyEvent,
@@ -314,7 +354,7 @@ where
         KeyCode::Char('z') if alt => app.toggle_wrap(),
         KeyCode::Char('h') if ctrl => app.toggle_header(),
         KeyCode::F(12) => app.toggle_debug(),
-        KeyCode::Char(c) => app.insert_char(c),
+        KeyCode::Char(c) if accepts_text_input(key.modifiers) => app.insert_char(c),
         KeyCode::Backspace => app.delete_char(),
         KeyCode::Delete => app.delete_char_forward(),
         KeyCode::Enter => app.new_line(),
@@ -482,7 +522,7 @@ fn handle_vim_insert_mode(
         KeyCode::Char('u') if ctrl => app.delete_to_line_start(),
         KeyCode::Backspace if alt => app.delete_word_backward(),
         KeyCode::Backspace if super_key => app.delete_to_line_start(),
-        KeyCode::Char(c) => app.insert_char(c),
+        KeyCode::Char(c) if accepts_text_input(key.modifiers) => app.insert_char(c),
         KeyCode::Backspace => app.delete_char(),
         KeyCode::Enter => app.new_line(),
         KeyCode::Up => app.move_up(),
@@ -573,6 +613,41 @@ mod tests {
         )
         .unwrap();
         assert_eq!(app.lines(), &["one ".to_string()]);
+
+        handle_standard_mode(
+            modified_key(KeyCode::Backspace, KeyModifiers::SUPER),
+            &mut app,
+            &terminal,
+            &rate_fetcher,
+        )
+        .unwrap();
+        assert_eq!(app.lines(), &[String::new()]);
+
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+            KeyModifiers::META,
+            KeyModifiers::HYPER,
+        ] {
+            handle_standard_mode(
+                modified_key(KeyCode::Char('x'), modifiers),
+                &mut app,
+                &terminal,
+                &rate_fetcher,
+            )
+            .unwrap();
+        }
+        assert_eq!(app.lines(), &[String::new()]);
+
+        handle_standard_mode(
+            modified_key(KeyCode::Char('X'), KeyModifiers::SHIFT),
+            &mut app,
+            &terminal,
+            &rate_fetcher,
+        )
+        .unwrap();
+        assert_eq!(app.lines(), &["X".to_string()]);
     }
 
     #[test]
@@ -623,6 +698,40 @@ mod tests {
         .unwrap();
         assert_eq!(app.lines(), &[String::new()]);
         assert_eq!(app.mode, InputMode::Insert);
+
+        for c in "hello world".chars() {
+            handle_vim_insert_mode(key(KeyCode::Char(c)), &mut app, &rate_fetcher).unwrap();
+        }
+        handle_vim_insert_mode(
+            modified_key(KeyCode::Backspace, KeyModifiers::ALT),
+            &mut app,
+            &rate_fetcher,
+        )
+        .unwrap();
+        assert_eq!(app.lines(), &["hello ".to_string()]);
+        handle_vim_insert_mode(
+            modified_key(KeyCode::Backspace, KeyModifiers::SUPER),
+            &mut app,
+            &rate_fetcher,
+        )
+        .unwrap();
+        assert_eq!(app.lines(), &[String::new()]);
+
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+            KeyModifiers::META,
+            KeyModifiers::HYPER,
+        ] {
+            handle_vim_insert_mode(
+                modified_key(KeyCode::Char('x'), modifiers),
+                &mut app,
+                &rate_fetcher,
+            )
+            .unwrap();
+        }
+        assert_eq!(app.lines(), &[String::new()]);
     }
 
     #[test]

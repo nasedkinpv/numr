@@ -9,8 +9,15 @@ use ratatui::{
 };
 
 use crate::app::{App, InputMode, KeybindingMode};
+use crate::line_layout::{highlight_line, marked_line, take_marker_cells, LineMarkers};
 use crate::popups::{draw_help_popup, draw_quit_popup};
-use numr_editor::{tokenize, tokenize_with_variables, TokenType};
+use crate::theme as palette;
+
+#[cfg(test)]
+use crate::line_layout::{token_color, tokenize_and_style};
+#[cfg(test)]
+use numr_editor::TokenType;
+#[cfg(test)]
 use std::collections::HashSet;
 
 // ========================================
@@ -22,30 +29,6 @@ const MAX_RESULT_WIDTH: u16 = 40;
 
 /// Estimated width of hints section for layout calculations
 const HINTS_WIDTH_ESTIMATE: u16 = 45;
-
-/// Color palette - minimal and elegant (TTY 16-color compatible)
-pub mod palette {
-    use ratatui::style::Color;
-
-    pub const DIM: Color = Color::DarkGray;
-    pub const ACCENT: Color = Color::Cyan;
-    pub const NUMBER: Color = Color::Yellow;
-    pub const OPERATOR: Color = Color::Magenta;
-    pub const VARIABLE: Color = Color::LightGreen;
-    pub const UNIT: Color = Color::Blue;
-    pub const ERROR: Color = Color::Red;
-    pub const KEYWORD: Color = Color::Cyan; // "in", "of", "to"
-    pub const TEXT: Color = Color::Gray; // unrecognized prose (neutral)
-    pub const POPUP_BG: Color = Color::Black;
-
-    /// Generate gradient color at position t (0.0 to 1.0)
-    /// Flows from Cyan (80, 180, 220) -> Magenta (180, 100, 220)
-    pub fn gradient(t: f32) -> Color {
-        let r = (80.0 + t * 100.0) as u8;
-        let g = (180.0 - t * 80.0) as u8;
-        Color::Rgb(r, g, 220)
-    }
-}
 
 fn result_column_width(app: &App, area: Rect) -> u16 {
     let content_width = app.max_result_width().max(8);
@@ -126,7 +109,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 
     if app.wrap_mode {
-        // Wrap mode: render line-by-line with results bottom-aligned
+        // Wrap mode: render each result beside the end of its expression.
         draw_wrapped_content(frame, main_area, app, max_result_width, line_num_width);
     } else {
         // Normal mode: three columns [nums | input | results]
@@ -177,7 +160,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-/// Draw content in wrap mode with results bottom-aligned to each paragraph
+/// Draw wrapped content with results anchored to each expression, before comments.
 fn draw_wrapped_content(
     frame: &mut Frame,
     area: Rect,
@@ -185,19 +168,27 @@ fn draw_wrapped_content(
     result_width: u16,
     line_num_width: u16,
 ) {
-    // Calculate cursor screen position for later
-    let (cursor_row_in_line, cursor_x_in_row) = app.get_cursor_wrapped_position();
     let variables = app.variable_names();
     let mut cursor_set = false;
+    let input_width = area.width.saturating_sub(line_num_width + result_width + 2);
 
     let mut current_visual_row = 0;
     let mut rendered_height = 0;
 
     // Iterate through all lines to find what to render
-    // This might be slow for huge files, but for a calculator it's fine.
-    // Optimization: we could cache heights or use a smarter data structure if needed.
     for (line_idx, line) in app.lines().iter().enumerate() {
-        let line_height = app.get_wrapped_height(line);
+        let markers = LineMarkers::new(
+            line,
+            (line_idx == app.cursor_y()).then_some(app.cursor_x()),
+            app.result_text(line_idx).is_some(),
+        );
+        let input_para =
+            Paragraph::new(marked_line(line, variables, &markers)).wrap(Wrap { trim: false });
+        let line_height = if line.is_empty() || input_width == 0 {
+            1
+        } else {
+            input_para.line_count(input_width).max(1)
+        };
 
         // Check if this line is visible
         if current_visual_row + line_height > app.viewport_y() {
@@ -252,47 +243,45 @@ fn draw_wrapped_content(
                     frame.render_widget(num_para, num_rect);
                 }
 
-                // Render input with wrap
-                let input_para = Paragraph::new(highlight_line(line, variables))
-                    .wrap(Wrap { trim: false })
-                    .scroll((skip_rows, 0));
+                frame.render_widget(input_para.scroll((skip_rows, 0)), input_area);
+                let marker_cells = take_marker_cells(
+                    frame.buffer_mut(),
+                    input_area,
+                    &markers,
+                    line_height,
+                    skip_rows as usize,
+                );
 
-                frame.render_widget(input_para, input_area);
-
-                // Set cursor position if this is the cursor line
                 if !cursor_set && line_idx == app.cursor_y() {
-                    let cursor_visual_row_in_area = cursor_row_in_line as u16;
-                    if cursor_visual_row_in_area >= skip_rows
-                        && cursor_visual_row_in_area < skip_rows + visible_rows
-                    {
-                        let screen_y = input_area.y + (cursor_visual_row_in_area - skip_rows);
-                        let screen_x = input_area.x + cursor_x_in_row as u16;
-                        if screen_x < input_area.x + input_area.width {
-                            frame.set_cursor_position(Position {
-                                x: screen_x,
-                                y: screen_y,
-                            });
-                            cursor_set = true;
-                        }
+                    let cursor = marker_cells.cursor.or_else(|| {
+                        (app.cursor_x() == 0 && skip_rows == 0 && input_area.width > 0).then_some(
+                            Position {
+                                x: input_area.x,
+                                y: input_area.y,
+                            },
+                        )
+                    });
+                    if let Some(cursor) = cursor {
+                        frame.set_cursor_position(cursor);
+                        cursor_set = true;
                     }
                 }
 
-                // Render result bottom-aligned (on the last row of this area)
-                // Only show result if we are showing the bottom of the line
-                let is_showing_bottom = skip_rows + visible_rows == line_height as u16;
-
-                if let (true, Some(result_text)) = (is_showing_bottom, app.result_text(line_idx)) {
-                    // Position result at bottom of result_area
-                    let result_y = result_area.y + result_area.height.saturating_sub(1);
-                    let bottom_area = Rect {
-                        x: result_area.x,
-                        y: result_y,
-                        width: result_area.width,
-                        height: 1,
-                    };
-                    let result_para =
-                        Paragraph::new(result_text.fg(palette::ACCENT)).right_aligned();
-                    frame.render_widget(result_para, bottom_area);
+                // Anchor the result to the final wrapped row of the expression.
+                // A trailing comment may continue below it without moving the result.
+                if let Some(result_text) = app.result_text(line_idx) {
+                    if let Some(result_marker) = marker_cells.result {
+                        let result_y = result_area.y + result_marker.y - input_area.y;
+                        let anchor_area = Rect {
+                            x: result_area.x,
+                            y: result_y,
+                            width: result_area.width,
+                            height: 1,
+                        };
+                        let result_para =
+                            Paragraph::new(result_text.fg(palette::ACCENT)).right_aligned();
+                        frame.render_widget(result_para, anchor_area);
+                    }
                 }
 
                 rendered_height += visible_rows as usize;
@@ -612,40 +601,6 @@ fn build_hints_line(app: &App) -> Vec<Span<'static>> {
     left
 }
 
-/// Syntax highlighting for a line
-fn highlight_line(input: &str, variables: &HashSet<String>) -> Line<'static> {
-    Line::from(tokenize_and_style(input, variables))
-}
-
-fn token_color(token_type: TokenType) -> Color {
-    match token_type {
-        TokenType::Number => palette::NUMBER,
-        TokenType::Operator => palette::OPERATOR,
-        TokenType::Variable => palette::VARIABLE,
-        TokenType::Unit => palette::UNIT,
-        TokenType::Currency => palette::UNIT,
-        TokenType::Keyword => palette::KEYWORD,
-        TokenType::Function => palette::OPERATOR,
-        TokenType::Comment => palette::DIM,
-        TokenType::Text => palette::TEXT,
-        TokenType::Whitespace => Color::Reset,
-        TokenType::Punctuation => palette::DIM,
-    }
-}
-
-/// Tokenize input and apply syntax highlighting
-fn tokenize_and_style(input: &str, variables: &HashSet<String>) -> Vec<Span<'static>> {
-    let tokens = if variables.is_empty() {
-        tokenize(input)
-    } else {
-        tokenize_with_variables(input, variables)
-    };
-    tokens
-        .into_iter()
-        .map(|t| Span::styled(t.text, Style::new().fg(token_color(t.token_type))))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -783,6 +738,48 @@ mod tests {
             terminal.draw(|frame| draw(frame, &app)).unwrap();
 
             assert_eq!(terminal.backend().buffer().area, Rect::new(0, 0, 12, 4));
+        }
+    }
+
+    #[test]
+    fn wrapped_result_follows_expression_end_not_trailing_comment() {
+        for comment in [
+            " // comment comment comment",
+            "//comment-comment-comment",
+            "#comment-comment-comment",
+        ] {
+            let backend = TestBackend::new(32, 8);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut app = App::default();
+            app.wrap_mode = true;
+            let line = format!("1 + 2 + 3 + 4 + 5 + 6 + 7{comment}");
+            app.set_lines_for_test(vec![line.clone()]);
+            let (width, height) = viewport_dimensions(&app, Rect::new(0, 0, 32, 8));
+            app.set_viewport_size(width, height);
+
+            assert!(app.get_wrapped_height(&line) > 2);
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+            let buffer = terminal.backend().buffer();
+            let expression_row = (0..buffer.area.height)
+                .find(|&y| (0..20).any(|x| buffer.cell((x, y)).unwrap().symbol() == "7"))
+                .expect("expression anchor should be visible");
+            let result_row = (0..buffer.area.height)
+                .find(|&y| {
+                    buffer.cell((30, y)).unwrap().symbol() == "2"
+                        && buffer.cell((31, y)).unwrap().symbol() == "8"
+                })
+                .expect("result should be visible");
+
+            assert_eq!(result_row, expression_row, "{comment}");
+            assert!(
+                (result_row + 1..buffer.area.height).any(|y| (0..20).any(|x| buffer
+                    .cell((x, y))
+                    .unwrap()
+                    .symbol()
+                    != " ")),
+                "comment should wrap below the result: {comment}"
+            );
         }
     }
 }

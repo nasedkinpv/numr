@@ -94,9 +94,9 @@ Rate refreshes use one long-lived background thread with one current-thread Toki
 
 `NumrSession` is the stable JavaScript adapter around generated bindings. It owns WASM payload parsing and exposes plain JavaScript document results, totals, variable names, tokens, currency metadata, and rate application. Views do not parse generated WASM JSON directly.
 
-`RatesService` is the single browser policy for rate cache age, provider requests, timeouts, concurrent fiat/crypto loading, partial-provider success, coalesced refreshes, and cleanup. It obtains crypto provider IDs from the core currency catalog, retaining a compatibility fallback only for older WASM packages.
+`RatesService` is the single browser policy for rate cache age, provider requests, timeouts, concurrent fiat/crypto loading, partial-provider success, coalesced refreshes, and cleanup. It obtains crypto provider IDs from the core currency catalog.
 
-`NumrEditor` is the only browser editor implementation. It owns the CodeMirror document/history, standard platform keymap, visible-range semantic decorations, line/error gutter, result gutter, and scrolling. It calls `NumrSession` for whole-document evaluation and tokenization; it does not introduce a JavaScript parser. The standalone site and Electrobun use the same application entrypoint, while the native custom element is a thin Shadow DOM shell around the same editor controller.
+`NumrEditor` is the only browser editor implementation. It owns the CodeMirror document/history, standard platform keymap, visible-range semantic decorations, optional line numbers, result anchoring, wrapping, and scrolling. It calls `NumrSession` for whole-document evaluation and tokenization; it does not introduce a JavaScript parser. The standalone site and Electrobun use the same application entrypoint, while the native custom element is a thin Shadow DOM shell around the same editor controller.
 
 Safe token DOM/range mapping and WASM module loading are shared modules. A failed WASM import is removed from the loader cache so a later attempt can recover.
 
@@ -136,7 +136,7 @@ cargo check --locked -p numr-editor --target wasm32-unknown-unknown --no-default
 cargo check --locked -p numr-core --target wasm32-unknown-unknown --all-features
 ```
 
-The separate web CI checks out both repositories into the required sibling layout, installs the frozen Bun lockfile, runs JavaScript contract tests, rebuilds both WASM packages and browser entrypoints with `--locked`, and fails if generated bindings or asset-version stamps differ from committed files.
+The separate web CI checks out both repositories into the required sibling layout, installs the frozen Bun lockfile, runs JavaScript and real-browser tests, checks the desktop entrypoints, rebuilds both WASM packages and browser entrypoints with `--locked`, and fails if generated bindings or asset-version stamps differ from committed files.
 
 ## Dependency Direction
 

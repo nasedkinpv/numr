@@ -1,6 +1,7 @@
 //! Application state and logic
 
 use crate::config::Config;
+use crate::line_layout::{measure_wrapped_cursor, wrapped_height};
 use crate::persistence::atomic_write;
 use numr_core::{Decimal, Engine, FetchConfig, RateError, Value};
 use numr_editor::char_to_byte_idx;
@@ -9,7 +10,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use textwrap::{wrap, Options, WordSplitter};
 
 // ========================================
 // Status Display Constants
@@ -436,43 +436,23 @@ impl ViewState {
         self.ensure_cursor_visible(doc, wrap_mode);
     }
 
-    pub fn get_wrapped_height(&self, text: &str) -> usize {
-        if text.is_empty() || self.viewport_width == 0 {
-            return 1;
-        }
-        let options = Options::new(self.viewport_width)
-            .break_words(true)
-            .word_splitter(WordSplitter::NoHyphenation);
-        wrap(text, options).len().max(1)
+    pub fn get_wrapped_height(&self, text: &str, variables: &HashSet<String>) -> usize {
+        wrapped_height(text, variables, self.viewport_width)
     }
 
+    #[cfg(test)]
     pub fn get_cursor_wrapped_position(&self, doc: &Document) -> (usize, usize) {
         if self.viewport_width == 0 {
             return (0, self.cursor_x);
         }
 
         let line = doc.line(self.cursor_y).unwrap_or("");
-        let options = Options::new(self.viewport_width)
-            .break_words(true)
-            .word_splitter(WordSplitter::NoHyphenation);
-        let wrapped = wrap(line, options);
-
-        if wrapped.is_empty() {
-            return (0, self.cursor_x);
-        }
-
-        let mut current_len = 0;
-        for (idx, part) in wrapped.iter().enumerate() {
-            let part_len = part.chars().count();
-            if self.cursor_x <= current_len + part_len {
-                return (idx, self.cursor_x - current_len);
-            }
-            current_len += part_len;
-        }
-
-        let last_row = wrapped.len().saturating_sub(1);
-        let last_len = wrapped.last().map(|s| s.chars().count()).unwrap_or(0);
-        (last_row, last_len)
+        measure_wrapped_cursor(
+            line,
+            doc.variable_names(),
+            self.cursor_x,
+            self.viewport_width,
+        )
     }
 
     pub fn ensure_cursor_visible(&mut self, doc: &Document, wrap_mode: bool) {
@@ -691,26 +671,16 @@ impl ViewState {
         let mut visual_row = 0;
         for (i, line) in doc.lines().iter().enumerate() {
             if i == self.cursor_y {
-                let options = Options::new(self.viewport_width)
-                    .break_words(true)
-                    .word_splitter(WordSplitter::NoHyphenation);
-                let wrapped = wrap(line, options);
-
-                if wrapped.is_empty() {
-                    return visual_row;
-                }
-
-                let mut current_len = 0;
-                for (idx, part) in wrapped.iter().enumerate() {
-                    let part_len = part.chars().count();
-                    if self.cursor_x <= current_len + part_len {
-                        return visual_row + idx;
-                    }
-                    current_len += part_len;
-                }
-                return visual_row + wrapped.len().saturating_sub(1);
+                return visual_row
+                    + measure_wrapped_cursor(
+                        line,
+                        doc.variable_names(),
+                        self.cursor_x,
+                        self.viewport_width,
+                    )
+                    .0;
             }
-            visual_row += self.get_wrapped_height(line);
+            visual_row += self.get_wrapped_height(line, doc.variable_names());
         }
         visual_row
     }
@@ -1043,11 +1013,14 @@ impl App {
     }
 
     /// Calculate wrapped height of a line
+    #[cfg(test)]
     pub fn get_wrapped_height(&self, text: &str) -> usize {
-        self.view.get_wrapped_height(text)
+        self.view
+            .get_wrapped_height(text, self.document.variable_names())
     }
 
     /// Get cursor position within wrapped line: (row_offset_within_line, x_position)
+    #[cfg(test)]
     pub fn get_cursor_wrapped_position(&self) -> (usize, usize) {
         self.view.get_cursor_wrapped_position(&self.document)
     }
@@ -1214,6 +1187,7 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::widgets::{Paragraph, Wrap};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temporary_directory(test_name: &str) -> PathBuf {
@@ -1241,6 +1215,37 @@ mod tests {
     }
 
     #[test]
+    fn wrap_measurement_matches_ratatui_for_whitespace_and_unicode() {
+        let cases = [
+            "",
+            "hello world",
+            "               4 Indent",
+            "1 + 2          // trailing comment",
+            "1 + 2//comment-without-space",
+            "€20 + 30° + 漢字 + 🧮",
+            "e\u{301} + 1",
+        ];
+
+        for width in [0, 1, 4, 8, 12] {
+            for text in cases {
+                let expected = if text.is_empty() || width == 0 {
+                    1
+                } else {
+                    Paragraph::new(crate::line_layout::highlight_line(text, &HashSet::new()))
+                        .wrap(Wrap { trim: false })
+                        .line_count(width)
+                        .max(1)
+                };
+                assert_eq!(
+                    wrapped_height(text, &HashSet::new(), width as usize),
+                    expected,
+                    "width={width}, text={text:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_get_cursor_wrapped_position() {
         let mut app = App {
             document: Document::from_lines(vec!["hello world".to_string()]),
@@ -1258,8 +1263,34 @@ mod tests {
         assert_eq!(row, 1, "cursor_x=6 should be on row 1");
 
         app.view.cursor_x = 8;
-        let (row, _col) = app.get_cursor_wrapped_position();
-        assert_eq!(row, 1, "cursor_x=8 should be on row 1");
+        assert_eq!(app.get_cursor_wrapped_position(), (1, 2));
+
+        app.document = Document::from_lines(vec!["hello   world".to_string()]);
+        app.set_viewport_size(16, 20);
+        app.view.cursor_x = 7;
+        assert_eq!(app.get_cursor_wrapped_position(), (0, 7));
+    }
+
+    #[test]
+    fn wrapped_cursor_respects_grapheme_and_cell_boundaries() {
+        let mut app = App {
+            document: Document::from_lines(vec!["e\u{301} 🧮 + 1".to_string()]),
+            ..Default::default()
+        };
+        app.set_viewport_size(4, 20);
+
+        app.view.cursor_x = 1;
+        assert_eq!(
+            app.get_cursor_wrapped_position(),
+            (0, 0),
+            "a cursor inside a combining grapheme stays on its rendered cell"
+        );
+
+        app.view.cursor_x = 3;
+        assert_eq!(app.get_cursor_wrapped_position(), (0, 2));
+
+        app.view.cursor_x = 4;
+        assert_eq!(app.get_cursor_wrapped_position(), (1, 0));
     }
 
     #[test]

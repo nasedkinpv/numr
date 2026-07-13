@@ -20,7 +20,7 @@ The workspace MSRV is Rust 1.88. Keep native release builds runtime-oriented; th
 
 ## Release Checklist
 
-For 0.7.0, use `0.7.0`/`v0.7.0` in the commands below. For later releases, replace `X.Y.Z` consistently.
+Replace `X.Y.Z` consistently in the commands below.
 
 1. Bump the workspace version in `Cargo.toml`. In the separate web repository, bump `package.json` and `electrobun.config.ts`; regenerated WASM package manifests must end at the same version.
 2. Refresh the workspace lockfile after the version bump:
@@ -47,6 +47,8 @@ For 0.7.0, use `0.7.0`/`v0.7.0` in the commands below. For later releases, repla
    cd numr-web
    npm run build
    npm run check
+   npm run test:browser
+   npm run desktop:check
    cd ..
    ```
 
@@ -62,10 +64,21 @@ For 0.7.0, use `0.7.0`/`v0.7.0` in the commands below. For later releases, repla
 7. Push in this strict order so Web CI never checks out the previous core release:
 
    1. push the main repository branch without a tag;
-   2. push the compatible `numr-web` branch;
-   3. wait for both repositories' CI runs to pass;
-   4. tag `numr-web` with the same version;
-   5. only then create and push the main release tag.
+   2. wait for the main repository CI run to pass and keep `master` unchanged;
+   3. push the compatible `numr-web` branch;
+   4. wait for Web CI and the live `numr.cc` deployment to pass;
+   5. create and push only the matching `numr-web` tag:
+
+      ```bash
+      git -C numr-web tag vX.Y.Z
+      git -C numr-web push origin vX.Y.Z
+      ```
+
+   6. only then create and push the main release tag.
+
+   If `master` changes after the Web artifacts were generated, rerun the Web
+   build and verification commands from checklist item 4, then update the Web
+   commit before pushing it.
 
    `numr-web/scripts/check-version-sync.mjs` must continue comparing the checked-out workspace version with Web, desktop, and generated WASM package versions.
 
@@ -73,7 +86,7 @@ For 0.7.0, use `0.7.0`/`v0.7.0` in the commands below. For later releases, repla
 
    ```bash
    git tag vX.Y.Z
-   git push origin master --tags
+   git push origin vX.Y.Z
    ```
 
 9. Monitor `.github/workflows/release.yml`. The tag-triggered workflow owns the release: it validates tag/version alignment, runs Rust/WASM gates, creates the GitHub Release, uploads locked binary builds, and then updates AUR and the Homebrew tap for stable tags.
@@ -94,10 +107,11 @@ Both `numr-core` and `numr-editor` compile with `--no-default-features --feature
 cd numr-web
 npm run check
 npm run build
+npm run test:browser
 npm run serve
 ```
 
-The web CI checks out `nasedkinpv/numr` into `numr/`, checks out `nasedkinpv/numr-web` into `numr/numr-web`, runs JavaScript contract tests, rebuilds both WASM packages with `--locked`, and rejects uncommitted generated output.
+Run `npx playwright install chromium webkit` once before the local browser gate. The web CI checks out `nasedkinpv/numr` into `numr/`, checks out `nasedkinpv/numr-web` into `numr/numr-web`, runs JavaScript contract and real-browser layout tests, rebuilds both WASM packages with `--locked`, and rejects uncommitted generated output.
 
 ## Language Semantics
 

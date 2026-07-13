@@ -12,7 +12,7 @@ use ratatui::{
 };
 
 use crate::app::KeybindingMode;
-use crate::ui::palette;
+use crate::theme as palette;
 
 /// Render the shared popup background and optional titled separator.
 fn render_popup_frame(
@@ -196,6 +196,8 @@ fn vim_help_rows() -> Vec<Row<'static>> {
         Row::new(vec!["o / O", "New line below/above"]),
         Row::new(vec!["s", "Substitute char"]),
         Row::new(vec!["C", "Change to end of line"]),
+        Row::new(vec!["Option+Backspace / Ctrl+w", "Delete previous word"]),
+        Row::new(vec!["Cmd+Backspace / Ctrl+u", "Delete to line start"]),
         Row::new(vec!["Esc", "Back to normal mode"]),
         Row::new(vec!["", ""]),
         Row::new(vec!["Editing", ""]).style(Style::new().bold().fg(palette::VARIABLE)),
@@ -230,7 +232,8 @@ fn standard_help_rows() -> Vec<Row<'static>> {
         Row::new(vec!["Type directly", "Insert text"]),
         Row::new(vec!["Backspace / Delete", "Delete char"]),
         Row::new(vec!["Option+Backspace / Ctrl+w", "Delete previous word"]),
-        Row::new(vec!["Ctrl+u / Ctrl+k", "Delete to line start/end"]),
+        Row::new(vec!["Cmd+Backspace / Ctrl+u", "Delete to line start"]),
+        Row::new(vec!["Ctrl+k", "Delete to line end"]),
         Row::new(vec!["Enter", "New line"]),
         Row::new(vec!["", ""]),
         Row::new(vec!["General", ""]).style(Style::new().bold().fg(palette::VARIABLE)),

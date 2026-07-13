@@ -1,11 +1,5 @@
 <p align="center">
-<pre>
-███    ██ ██    ██ ███    ███ ██████
-████   ██ ██    ██ ████  ████ ██   ██
-██ ██  ██ ██    ██ ██ ████ ██ ██████
-██  ██ ██ ██    ██ ██  ██  ██ ██   ██
-██   ████  ██████  ██      ██ ██   ██
-</pre>
+  <img src="numr-github-header.png" alt="numr">
 </p>
 
 <p align="center">
@@ -39,7 +33,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Syntax highlighting**: Numbers, operators, variables, units, and currencies
 - **Comments**: Lines starting with `#` or `//` are treated as comments
 - **Continuation**: Start a line with an operator (`+ 10`, `* 2`) to continue from the previous result
-- **Wrap mode**: Toggle text wrapping with bottom-aligned results
+- **Wrap mode**: Toggle text wrapping; results follow the final expression row and ignore trailing comments
 - **Grouped totals**: Currencies and units summed separately in footer (respects exchange rates)
 
 ## Installation
@@ -190,6 +184,8 @@ The TUI supports two keybinding modes: **Vim** (default) and **Standard**. Press
 | `Esc` | Return to Normal mode |
 | Type | Insert text |
 | `Backspace` / `Delete` | Delete char backward/forward |
+| `Option+Backspace` / `Ctrl+w` | Delete previous word |
+| `Cmd+Backspace` / `Ctrl+u` | Delete to line start |
 | `Enter` | New line |
 | `Arrows` / `PageUp/Down` | Navigate |
 | `Home` / `End` | Line start/end |
@@ -208,9 +204,12 @@ Direct input like traditional editors - no modal switching required.
 | `Ctrl+a` / `Ctrl+e` | Line start/end |
 | `Ctrl+g` | Go to first line |
 | `Backspace` / `Delete` | Delete char |
-| `Ctrl+k` | Delete line |
+| `Option+Backspace` / `Ctrl+w` | Delete previous word |
+| `Cmd+Backspace` / `Ctrl+u` | Delete to line start |
+| `Ctrl+k` | Delete to line end |
 | `Enter` | New line |
-| `Ctrl+w/l/h` | Toggle wrap/line numbers/header |
+| `Option+z` | Toggle wrap |
+| `Ctrl+l` / `Ctrl+h` | Toggle line numbers/header |
 | `?` / `F1` | Toggle help |
 | `Ctrl+s` | Save |
 | `Ctrl+r` | Refresh rates |

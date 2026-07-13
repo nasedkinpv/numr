@@ -267,6 +267,20 @@ pub fn tokenize_with_variables(input: &str, variables: &HashSet<String>) -> Vec<
         .collect()
 }
 
+/// Return the executable prefix of a line, excluding trailing whitespace and comments.
+///
+/// UI surfaces use this as the semantic anchor for results when a logical line wraps.
+pub fn expression_prefix(input: &str) -> &str {
+    let mut byte_len = 0;
+    for token in tokenize(input) {
+        if token.token_type == TokenType::Comment {
+            break;
+        }
+        byte_len += token.text.len();
+    }
+    input[..byte_len].trim_end()
+}
+
 /// Find variable name if line is an assignment (e.g., "tax = 20%" returns Some("tax"))
 fn find_assignment_variable(input: &str) -> Option<String> {
     let parts: Vec<&str> = input.splitn(2, '=').collect();
@@ -444,6 +458,18 @@ mod tests {
         let tokens = tokenize("100 + 50 // note");
         assert!(has_token(&tokens, "100", TokenType::Number));
         assert!(has_token(&tokens, "// note", TokenType::Comment));
+    }
+
+    #[test]
+    fn expression_prefix_excludes_comments_and_trailing_whitespace() {
+        for (input, expected) in [
+            ("100 + 50 // note", "100 + 50"),
+            ("90° to rad   # angle", "90° to rad"),
+            ("# comment", ""),
+            ("1 + 2", "1 + 2"),
+        ] {
+            assert_eq!(expression_prefix(input), expected, "{input}");
+        }
     }
 
     #[test]

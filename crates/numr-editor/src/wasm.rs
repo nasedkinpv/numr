@@ -8,7 +8,8 @@
 use wasm_bindgen::prelude::*;
 
 use crate::highlight::{
-    tokenize as tokenize_line, tokenize_with_variables as tokenize_line_with_variables,
+    expression_prefix, tokenize as tokenize_line,
+    tokenize_with_variables as tokenize_line_with_variables,
 };
 use std::collections::HashSet;
 
@@ -29,6 +30,12 @@ pub fn tokenize(input: &str) -> String {
 pub fn tokenize_with_variables(input: &str, variable_names: &str) -> String {
     let variables: HashSet<String> = variable_names.lines().map(str::to_owned).collect();
     tokens_to_json(tokenize_line_with_variables(input, &variables))
+}
+
+/// Return the UTF-16 offset where the executable expression ends.
+#[wasm_bindgen(js_name = expressionPrefixUtf16Len)]
+pub fn expression_prefix_utf16_len(input: &str) -> usize {
+    expression_prefix(input).encode_utf16().count()
 }
 
 fn tokens_to_json(tokens: impl serde::Serialize) -> String {
