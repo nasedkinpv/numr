@@ -111,7 +111,7 @@ npm run test:browser
 npm run serve
 ```
 
-Run `npx playwright install chromium webkit` once before the local browser gate. The web CI checks out `nasedkinpv/numr` into `numr/`, checks out `nasedkinpv/numr-web` into `numr/numr-web`, runs JavaScript contract and real-browser layout tests, rebuilds both WASM packages with `--locked`, and rejects uncommitted generated output.
+Run `npx playwright install chromium webkit` once before the local browser gate. The web CI checks out `nasedkinpv/numr` into `numr/`, checks out `nasedkinpv/numr-web` into `numr/numr-web`, tests the committed deployable artifacts, rebuilds both WASM packages with `--locked`, and rechecks the generated contracts and desktop entrypoints.
 
 ## Language Semantics
 
