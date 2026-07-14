@@ -1,8 +1,5 @@
 line = { SOI ~ (assignment | expression)? ~ trailing_text? ~ EOI }
 
-// Exact line match without trailing prose - used for continuation detection
-line_no_prose = { SOI ~ (assignment | expression)? ~ trailing_text? ~ EOI }
-
 // -----------------------------------------------------------------------------
 // STATEMENTS
 // -----------------------------------------------------------------------------

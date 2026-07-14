@@ -45,7 +45,7 @@ flowchart LR
 
 `numr-core` owns parsing, evaluation, values, units, currencies, grouped totals, exchange-rate graph semantics, and shared language metadata. It has no UI dependency.
 
-`Engine::new()` is deterministic and has no filesystem or network side effects. Native adapters explicitly call `load_rates_from_cache`, `save_rates_to_cache`, and optional `fetch` APIs. Browser adapters inject rates with the WASM `apply_rates` boundary. Tests and embedders can supply a caller-created `RateCache` through `Engine::with_rate_cache`.
+`Engine::new()` is deterministic and has no filesystem or network side effects. Native adapters explicitly call `load_rates_from_cache`, `save_rates_to_cache`, and optional `fetch` APIs. Browser adapters inject rates with the WASM `apply_rates` boundary.
 
 The main evaluation surfaces are:
 
@@ -56,7 +56,7 @@ The main evaluation surfaces are:
 
 `LineResult` records the input, value, continuation-consumption state, and whether the line is a display-only aggregate. Continuations only consume the preceding successful value when their evaluation succeeds. Aggregate queries do not feed later totals.
 
-The parser applies resource checks before Pest or the recursive evaluator receives input. Defaults are 16 KiB per expression, 256 operation tokens, 128 parenthesis levels, and at most 128 fuzzy suffix attempts. Callers that need tighter expression limits can use `parse_line_with_limits` or `try_parse_exact_with_limits`.
+The parser applies fixed resource checks before Pest or the recursive evaluator receives input: 16 KiB per expression, 256 operation tokens, 128 parenthesis levels, and at most 128 fuzzy suffix attempts. Adapters may impose tighter transport limits before calling the core.
 
 Failures cross the core boundary as typed errors:
 
@@ -64,7 +64,7 @@ Failures cross the core boundary as typed errors:
 - `EvalError` describes checked arithmetic, division, operands, variables, functions, and conversions.
 - `RateError` describes rate validation, network responses, and cache/filesystem failures.
 
-The evaluator uses checked Decimal operations on user-controlled paths so invalid or extreme input becomes a `Value::Error` instead of a process panic.
+The evaluator uses checked Decimal operations on user-controlled paths so invalid or extreme input becomes a `Value::Error` instead of a process panic. Physical quantities have one representation, `CompoundUnit`, for both simple and derived units; conversion and grouped totals do not branch through a legacy unit model.
 
 `catalog` is the source of truth for `BUILTIN_FUNCTIONS`, `KEYWORDS`, `MATH_CONSTANTS`, `ANSWER_ALIASES`, and `currency_catalog()`. The editor and web rate provider consume this metadata rather than maintaining independent language tables.
 
@@ -82,9 +82,11 @@ The JSON-RPC parser/validator/dispatcher is independent of stdin/stdout, which k
 
 `numr-tui` owns the document buffer, cursor/viewport state, keybindings, configuration, persistence, and terminal lifecycle. The core and editor remain unaware of Ratatui.
 
-The main loop is event-driven. It redraws after input, state changes, or while a status/rate animation is active; idle documents do not run at a fixed frame rate. Document evaluation refreshes a cached render state containing formatted results, errors, variable names, totals, and result widths, and the renderer limits widget work to visible content.
+The main loop is event-driven. It redraws after input and state changes, or while the rate-loading indicator is animated; static status messages schedule one wakeup for expiry instead of running a frame loop. Document evaluation refreshes a cached render state containing formatted results, errors, variable names, totals, and result widths, and the renderer limits widget work to visible content.
 
-Documents and configuration use same-directory atomic replacement after flushing and syncing the temporary file. A terminal RAII guard restores raw mode, alternate screen, mouse capture, and cursor visibility across normal exits and errors.
+Documents and configuration use same-directory atomic replacement after flushing and syncing the temporary file. Ratatui owns raw mode and the alternate screen through `DefaultTerminal`; a small RAII session adds and restores mouse capture, keyboard enhancement, and cursor visibility across normal exits and errors.
+
+Wrapped layout delegates measurement to Ratatui `Paragraph`. Results anchor to the final wrapped row of the executable expression; comments have their own wrap boundary and cannot move the result. Cursor placement alone uses private cell metadata because it must resolve grapheme and terminal-cell positions.
 
 Rate refreshes use one long-lived background thread with one current-thread Tokio runtime. Requests are coalesced while a fetch is active, so repeated refresh input does not create overlapping runtimes or HTTP work.
 

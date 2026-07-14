@@ -5,5 +5,5 @@ pub mod unit;
 mod value;
 
 pub use currency::{Currency, CurrencyDef, CURRENCIES};
-pub use unit::{CompoundUnit, Dimensions, RuntimeUnitDef, Unit, UnitType, UNITS};
+pub use unit::{CompoundUnit, Dimensions, RuntimeUnitDef, UNITS};
 pub use value::{format_currency_value, format_number, NumberBase, Value};

@@ -9,7 +9,7 @@ use rust_decimal::MathematicalOps;
 use crate::cache::RateCache;
 use crate::error::EvalError;
 use crate::parser::{Ast, BinaryOp, Expr};
-use crate::types::{unit, Currency, NumberBase, Unit, Value};
+use crate::types::{unit, Currency, NumberBase, Value};
 
 /// Evaluation context with variables and rates
 #[derive(Clone)]
@@ -24,14 +24,6 @@ impl EvalContext {
         Self {
             variables: HashMap::new(),
             rate_cache: RateCache::default(),
-        }
-    }
-
-    #[must_use]
-    pub fn with_rate_cache(rate_cache: RateCache) -> Self {
-        Self {
-            variables: HashMap::new(),
-            rate_cache,
         }
     }
 
@@ -92,7 +84,6 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
         Expr::Number(n) => Value::Number(*n),
         Expr::Percentage(p) => Value::Percentage(*p),
         Expr::Currency { amount, currency } => Value::currency(*amount, *currency),
-        Expr::WithUnit { amount, unit } => Value::with_unit(*amount, *unit),
         Expr::WithCompoundUnit { amount, unit } => Value::with_compound_unit(*amount, unit.clone()),
 
         Expr::Variable(name) => ctx
@@ -116,11 +107,6 @@ fn eval_expr(expr: &Expr, ctx: &EvalContext) -> Value {
                 Value::Currency { amount, currency } => {
                     checked_mul(amount, *percentage, "calculating a percentage")
                         .map(|amount| Value::currency(amount, currency))
-                        .unwrap_or_else(error_value)
-                }
-                Value::WithUnit { amount, unit } => {
-                    checked_mul(amount, *percentage, "calculating a percentage")
-                        .map(|amount| Value::with_unit(amount, unit))
                         .unwrap_or_else(error_value)
                 }
                 Value::WithCompoundUnit { amount, unit } => {
@@ -191,7 +177,6 @@ fn eval_binary_op(op: BinaryOp, left: Value, right: Value, ctx: &EvalContext) ->
     // Wrap result in appropriate type
     match result_type {
         ResultType::Currency(c) => Value::currency(result, c),
-        ResultType::Unit(u) => Value::with_unit(result, u),
         ResultType::Percentage => Value::Percentage(result),
         ResultType::Number => Value::Number(result),
     }
@@ -235,25 +220,7 @@ fn try_percentage_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Value>
 fn try_multiply_mixed(left: &Value, right: &Value) -> Option<Value> {
     match (left, right) {
         // unit × currency → currency (e.g., 45h * $85 = $3825)
-        (
-            Value::WithUnit { amount: l, .. },
-            Value::Currency {
-                amount: r,
-                currency,
-            },
-        )
-        | (
-            Value::Currency {
-                amount: l,
-                currency,
-            },
-            Value::WithUnit { amount: r, .. },
-        ) => Some(
-            checked_mul(*l, *r, "multiplying a unit and currency")
-                .map(|amount| Value::currency(amount, *currency))
-                .unwrap_or_else(error_value),
-        ),
-        // compound unit × currency → currency
+        // unit × currency → currency
         (
             Value::WithCompoundUnit { amount: l, .. },
             Value::Currency {
@@ -288,22 +255,11 @@ fn try_multiply_mixed(left: &Value, right: &Value) -> Option<Value> {
 /// Try to handle unit operations to create/manipulate compound units
 /// e.g., 5m * 10m = 50 m², 100km / 2h = 50 km/h, 12 m² + 15 m² = 27 m²
 fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Value> {
-    // Extract compound units from either simple or compound unit values
+    // Extract the canonical unit representation.
     let (l_amount, l_unit) = match left {
-        Value::WithUnit { amount, unit } => (*amount, unit.to_compound()),
         Value::WithCompoundUnit { amount, unit } => (*amount, unit.clone()),
         Value::Number(n) | Value::BaseNumber { amount: n, .. } => {
             // Number × Unit → preserve unit
-            if let Value::WithUnit { amount, unit } = right {
-                return match op {
-                    BinaryOp::Multiply => Some(
-                        checked_mul(*n, *amount, "multiplying a unit")
-                            .map(|amount| Value::with_unit(amount, *unit))
-                            .unwrap_or_else(error_value),
-                    ),
-                    _ => None,
-                };
-            }
             if let Value::WithCompoundUnit { amount, unit } = right {
                 return match op {
                     BinaryOp::Multiply => Some(
@@ -320,58 +276,26 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
     };
 
     let (r_amount, r_unit) = match right {
-        Value::WithUnit { amount, unit } => (*amount, unit.to_compound()),
         Value::WithCompoundUnit { amount, unit } => (*amount, unit.clone()),
         Value::Number(n) | Value::BaseNumber { amount: n, .. } => {
             // Unit × Number → preserve unit
             return match op {
-                BinaryOp::Multiply => {
-                    if matches!(left, Value::WithUnit { .. }) {
-                        let Value::WithUnit { amount, unit } = left else {
-                            unreachable!()
-                        };
-                        Some(
-                            checked_mul(*amount, *n, "multiplying a unit")
-                                .map(|amount| Value::with_unit(amount, *unit))
-                                .unwrap_or_else(error_value),
-                        )
-                    } else {
-                        Some(
-                            checked_mul(l_amount, *n, "multiplying a unit")
-                                .map(|amount| Value::with_compound_unit(amount, l_unit))
-                                .unwrap_or_else(error_value),
-                        )
-                    }
-                }
+                BinaryOp::Multiply => Some(
+                    checked_mul(l_amount, *n, "multiplying a unit")
+                        .map(|amount| Value::with_compound_unit(amount, l_unit))
+                        .unwrap_or_else(error_value),
+                ),
                 BinaryOp::Divide if n.is_zero() => Some(error_value(EvalError::DivisionByZero)),
-                BinaryOp::Divide => {
-                    if matches!(left, Value::WithUnit { .. }) {
-                        let Value::WithUnit { amount, unit } = left else {
-                            unreachable!()
-                        };
-                        Some(
-                            amount
-                                .checked_div(*n)
-                                .map(|amount| Value::with_unit(amount, *unit))
-                                .unwrap_or_else(|| {
-                                    error_value(EvalError::Overflow {
-                                        operation: "dividing a unit",
-                                    })
-                                }),
-                        )
-                    } else {
-                        Some(
-                            l_amount
-                                .checked_div(*n)
-                                .map(|amount| Value::with_compound_unit(amount, l_unit))
-                                .unwrap_or_else(|| {
-                                    error_value(EvalError::Overflow {
-                                        operation: "dividing a unit",
-                                    })
-                                }),
-                        )
-                    }
-                }
+                BinaryOp::Divide => Some(
+                    l_amount
+                        .checked_div(*n)
+                        .map(|amount| Value::with_compound_unit(amount, l_unit))
+                        .unwrap_or_else(|| {
+                            error_value(EvalError::Overflow {
+                                operation: "dividing a unit",
+                            })
+                        }),
+                ),
                 BinaryOp::Power => Some(Value::error("Power not supported for unit values")),
                 _ => None,
             };
@@ -469,7 +393,6 @@ fn try_unit_compound_op(op: BinaryOp, left: &Value, right: &Value) -> Option<Val
 /// Result type for binary operations
 enum ResultType {
     Currency(Currency),
-    Unit(Unit),
     Number,
     Percentage,
 }
@@ -515,42 +438,6 @@ fn coerce_operands(
                 ResultType::Currency(*lc)
             };
             Ok((*l, right, result_type))
-        }
-
-        // Same unit type
-        (
-            Value::WithUnit {
-                amount: l,
-                unit: lu,
-            },
-            Value::WithUnit {
-                amount: r,
-                unit: ru,
-            },
-        ) => {
-            if lu == ru {
-                Ok((*l, *r, ResultType::Unit(*lu)))
-            } else if let Some(converted) =
-                unit::try_convert(*r, &ru.to_compound(), &lu.to_compound())?
-            {
-                Ok((*l, converted, ResultType::Unit(*lu)))
-            } else {
-                Err(EvalError::InvalidOperands(format!(
-                    "cannot convert {ru} to {lu}"
-                )))
-            }
-        }
-
-        // Unit + Currency: incompatible
-        (Value::WithUnit { .. }, Value::Currency { .. })
-        | (Value::Currency { .. }, Value::WithUnit { .. }) => {
-            if matches!(op, BinaryOp::Add | BinaryOp::Subtract) {
-                Err(EvalError::InvalidOperands(
-                    "cannot add/subtract units and currency".to_string(),
-                ))
-            } else {
-                Err(EvalError::InvalidOperands("invalid operands".to_string()))
-            }
         }
 
         // Number + Currency: propagate currency
@@ -608,16 +495,6 @@ fn coerce_operands(
         (Value::WithCompoundUnit { .. }, Value::Currency { .. })
         | (Value::Currency { .. }, Value::WithCompoundUnit { .. }) => {
             Err(EvalError::InvalidOperands("invalid operands".to_string()))
-        }
-
-        // Number + Unit: propagate unit
-        (Value::Number(l), Value::WithUnit { amount: r, unit })
-        | (Value::BaseNumber { amount: l, .. }, Value::WithUnit { amount: r, unit })
-        | (Value::WithUnit { amount: l, unit }, Value::Number(r)) => {
-            Ok((*l, *r, ResultType::Unit(*unit)))
-        }
-        (Value::WithUnit { amount: l, unit }, Value::BaseNumber { amount: r, .. }) => {
-            Ok((*l, *r, ResultType::Unit(*unit)))
         }
 
         // Percentage + Percentage: preserve percentage type
@@ -695,37 +572,13 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
     // Try as unit (simple or compound)
     if let Some(target_compound) = unit::parse_unit(target) {
         match value {
-            Value::WithUnit {
-                amount,
-                unit: from_unit,
-            } => {
-                match unit::try_convert(amount, &from_unit.to_compound(), &target_compound) {
-                    Ok(Some(converted)) => {
-                        // If target is a simple unit, return WithUnit for backward compat
-                        if let Some(target_unit) = Unit::parse(target) {
-                            return Value::with_unit(converted, target_unit);
-                        }
-                        return Value::with_compound_unit(converted, target_compound);
-                    }
-                    Err(error) => return error_value(error),
-                    Ok(None) => {}
-                }
-                return Value::error(format!(
-                    "Cannot convert {from_unit} to {}",
-                    target_compound.symbol
-                ));
-            }
             Value::WithCompoundUnit {
                 amount,
                 unit: from_unit,
             } => {
                 match unit::try_convert(amount, &from_unit, &target_compound) {
                     Ok(Some(converted)) => {
-                        // If target is a simple unit, return WithUnit for backward compat
-                        if let Some(target_unit) = Unit::parse(target) {
-                            return Value::with_unit(converted, target_unit);
-                        }
-                        return Value::with_compound_unit(converted, target_compound);
+                        return Value::with_compound_unit(converted, target_compound)
                     }
                     Err(error) => return error_value(error),
                     Ok(None) => {}
@@ -736,18 +589,10 @@ fn eval_conversion(value: Value, target: &str, ctx: &EvalContext) -> Value {
                 ));
             }
             // Plain number → attach unit (e.g., "18.39 in months" → "18.39 months")
-            Value::Number(n) => {
-                if let Some(target_unit) = Unit::parse(target) {
-                    return Value::with_unit(n, target_unit);
-                }
-                return Value::with_compound_unit(n, target_compound);
-            }
+            Value::Number(n) => return Value::with_compound_unit(n, target_compound),
             // Currency ratio → attach unit (e.g., "usd/usd in months" → dimensionless with unit)
             Value::Currency { amount, .. } => {
-                if let Some(target_unit) = Unit::parse(target) {
-                    return Value::with_unit(amount, target_unit);
-                }
-                return Value::with_compound_unit(amount, target_compound);
+                return Value::with_compound_unit(amount, target_compound)
             }
             _ => {}
         }
@@ -1182,12 +1027,8 @@ mod tests {
     #[test]
     fn test_unit_addition() {
         let result = eval_str("5 km + 3 km");
-        // May return WithUnit or WithCompoundUnit depending on implementation
         assert!(
-            matches!(
-                result,
-                Value::WithUnit { .. } | Value::WithCompoundUnit { .. }
-            ),
+            matches!(result, Value::WithCompoundUnit { .. }),
             "Expected unit value, got {:?}",
             result
         );
@@ -1197,12 +1038,8 @@ mod tests {
     #[test]
     fn test_unit_subtraction() {
         let result = eval_str("10 kg - 3 kg");
-        // May return WithUnit or WithCompoundUnit depending on implementation
         assert!(
-            matches!(
-                result,
-                Value::WithUnit { .. } | Value::WithCompoundUnit { .. }
-            ),
+            matches!(result, Value::WithCompoundUnit { .. }),
             "Expected unit value, got {:?}",
             result
         );
@@ -1212,20 +1049,14 @@ mod tests {
     #[test]
     fn test_unit_multiply_by_number() {
         let result = eval_str("5 km * 2");
-        assert!(matches!(
-            result,
-            Value::WithUnit { .. } | Value::WithCompoundUnit { .. }
-        ));
+        assert!(matches!(result, Value::WithCompoundUnit { .. }));
         assert_eq!(result.as_f64(), Some(10.0));
     }
 
     #[test]
     fn test_unit_divide_by_number() {
         let result = eval_str("10 km / 2");
-        assert!(matches!(
-            result,
-            Value::WithUnit { .. } | Value::WithCompoundUnit { .. }
-        ));
+        assert!(matches!(result, Value::WithCompoundUnit { .. }));
         assert_eq!(result.as_f64(), Some(5.0));
     }
 

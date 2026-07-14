@@ -234,100 +234,7 @@ Direct input like traditional editors - no modal switching required.
 
 **Compound unit aliases**: `kph` (km/h), `mph` (mi/h), `mps` (m/s), `m2` (m²), `km2` (km²), `ft2` (ft²)
 
-<details>
-<summary>Full examples</summary>
-
-### Arithmetic
-
-```
-10 + 20           → 30
-100 - 25          → 75
-6 * 7             → 42
-100 / 4           → 25
-2 ^ 8             → 256
-```
-
-### Number Base Conversions
-
-```
-22 to hex         → 0x16
-22 to bin         → 0b10110
--42 to hex        → -0x2a
-```
-
-### Percentages
-
-```
-20% of 150        → 30
-100 + 15%         → 115
-$50 - 10%         → $45
-```
-
-### Variables
-
-```
-price = $100
-tax = 8%
-price + tax       → $108
-```
-
-### Comments
-
-```
-# This is a comment
-// This is also a comment
-Groceries         $45.00
-```
-
-### Continuation
-
-```
-$100              → $100
-+ $50             → $150 (continues from previous)
-* 2               → $300
-- 10%             → $270
-total = _         → $270 (_ or ANS references previous result)
-```
-
-### Functions
-
-```
-sum(10, 20, 30)   → 60
-avg(10, 20, 30)   → 20
-min(5, 3, 8)      → 3
-max(5, 3, 8)      → 8
-median(5, 3, 8)   → 5
-clamp(120, 0, 100) → 100
-sqrt(16)          → 4
-abs(-5)           → 5
-round(3.7)        → 4
-floor(3.7)        → 3
-ceil(3.2)         → 4
-sin(pi / 2)       → 1
-sin(90°)          → 1
-cos(0)            → 1
-90° to rad        → 1.57 rad
-deg(pi)           → 180
-ln(e)             → 1
-log(100)          → 2
-log_y(2, 8)       → 3
-factorial(5)      → 120
-mod(10, 3)        → 1
-```
-
-Constants: `pi`, `e`, `phi`.
-
-### Compound Units
-
-```
-5 m * 10 m        → 50 m²
-100 km / 2 h      → 50 km/h
-50 kph * 2 h      → 100 km
-50 kph in mps     → 13.89 m/s
-25 km / 100 km    → 0.25 (dimensionless)
-```
-
-</details>
+See [example.numr](example.numr) for a complete, executable tour of arithmetic, variables, continuations, functions, currencies, angles, and compound units. Constants are `pi`, `e`, and `phi`.
 
 ## Supported Units
 
@@ -348,49 +255,7 @@ Constants: `pi`, `e`, `phi`.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    Core["numr-core<br/>parser · evaluator · values · catalogs"]
-    Editor["numr-editor<br/>highlighting · UTF-8 text primitives"]
-    CLI["numr-cli<br/>CLI · REPL · JSON-RPC"]
-    TUI["numr-tui<br/>event-driven terminal UI"]
-    Web["numr-web<br/>NumrEditor · NumrSession · RatesService"]
-    Wasm["WASM adapters"]
-    Rates["rate providers and caches"]
-
-    CLI --> Core
-    TUI --> Core
-    TUI --> Editor
-    Web --> Wasm
-    Wasm --> Core
-    Wasm --> Editor
-    CLI -. "explicit I/O" .-> Rates
-    TUI -. "background worker" .-> Rates
-    Web -. "browser service" .-> Rates
-```
-
-```
-numr/
-├── crates/
-│   ├── numr-core/      # Core evaluation engine (WASM-compatible)
-│   │   ├── parser/     # Pest PEG grammar and AST builder
-│   │   ├── eval/       # Expression evaluation with unit/currency handling
-│   │   ├── types/      # Value, Currency, Unit registries
-│   │   ├── cache/      # Exchange rate caching with BFS path finding
-│   │   ├── fetch.rs    # HTTP rate fetching (optional "fetch" feature)
-│   │   └── wasm.rs     # WASM bindings (optional "wasm" feature)
-│   ├── numr-editor/    # Syntax highlighting and UTF-8 text primitives (WASM-compatible)
-│   ├── numr-tui/       # Terminal UI (Ratatui) with vim/standard modes
-│   └── numr-cli/       # CLI, interactive REPL, and JSON-RPC server
-```
-
-The core library (`numr-core`) is UI-agnostic and can be embedded in CLI, TUI, GUI, or WASM contexts. `Engine::new()` is deterministic and performs no filesystem or network I/O. Frontends opt into cache loading, persistence, and rate fetching explicitly. The stable document boundary is `DocumentResult`, produced by `evaluate_document`; streaming adapters can use `append_lines`. Language metadata is shared through the core catalog instead of duplicated in frontends.
-
-The parser rejects inputs above 16 KiB, more than 256 operations, or nesting deeper than 128 levels before recursive evaluation. Parsing, evaluation, and rate/cache failures use the typed `ParseError`, `EvalError`, and `RateError` APIs. The native-only `fetch` feature enables HTTP fetching; `numr-core` and `numr-editor` otherwise compile for `wasm32-unknown-unknown` with their `wasm` feature.
-
-The TUI redraws on events and active animations instead of a fixed frame loop. It caches document-derived render data, renders visible content, saves documents/configuration atomically, and uses one persistent current-thread Tokio rate worker with coalesced refresh requests.
-
-The web frontend lives in the separate [numr-web repository](https://github.com/nasedkinpv/numr-web), checked out as `numr/numr-web` for local and CI builds; it is not a Git submodule. Web, Electrobun, and the native custom element share one CodeMirror-based `NumrEditor`; `NumrSession` wraps generated WASM contracts, while `RatesService` owns browser cache/network policy. The browser bundles are local and have no runtime CDN dependency. See [docs/architecture.md](docs/architecture.md) for component boundaries and data flows.
+Calculation semantics live in the pure, WASM-compatible `numr-core`; `numr-editor` provides shared highlighting and UTF-8 primitives; CLI, TUI, web, and desktop remain thin I/O and presentation adapters. See [docs/architecture.md](docs/architecture.md) for the complete component map, contracts, dependency direction, and rate data flow. The web frontend is maintained in the separate [numr-web repository](https://github.com/nasedkinpv/numr-web).
 
 Config and cache are stored in the OS config directory (`~/.config/numr/` on Linux, `~/Library/Application Support/numr/` on macOS). Settings persist automatically when toggled in the TUI.
 

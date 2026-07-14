@@ -1,6 +1,6 @@
 //! Core value representation
 
-use super::{CompoundUnit, Currency, Unit};
+use super::{CompoundUnit, Currency};
 use crate::EvalError;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -35,9 +35,7 @@ pub enum Value {
     Percentage(Decimal),
     /// Value with currency
     Currency { amount: Decimal, currency: Currency },
-    /// Legacy serialized boundary representation. New values use `WithCompoundUnit`.
-    WithUnit { amount: Decimal, unit: Unit },
-    /// Value with compound unit (from computation, e.g., m², km/h)
+    /// Value with a physical unit (simple or compound, e.g., km, m², km/h)
     WithCompoundUnit { amount: Decimal, unit: CompoundUnit },
     /// No value (empty line or comment)
     Empty,
@@ -46,32 +44,14 @@ pub enum Value {
 }
 
 impl Value {
-    /// Create a new number value
-    pub fn number(n: Decimal) -> Self {
-        Value::Number(n)
-    }
-
     /// Create a new number value displayed in a specific numeric base
     pub fn with_base(amount: Decimal, base: NumberBase) -> Self {
         Value::BaseNumber { amount, base }
     }
 
-    /// Create a new percentage value (input as decimal, e.g., 0.20 for 20%)
-    pub fn percentage(p: Decimal) -> Self {
-        Value::Percentage(p)
-    }
-
     /// Create a currency value
     pub fn currency(amount: Decimal, currency: Currency) -> Self {
         Value::Currency { amount, currency }
-    }
-
-    /// Create a quantity from a legacy unit identifier.
-    pub fn with_unit(amount: Decimal, unit: Unit) -> Self {
-        Value::WithCompoundUnit {
-            amount,
-            unit: unit.to_compound(),
-        }
     }
 
     /// Create a value with compound unit
@@ -91,7 +71,6 @@ impl Value {
             Value::BaseNumber { amount, .. } => Some(*amount),
             Value::Percentage(p) => Some(*p),
             Value::Currency { amount, .. } => Some(*amount),
-            Value::WithUnit { amount, .. } => Some(*amount),
             Value::WithCompoundUnit { amount, .. } => Some(*amount),
             Value::Empty | Value::Error(_) => None,
         }
@@ -127,7 +106,6 @@ impl Value {
     pub fn with_scaled_amount(&self, new_amount: Decimal) -> Value {
         match self {
             Value::Currency { currency, .. } => Value::currency(new_amount, *currency),
-            Value::WithUnit { unit, .. } => Value::with_unit(new_amount, *unit),
             Value::WithCompoundUnit { unit, .. } => {
                 Value::with_compound_unit(new_amount, unit.clone())
             }
@@ -156,9 +134,6 @@ impl std::fmt::Display for Value {
                 } else {
                     write!(f, "{}{}", currency.symbol(), formatted)
                 }
-            }
-            Value::WithUnit { amount, unit } => {
-                write!(f, "{} {}", format_number(*amount), unit)
             }
             Value::WithCompoundUnit { amount, unit } => {
                 if unit.symbol == "°" {

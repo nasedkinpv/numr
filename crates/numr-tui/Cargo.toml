@@ -16,7 +16,6 @@ numr-core = { path = "../numr-core", features = ["fetch"] }
 numr-editor = { path = "../numr-editor" }
 ratatui.workspace = true
 crossterm.workspace = true
-anyhow.workspace = true
 clap.workspace = true
 directories = "6"
 tokio.workspace = true

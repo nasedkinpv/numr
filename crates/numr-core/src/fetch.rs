@@ -91,9 +91,8 @@ async fn fetch_fiat_rates(
         .get(url)
         .send()
         .await
-        .map_err(|e| RateError::Network(format!("failed to fetch fiat rates: {e}")))?
-        .error_for_status()
-        .map_err(|e| RateError::Response(format!("fiat rates API error: {e}")))?;
+        .map_err(|e| RateError::Network(format!("failed to fetch fiat rates: {e}")))?;
+    check_status(response.status(), "fiat rates API")?;
     let data: FiatRatesResponse = response
         .json()
         .await
@@ -124,9 +123,8 @@ async fn fetch_crypto_prices(
     let response = build_crypto_prices_request(client, config, &ids)
         .send()
         .await
-        .map_err(|e| RateError::Network(format!("failed to fetch crypto prices: {e}")))?
-        .error_for_status()
-        .map_err(|e| RateError::Response(format!("crypto prices API error: {e}")))?;
+        .map_err(|e| RateError::Network(format!("failed to fetch crypto prices: {e}")))?;
+    check_status(response.status(), "crypto prices API")?;
     let text = response
         .text()
         .await
@@ -150,6 +148,16 @@ async fn fetch_crypto_prices(
     }
 
     Ok(rates)
+}
+
+fn check_status(status: reqwest::StatusCode, provider: &str) -> Result<(), RateError> {
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(RateError::Response(format!(
+            "{provider} returned HTTP {status}"
+        )))
+    }
 }
 
 fn build_crypto_prices_request(
@@ -201,6 +209,18 @@ mod tests {
         assert_eq!(config.fiat_rates_url, DEFAULT_FIAT_RATES_URL);
         assert_eq!(config.crypto_rates_url, DEFAULT_CRYPTO_RATES_URL);
         assert!(config.coingecko_api_key.is_none());
+    }
+
+    #[test]
+    fn rate_limit_errors_are_concise() {
+        let error = check_status(reqwest::StatusCode::TOO_MANY_REQUESTS, "crypto prices API")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "invalid rate response: crypto prices API returned HTTP 429 Too Many Requests"
+        );
+        assert!(!error.contains("url"));
     }
 
     #[test]

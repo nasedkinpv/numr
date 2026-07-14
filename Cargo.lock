@@ -1464,7 +1464,6 @@ dependencies = [
 name = "numr-tui"
 version = "0.8.0"
 dependencies = [
- "anyhow",
  "atomic-write-file",
  "clap",
  "crossterm",

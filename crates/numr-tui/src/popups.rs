@@ -1,7 +1,7 @@
 //! Popup dialogs (help, quit confirmation)
 
 use ratatui::{
-    layout::{Constraint, Flex, Layout, Rect},
+    layout::{Constraint, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{
@@ -22,7 +22,7 @@ fn render_popup_frame(
     height: u16,
     title: Option<&str>,
 ) -> Rect {
-    let popup_area = centered_rect(area, width, height);
+    let popup_area = area.centered(Constraint::Length(width), Constraint::Length(height));
 
     // Clear and background
     frame.render_widget(Clear, popup_area);
@@ -75,7 +75,7 @@ fn draw_separator(frame: &mut Frame, area: Rect, y_offset: u16) {
     let spans: Vec<Span> = (0..width)
         .map(|i| {
             let t = i as f32 / (width - 1).max(1) as f32;
-            Span::styled("─", Style::new().fg(palette::gradient(t)))
+            Span::styled("─", Style::new().fg(palette::BRAND_GRADIENT.sample(t)))
         })
         .collect();
 
@@ -254,15 +254,4 @@ pub fn help_max_scroll(area_height: u16, keybinding_mode: KeybindingMode) -> usi
         KeybindingMode::Standard => standard_help_rows().len(),
     };
     rows_count.saturating_sub(max_visible)
-}
-
-/// Center a rect with fixed width and height
-fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
-    let [area] = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .areas(area);
-    let [area] = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .areas(area);
-    area
 }

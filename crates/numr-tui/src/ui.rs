@@ -1,5 +1,7 @@
 //! Minimal UI rendering
 
+use std::collections::HashSet;
+
 use ratatui::{
     layout::{Constraint, Layout, Position, Rect},
     style::{Color, Style, Stylize},
@@ -9,7 +11,9 @@ use ratatui::{
 };
 
 use crate::app::{App, InputMode, KeybindingMode};
-use crate::line_layout::{highlight_line, marked_line, take_marker_cells, LineMarkers};
+use crate::line_layout::{
+    highlight_line, marked_line, take_marker_cells, wrapped_result_row, LineMarkers,
+};
 use crate::popups::{draw_help_popup, draw_quit_popup};
 use crate::theme as palette;
 
@@ -17,8 +21,6 @@ use crate::theme as palette;
 use crate::line_layout::{token_color, tokenize_and_style};
 #[cfg(test)]
 use numr_editor::TokenType;
-#[cfg(test)]
-use std::collections::HashSet;
 
 // ========================================
 // Layout Constants
@@ -177,11 +179,11 @@ fn draw_wrapped_content(
 
     // Iterate through all lines to find what to render
     for (line_idx, line) in app.lines().iter().enumerate() {
-        let markers = LineMarkers::new(
-            line,
-            (line_idx == app.cursor_y()).then_some(app.cursor_x()),
-            app.result_text(line_idx).is_some(),
-        );
+        let markers =
+            LineMarkers::new(line, (line_idx == app.cursor_y()).then_some(app.cursor_x()));
+        let result_text = app.result_text(line_idx);
+        let result_row =
+            result_text.and_then(|_| wrapped_result_row(line, variables, input_width as usize));
         let input_para =
             Paragraph::new(marked_line(line, variables, &markers)).wrap(Wrap { trim: false });
         let line_height = if line.is_empty() || input_width == 0 {
@@ -269,9 +271,11 @@ fn draw_wrapped_content(
 
                 // Anchor the result to the final wrapped row of the expression.
                 // A trailing comment may continue below it without moving the result.
-                if let Some(result_text) = app.result_text(line_idx) {
-                    if let Some(result_marker) = marker_cells.result {
-                        let result_y = result_area.y + result_marker.y - input_area.y;
+                if let (Some(result_text), Some(result_row)) = (result_text, result_row) {
+                    let visible_result_row = result_row.checked_sub(skip_rows as usize);
+                    if let Some(row) = visible_result_row.filter(|row| *row < visible_rows as usize)
+                    {
+                        let result_y = result_area.y + row as u16;
                         let anchor_area = Rect {
                             x: result_area.x,
                             y: result_y,
@@ -279,7 +283,7 @@ fn draw_wrapped_content(
                             height: 1,
                         };
                         let result_para =
-                            Paragraph::new(result_text.fg(palette::ACCENT)).right_aligned();
+                            Paragraph::new(highlighted_value_line(result_text)).right_aligned();
                         frame.render_widget(result_para, anchor_area);
                     }
                 }
@@ -344,13 +348,28 @@ fn draw_results(frame: &mut Frame, area: Rect, app: &App) {
     let lines: Vec<Line> = (start..end)
         .map(|line_idx| {
             app.result_text(line_idx)
-                .map(|text| Line::from(text.fg(palette::ACCENT)))
+                .map(highlighted_value_line)
                 .unwrap_or_default()
         })
         .collect();
 
     let paragraph = Paragraph::new(lines).right_aligned();
     frame.render_widget(paragraph, area);
+}
+
+fn highlighted_value_line(text: &str) -> Line<'static> {
+    highlight_line(text, &HashSet::new())
+}
+
+fn total_line(text: &str) -> Line<'static> {
+    let mut spans = vec!["total: ".dim()];
+    spans.extend(
+        highlighted_value_line(text)
+            .spans
+            .into_iter()
+            .map(Stylize::bold),
+    );
+    Line::from(spans)
 }
 
 fn draw_debug_panel(frame: &mut Frame, area: Rect, app: &App) {
@@ -374,53 +393,9 @@ fn draw_debug_panel(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-/// Smooth easing function (ease-in-out)
-fn ease_in_out(t: f64) -> f64 {
-    if t < 0.5 {
-        2.0 * t * t
-    } else {
-        1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
-    }
-}
-
-/// Generate a flowing gradient color for loading animation
+/// Sample the brand gradient only for the genuinely time-varying loading state.
 fn loading_pulse_color(start: std::time::Instant) -> Color {
-    let elapsed = start.elapsed().as_millis() as f64;
-    // Smooth cycle every 1.5s
-    let raw_t = (elapsed / 1500.0).fract();
-    // Ping-pong: 0->1->0
-    let t = if raw_t < 0.5 {
-        raw_t * 2.0
-    } else {
-        2.0 - raw_t * 2.0
-    };
-    let t = ease_in_out(t);
-
-    // Flow from Cyan (80, 180, 220) -> Magenta (180, 100, 220)
-    let r = (80.0 + t * 100.0) as u8;
-    let g = (180.0 - t * 80.0) as u8;
-    let b = 220;
-    Color::Rgb(r, g, b)
-}
-
-/// Generate a flowing gradient color for saved state
-fn saved_pulse_color(start: std::time::Instant) -> Color {
-    let elapsed = start.elapsed().as_millis() as f64;
-    // Smooth cycle every 1.5s
-    let raw_t = (elapsed / 1500.0).fract();
-    // Ping-pong: 0->1->0
-    let t = if raw_t < 0.5 {
-        raw_t * 2.0
-    } else {
-        2.0 - raw_t * 2.0
-    };
-    let t = ease_in_out(t);
-
-    // Flow from Green (100, 200, 120) -> Teal (80, 180, 180)
-    let r = (100.0 - t * 20.0) as u8;
-    let g = (200.0 - t * 20.0) as u8;
-    let b = (120.0 + t * 60.0) as u8;
-    Color::Rgb(r, g, b)
+    palette::BRAND_GRADIENT.pulse(start, std::time::Duration::from_millis(1800))
 }
 
 /// Calculate footer height needed (1 or 2 rows based on content width)
@@ -456,8 +431,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, _result_width: u16) {
             Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
 
         // Totals row (right-aligned): "total:" dim, values bold
-        let total_line = Line::from(vec!["total: ".dim(), totals_str.bold()]);
-        let totals_widget = Paragraph::new(total_line).right_aligned();
+        let totals_widget = Paragraph::new(total_line(totals_str)).right_aligned();
         frame.render_widget(totals_widget, totals_area);
 
         // Hints row: split into left (mode+file) and right (keybindings)
@@ -484,8 +458,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, _result_width: u16) {
         frame.render_widget(left_footer, left_area);
 
         if !totals_str.is_empty() {
-            let total_line = Line::from(vec!["total: ".dim(), totals_str.bold()]);
-            let right_footer = Paragraph::new(total_line).right_aligned();
+            let right_footer = Paragraph::new(total_line(totals_str)).right_aligned();
             frame.render_widget(right_footer, right_area);
         }
     }
@@ -557,16 +530,10 @@ fn build_hints_parts(app: &App) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
 /// Build the mode/status indicator span
 fn build_mode_indicator(app: &App) -> Span<'static> {
     if let Some(msg) = &app.status_message {
-        let bg = if msg == crate::app::STATUS_SAVED {
-            // Animated green gradient for saved
-            app.status_start
-                .map(saved_pulse_color)
-                .unwrap_or(palette::VARIABLE)
-        } else {
-            // Animated cyan↔magenta gradient for other status messages
-            app.status_start
-                .map(loading_pulse_color)
-                .unwrap_or(palette::ACCENT)
+        let bg = match msg.as_str() {
+            crate::app::STATUS_SAVED => palette::VARIABLE,
+            crate::app::STATUS_RATES_UNAVAILABLE => palette::ERROR,
+            _ => palette::ACCENT,
         };
         Span::styled(
             format!(" {} ", msg.to_uppercase()),
@@ -665,6 +632,29 @@ mod tests {
             ("# note", palette::DIM),
         ] {
             assert!(has_token(&pairs, text, color), "missing {text:?}");
+        }
+    }
+
+    #[test]
+    fn results_and_totals_use_the_token_palette() {
+        let result = highlighted_value_line("$120  90 km");
+        let total = total_line("$120  90 km");
+
+        for line in [result, total] {
+            let pairs = line
+                .spans
+                .iter()
+                .map(|span| {
+                    (
+                        span.content.to_string(),
+                        span.style.fg.unwrap_or(Color::Reset),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert!(has_token(&pairs, "$", palette::UNIT));
+            assert!(has_token(&pairs, "120", palette::NUMBER));
+            assert!(has_token(&pairs, "90", palette::NUMBER));
+            assert!(has_token(&pairs, "km", palette::UNIT));
         }
     }
 

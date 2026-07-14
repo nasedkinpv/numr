@@ -1,6 +1,6 @@
 //! Abstract Syntax Tree definitions
 
-use crate::types::{unit, CompoundUnit, Currency, Unit};
+use crate::types::{unit, CompoundUnit, Currency};
 use pest::iterators::Pairs;
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -33,9 +33,7 @@ pub enum Expr {
     Percentage(Decimal),
     /// Currency value
     Currency { amount: Decimal, currency: Currency },
-    /// Legacy boundary representation. New parsing emits `WithCompoundUnit`.
-    WithUnit { amount: Decimal, unit: Unit },
-    /// Value with compound unit (e.g., 50 km/h, 100 m²)
+    /// Value with a physical unit (simple or compound, e.g., km, m², km/h)
     WithCompoundUnit { amount: Decimal, unit: CompoundUnit },
     /// Variable reference
     Variable(String),
@@ -73,7 +71,7 @@ pub enum BinaryOp {
 /// Build AST from parsed pairs
 pub fn build_ast(pairs: Pairs<'_, Rule>) -> Result<Ast, String> {
     for pair in pairs {
-        if pair.as_rule() == Rule::line || pair.as_rule() == Rule::line_no_prose {
+        if pair.as_rule() == Rule::line {
             let inner = pair.into_inner();
             let mut assignment = None;
             let mut expression = None;
@@ -149,58 +147,13 @@ fn build_calculation(pairs: pest::iterators::Pairs<'_, Rule>) -> Result<Expr, St
 
     for pair in pairs {
         match pair.as_rule() {
-            Rule::number => {
-                let n = parse_number_str(pair.as_str())?;
-                terms.push(Expr::Number(n));
-            }
-            Rule::percentage => {
-                let inner = pair.into_inner().next().ok_or("Expected number")?;
-                let n = parse_number_str(inner.as_str())?;
-                terms.push(Expr::Percentage(n / Decimal::from(100)));
-            }
-            Rule::currency_value => {
-                let (amount, currency) = parse_currency_value(pair)?;
-                terms.push(Expr::Currency { amount, currency });
-            }
-            Rule::angle_value => {
-                let amount = parse_number_str(
-                    pair.into_inner()
-                        .next()
-                        .ok_or("Expected angle value")?
-                        .as_str(),
-                )?;
-                terms.push(Expr::WithCompoundUnit {
-                    amount,
-                    unit: unit::parse_unit("deg").ok_or("Degree unit is not registered")?,
-                });
-            }
-            Rule::suffixed_number => {
-                terms.push(parse_suffixed_number(pair)?);
-            }
-            Rule::variable_ref => {
-                let name = pair.as_str().to_string();
-                terms.push(Expr::Variable(name));
-            }
-            Rule::parenthesized => {
-                let inner = pair.into_inner().next().ok_or("Expected expression")?;
-                terms.push(build_expression(inner.into_inner())?);
-            }
-            Rule::percentage_of => {
-                let expr = parse_percentage_of(pair)?;
-                terms.push(expr);
-            }
-            // Rule::atom_with_conversion removed
-            Rule::function_call => {
-                let expr = parse_function_call(pair)?;
-                terms.push(expr);
-            }
             Rule::add => ops.push(BinaryOp::Add),
             Rule::subtract => ops.push(BinaryOp::Subtract),
             Rule::multiply => ops.push(BinaryOp::Multiply),
             Rule::divide => ops.push(BinaryOp::Divide),
             Rule::power => ops.push(BinaryOp::Power),
             Rule::conversion_op => ops.push(BinaryOp::Conversion),
-            _ => {}
+            _ => terms.push(build_term(pair)?),
         }
     }
 
@@ -441,6 +394,8 @@ fn build_term(pair: pest::iterators::Pair<'_, Rule>) -> Result<Expr, String> {
             let inner = pair.into_inner().next().ok_or("Expected expression")?;
             build_expression(inner.into_inner())
         }
+        Rule::percentage_of => parse_percentage_of(pair),
+        Rule::function_call => parse_function_call(pair),
         _ => Err(format!("Unexpected rule: {:?}", pair.as_rule())),
     }
 }

@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 /// Status message for successful save
 pub(crate) const STATUS_SAVED: &str = "Saved";
+pub(crate) const STATUS_RATES_UNAVAILABLE: &str = "Rates unavailable";
 
 /// Timeout for "Saved" status message (milliseconds)
 const STATUS_SAVED_TIMEOUT_MS: u128 = 1500;
@@ -863,12 +864,29 @@ impl App {
 
     /// Whether time alone can change the next rendered frame.
     pub fn has_active_animation(&self) -> bool {
-        self.status_message.is_some() || self.fetch_status == FetchStatus::Fetching
+        self.fetch_status == FetchStatus::Fetching
     }
 
-    pub fn animation_interval(&self) -> Option<Duration> {
-        self.has_active_animation()
-            .then_some(Duration::from_millis(80))
+    /// Duration until animation or status expiry can change the next frame.
+    pub fn next_wakeup(&self) -> Option<Duration> {
+        let animation = self
+            .has_active_animation()
+            .then_some(Duration::from_millis(80));
+        let status =
+            self.status_start
+                .zip(self.status_message.as_deref())
+                .map(|(start, message)| {
+                    let timeout_ms = if message == STATUS_SAVED {
+                        STATUS_SAVED_TIMEOUT_MS
+                    } else {
+                        STATUS_TIMEOUT_MS
+                    };
+                    Duration::from_millis(timeout_ms as u64).saturating_sub(start.elapsed())
+                });
+        match (animation, status) {
+            (Some(animation), Some(status)) => Some(animation.min(status)),
+            (animation, status) => animation.or(status),
+        }
     }
 
     /// Toggle help popup
@@ -1155,6 +1173,7 @@ impl App {
             }
             Err(e) => {
                 self.fetch_status = FetchStatus::Error(e);
+                self.set_status(STATUS_RATES_UNAVAILABLE);
             }
         }
     }
@@ -1363,15 +1382,21 @@ mod tests {
     fn animation_only_runs_for_time_varying_status() {
         let mut app = App::default();
         assert!(!app.has_active_animation());
-        assert!(app.animation_interval().is_none());
+        assert!(app.next_wakeup().is_none());
 
         app.set_status("Saved");
+        assert!(!app.has_active_animation());
+        assert!(app.next_wakeup().is_some());
+
+        app.fetch_status = FetchStatus::Fetching;
         assert!(app.has_active_animation());
-        assert!(app.animation_interval().is_some());
+        assert!(app
+            .next_wakeup()
+            .is_some_and(|delay| delay <= Duration::from_millis(80)));
 
         app.status_start = Some(Instant::now() - Duration::from_secs(4));
         assert!(app.clear_status_if_expired());
-        assert!(!app.has_active_animation());
+        assert!(app.has_active_animation());
     }
 
     #[test]
@@ -1436,6 +1461,10 @@ mod tests {
         if let FetchStatus::Error(msg) = &app.fetch_status {
             assert!(msg.contains("timeout"));
         }
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some(STATUS_RATES_UNAVAILABLE)
+        );
     }
 
     #[test]

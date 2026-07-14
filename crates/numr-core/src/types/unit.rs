@@ -4,7 +4,6 @@
 //! Each unit has a scale factor and dimension exponents.
 
 use rust_decimal::Decimal;
-use rust_decimal::MathematicalOps;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -98,18 +97,7 @@ impl Dimensions {
         angle: 0,
     };
 
-    /// Multiply dimensions (add exponents)
-    pub fn multiply(self, other: Self) -> Self {
-        Self {
-            length: self.length + other.length,
-            mass: self.mass + other.mass,
-            time: self.time + other.time,
-            temperature: self.temperature + other.temperature,
-            data: self.data + other.data,
-            angle: self.angle + other.angle,
-        }
-    }
-
+    /// Multiply dimensions (add exponents), returning `None` on overflow.
     pub fn checked_multiply(self, other: Self) -> Option<Self> {
         Some(Self {
             length: self.length.checked_add(other.length)?,
@@ -121,18 +109,7 @@ impl Dimensions {
         })
     }
 
-    /// Divide dimensions (subtract exponents)
-    pub fn divide(self, other: Self) -> Self {
-        Self {
-            length: self.length - other.length,
-            mass: self.mass - other.mass,
-            time: self.time - other.time,
-            temperature: self.temperature - other.temperature,
-            data: self.data - other.data,
-            angle: self.angle - other.angle,
-        }
-    }
-
+    /// Divide dimensions (subtract exponents), returning `None` on overflow.
     pub fn checked_divide(self, other: Self) -> Option<Self> {
         Some(Self {
             length: self.length.checked_sub(other.length)?,
@@ -144,18 +121,7 @@ impl Dimensions {
         })
     }
 
-    /// Raise dimensions to a power (multiply all exponents)
-    pub fn power(self, exp: i8) -> Self {
-        Self {
-            length: self.length * exp,
-            mass: self.mass * exp,
-            time: self.time * exp,
-            temperature: self.temperature * exp,
-            data: self.data * exp,
-            angle: self.angle * exp,
-        }
-    }
-
+    /// Raise dimensions to a power, returning `None` on overflow.
     pub fn checked_power(self, exp: i8) -> Option<Self> {
         Some(Self {
             length: self.length.checked_mul(exp)?,
@@ -222,36 +188,17 @@ impl CompoundUnit {
         }
     }
 
-    /// Convert a value to SI base units
-    pub fn to_si(&self, value: Decimal) -> Decimal {
-        (value + self.offset) * self.factor
-    }
-
+    /// Convert a value to SI base units, returning `None` on overflow.
     pub fn checked_to_si(&self, value: Decimal) -> Option<Decimal> {
         value.checked_add(self.offset)?.checked_mul(self.factor)
     }
 
-    /// Convert a value from SI base units
-    pub fn from_si(&self, si_value: Decimal) -> Decimal {
-        (si_value / self.factor) - self.offset
-    }
-
+    /// Convert a value from SI base units, returning `None` on overflow.
     pub fn checked_from_si(&self, si_value: Decimal) -> Option<Decimal> {
         si_value.checked_div(self.factor)?.checked_sub(self.offset)
     }
 
-    /// Multiply two units (for operations like 5m * 10m = 50m²)
-    pub fn multiply(&self, other: &Self) -> Self {
-        let new_dims = self.dimensions.multiply(other.dimensions);
-        let new_factor = self.factor * other.factor;
-        Self {
-            factor: new_factor,
-            offset: Decimal::ZERO, // Offsets don't compose
-            dimensions: new_dims,
-            symbol: smart_symbol(&self.symbol, &other.symbol, &new_dims, new_factor, true),
-        }
-    }
-
+    /// Multiply two units (for operations like 5m * 10m = 50m²).
     pub fn try_multiply(&self, other: &Self) -> Result<Self, EvalError> {
         let new_dims =
             self.dimensions
@@ -273,18 +220,7 @@ impl CompoundUnit {
         })
     }
 
-    /// Divide two units (for operations like 100km / 2h = 50km/h)
-    pub fn divide(&self, other: &Self) -> Self {
-        let new_dims = self.dimensions.divide(other.dimensions);
-        let new_factor = self.factor / other.factor;
-        Self {
-            factor: new_factor,
-            offset: Decimal::ZERO,
-            dimensions: new_dims,
-            symbol: smart_symbol(&self.symbol, &other.symbol, &new_dims, new_factor, false),
-        }
-    }
-
+    /// Divide two units (for operations like 100km / 2h = 50km/h).
     pub fn try_divide(&self, other: &Self) -> Result<Self, EvalError> {
         let new_dims =
             self.dimensions
@@ -306,31 +242,12 @@ impl CompoundUnit {
         })
     }
 
-    /// Raise unit to a power (for m² etc)
-    pub fn power(&self, exp: i8) -> Self {
-        let factor = if exp >= 0 {
-            self.factor.powd(Decimal::from(exp))
-        } else {
-            Decimal::ONE / self.factor.powd(Decimal::from(-exp))
-        };
-        Self {
-            factor,
-            offset: Decimal::ZERO,
-            dimensions: self.dimensions.power(exp),
-            symbol: format!("{}{}", self.symbol, format_exponent(exp)),
-        }
-    }
-
     /// Check if this unit can be converted to another
     pub fn can_convert_to(&self, other: &Self) -> bool {
         self.dimensions == other.dimensions
     }
 
-    /// Convert a value from this unit to another unit
-    pub fn convert_to(&self, value: Decimal, target: &Self) -> Option<Decimal> {
-        self.try_convert_to(value, target).ok().flatten()
-    }
-
+    /// Convert a value from this unit to another unit.
     pub fn try_convert_to(
         &self,
         value: Decimal,
@@ -376,224 +293,224 @@ use std::sync::LazyLock;
 pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
     vec![
         // === Length (base: meter) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1000"),
             Dimensions::length(1),
             "km",
             &["km", "kilometer", "kilometers"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions::length(1),
             "m",
             &["m", "meter", "meters"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.01"),
             Dimensions::length(1),
             "cm",
             &["cm", "centimeter", "centimeters"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.001"),
             Dimensions::length(1),
             "mm",
             &["mm", "millimeter", "millimeters"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1609.344"),
             Dimensions::length(1),
             "mi",
             &["mi", "mile", "miles"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.3048"),
             Dimensions::length(1),
             "ft",
             &["ft", "foot", "feet"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.0254"),
             Dimensions::length(1),
             "in",
             &["in", "inch", "inches"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.9144"),
             Dimensions::length(1),
             "yd",
             &["yd", "yard", "yards"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1852"),
             Dimensions::length(1),
             "nmi",
             &["nmi", "nautical mile", "nautical miles"],
         ),
         // === Area (base: m²) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1000000"),
             Dimensions::length(2),
             "km²",
             &["km2", "km²", "sq km"],
         ),
-        RuntimeUnitDef::linear(d("1"), Dimensions::length(2), "m²", &["m2", "m²", "sq m"]),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(d("1"), Dimensions::length(2), "m²", &["m2", "m²", "sq m"]),
+        RuntimeUnitDef::new(
             d("0.0001"),
             Dimensions::length(2),
             "cm²",
             &["cm2", "cm²", "sq cm"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("10000"),
             Dimensions::length(2),
             "ha",
             &["ha", "hectare", "hectares"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("4046.8564224"),
             Dimensions::length(2),
             "acre",
             &["acre", "acres"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.09290304"),
             Dimensions::length(2),
             "ft²",
             &["ft2", "ft²", "sq ft"],
         ),
         // === Volume (base: m³, but L is more common) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions::length(3),
             "m³",
             &["m3", "m³", "cubic meter"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.001"),
             Dimensions::length(3),
             "L",
             &["l", "L", "liter", "liters", "litre", "litres"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.000001"),
             Dimensions::length(3),
             "mL",
             &["ml", "mL", "milliliter", "milliliters"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.00378541"),
             Dimensions::length(3),
             "gal",
             &["gal", "gallon", "gallons"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.000946353"),
             Dimensions::length(3),
             "qt",
             &["qt", "quart", "quarts"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.000473176"),
             Dimensions::length(3),
             "pt",
             &["pt", "pint", "pints"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.000236588"),
             Dimensions::length(3),
             "cup",
             &["cup", "cups"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.0000295735"),
             Dimensions::length(3),
             "fl oz",
             &["fl oz", "floz", "fluid ounce"],
         ),
         // === Mass (base: kilogram) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1000"),
             Dimensions::mass(1),
             "t",
             &["t", "ton", "tons", "tonne", "tonnes"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions::mass(1),
             "kg",
             &["kg", "kilogram", "kilograms"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.001"),
             Dimensions::mass(1),
             "g",
             &["g", "gram", "grams"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.000001"),
             Dimensions::mass(1),
             "mg",
             &["mg", "milligram", "milligrams"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.45359237"),
             Dimensions::mass(1),
             "lb",
             &["lb", "lbs", "pound", "pounds"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.0283495"),
             Dimensions::mass(1),
             "oz",
             &["oz", "ounce", "ounces"],
         ),
         // === Time (base: second) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("31557600"),
             Dimensions::time(1),
             "yr",
             &["yr", "year", "years"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("2629746"),
             Dimensions::time(1),
             "mo",
             &["mo", "month", "months"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("604800"),
             Dimensions::time(1),
             "wk",
             &["wk", "week", "weeks"],
         ),
-        RuntimeUnitDef::linear(d("86400"), Dimensions::time(1), "d", &["d", "day", "days"]),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(d("86400"), Dimensions::time(1), "d", &["d", "day", "days"]),
+        RuntimeUnitDef::new(
             d("3600"),
             Dimensions::time(1),
             "h",
             &["h", "hr", "hour", "hours"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("60"),
             Dimensions::time(1),
             "min",
             &["min", "minute", "minutes"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions::time(1),
             "s",
             &["s", "sec", "second", "seconds"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.001"),
             Dimensions::time(1),
             "ms",
             &["ms", "millisecond", "milliseconds"],
         ),
         // === Speed (base: m/s) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions {
                 length: 1,
@@ -603,7 +520,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "m/s",
             &["m/s", "mps"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.277778"),
             Dimensions {
                 length: 1,
@@ -613,7 +530,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "km/h",
             &["km/h", "kph", "kmh"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.44704"),
             Dimensions {
                 length: 1,
@@ -623,7 +540,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "mph",
             &["mph"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.514444"),
             Dimensions {
                 length: 1,
@@ -634,20 +551,20 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             &["knot", "knots", "kn"],
         ),
         // === Plane angle (base: radian) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions::angle(1),
             "rad",
             &["rad", "radian", "radians"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("0.0174532925199432957692369077"),
             Dimensions::angle(1),
             "°",
             &["°", "deg", "degree", "degrees"],
         ),
         // === Temperature (base: Kelvin, but we use Celsius as practical base) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions::temperature(1),
             "°C",
@@ -669,39 +586,39 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             &["k", "K", "kelvin"],
         ),
         // === Data (base: byte) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1099511627776"),
             Dimensions::data(1),
             "TB",
             &["tb", "TB", "terabyte", "terabytes"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1073741824"),
             Dimensions::data(1),
             "GB",
             &["gb", "GB", "gigabyte", "gigabytes"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1048576"),
             Dimensions::data(1),
             "MB",
             &["mb", "MB", "megabyte", "megabytes"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1024"),
             Dimensions::data(1),
             "KB",
             &["kb", "KB", "kilobyte", "kilobytes"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions::data(1),
             "B",
             &["b", "B", "byte", "bytes"],
         ),
-        RuntimeUnitDef::linear(d("0.125"), Dimensions::data(1), "bit", &["bit", "bits"]),
+        RuntimeUnitDef::new(d("0.125"), Dimensions::data(1), "bit", &["bit", "bits"]),
         // === Force (base: Newton = kg·m/s²) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions {
                 mass: 1,
@@ -712,7 +629,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "N",
             &["n", "N", "newton", "newtons"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("4.44822"),
             Dimensions {
                 mass: 1,
@@ -724,7 +641,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             &["lbf", "pound-force"],
         ),
         // === Energy (base: Joule = kg·m²/s²) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions {
                 mass: 1,
@@ -735,7 +652,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "J",
             &["j", "J", "joule", "joules"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1000"),
             Dimensions {
                 mass: 1,
@@ -746,7 +663,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "kJ",
             &["kj", "kJ", "kilojoule", "kilojoules"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("4.184"),
             Dimensions {
                 mass: 1,
@@ -757,7 +674,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "cal",
             &["cal", "calorie", "calories"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("4184"),
             Dimensions {
                 mass: 1,
@@ -768,7 +685,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "kcal",
             &["kcal", "kilocalorie", "kilocalories"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("3600000"),
             Dimensions {
                 mass: 1,
@@ -779,7 +696,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "kWh",
             &["kwh", "kWh", "kilowatt-hour"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("3600"),
             Dimensions {
                 mass: 1,
@@ -791,7 +708,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             &["wh", "Wh", "watt-hour"],
         ),
         // === Power (base: Watt = kg·m²/s³) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions {
                 mass: 1,
@@ -802,7 +719,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "W",
             &["w", "W", "watt", "watts"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1000"),
             Dimensions {
                 mass: 1,
@@ -813,7 +730,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "kW",
             &["kw", "kW", "kilowatt", "kilowatts"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1000000"),
             Dimensions {
                 mass: 1,
@@ -824,7 +741,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "MW",
             &["mw", "MW", "megawatt", "megawatts"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("745.7"),
             Dimensions {
                 mass: 1,
@@ -836,7 +753,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             &["hp", "horsepower"],
         ),
         // === Pressure (base: Pascal = kg/(m·s²)) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions {
                 mass: 1,
@@ -847,7 +764,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "Pa",
             &["pa", "Pa", "pascal", "pascals"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1000"),
             Dimensions {
                 mass: 1,
@@ -858,7 +775,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "kPa",
             &["kpa", "kPa", "kilopascal"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("100000"),
             Dimensions {
                 mass: 1,
@@ -869,7 +786,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "bar",
             &["bar"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("6894.76"),
             Dimensions {
                 mass: 1,
@@ -880,7 +797,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             "psi",
             &["psi"],
         ),
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("101325"),
             Dimensions {
                 mass: 1,
@@ -892,7 +809,7 @@ pub static UNITS: LazyLock<Vec<RuntimeUnitDef>> = LazyLock::new(|| {
             &["atm", "atmosphere"],
         ),
         // === Acceleration (base: m/s²) ===
-        RuntimeUnitDef::linear(
+        RuntimeUnitDef::new(
             d("1"),
             Dimensions {
                 length: 1,
@@ -915,7 +832,22 @@ pub struct RuntimeUnitDef {
 }
 
 impl RuntimeUnitDef {
-    pub fn new(
+    fn new(
+        factor: Decimal,
+        dimensions: Dimensions,
+        symbol: &'static str,
+        aliases: &'static [&'static str],
+    ) -> Self {
+        Self {
+            factor,
+            offset: Decimal::ZERO,
+            dimensions,
+            symbol,
+            aliases,
+        }
+    }
+
+    fn with_offset(
         factor: Decimal,
         offset: Decimal,
         dimensions: Dimensions,
@@ -929,25 +861,6 @@ impl RuntimeUnitDef {
             symbol,
             aliases,
         }
-    }
-
-    fn linear(
-        factor: Decimal,
-        dimensions: Dimensions,
-        symbol: &'static str,
-        aliases: &'static [&'static str],
-    ) -> Self {
-        Self::new(factor, Decimal::ZERO, dimensions, symbol, aliases)
-    }
-
-    fn with_offset(
-        factor: Decimal,
-        offset: Decimal,
-        dimensions: Dimensions,
-        symbol: &'static str,
-        aliases: &'static [&'static str],
-    ) -> Self {
-        Self::new(factor, offset, dimensions, symbol, aliases)
     }
 
     pub fn to_compound_unit(&self) -> CompoundUnit {
@@ -984,11 +897,6 @@ pub fn all_aliases() -> impl Iterator<Item = &'static str> {
 /// Get all unit symbols (for syntax highlighting)
 pub fn all_symbols() -> impl Iterator<Item = &'static str> {
     UNITS.iter().map(|d| d.symbol)
-}
-
-/// Convert a value between units
-pub fn convert(value: Decimal, from: &CompoundUnit, to: &CompoundUnit) -> Option<Decimal> {
-    from.convert_to(value, to)
 }
 
 pub fn try_convert(
@@ -1091,240 +999,6 @@ fn format_compound_symbol(left: &str, right: &str, multiply: bool) -> String {
     }
 }
 
-/// Format dimensions as a human-readable unit string
-pub fn format_dimensions(dims: &Dimensions) -> String {
-    let mut parts = Vec::new();
-    let mut neg_parts = Vec::new();
-
-    if dims.length > 0 {
-        parts.push(format!("m{}", format_exponent(dims.length)));
-    } else if dims.length < 0 {
-        neg_parts.push(format!("m{}", format_exponent(-dims.length)));
-    }
-
-    if dims.mass > 0 {
-        parts.push(format!("kg{}", format_exponent(dims.mass)));
-    } else if dims.mass < 0 {
-        neg_parts.push(format!("kg{}", format_exponent(-dims.mass)));
-    }
-
-    if dims.time > 0 {
-        parts.push(format!("s{}", format_exponent(dims.time)));
-    } else if dims.time < 0 {
-        neg_parts.push(format!("s{}", format_exponent(-dims.time)));
-    }
-
-    if dims.temperature > 0 {
-        parts.push(format!("K{}", format_exponent(dims.temperature)));
-    } else if dims.temperature < 0 {
-        neg_parts.push(format!("K{}", format_exponent(-dims.temperature)));
-    }
-
-    if dims.data > 0 {
-        parts.push(format!("B{}", format_exponent(dims.data)));
-    } else if dims.data < 0 {
-        neg_parts.push(format!("B{}", format_exponent(-dims.data)));
-    }
-
-    if parts.is_empty() && neg_parts.is_empty() {
-        return String::new(); // Dimensionless
-    }
-
-    let numerator = if parts.is_empty() {
-        "1".to_string()
-    } else {
-        parts.join("·")
-    };
-
-    if neg_parts.is_empty() {
-        numerator
-    } else {
-        format!("{}/{}", numerator, neg_parts.join("·"))
-    }
-}
-
-// ============================================================================
-// BACKWARD COMPATIBILITY - Unit enum (deprecated, for migration)
-// ============================================================================
-
-/// Legacy unit enum - use CompoundUnit instead
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Unit {
-    // Length
-    Kilometer,
-    Meter,
-    Centimeter,
-    Millimeter,
-    Mile,
-    Foot,
-    Inch,
-    // Weight
-    Kilogram,
-    Gram,
-    Milligram,
-    Pound,
-    Ounce,
-    // Time
-    Month,
-    Week,
-    Day,
-    Hour,
-    Minute,
-    Second,
-    // Data
-    Terabyte,
-    Gigabyte,
-    Megabyte,
-    Kilobyte,
-    Byte,
-    // Temperature
-    Celsius,
-    Fahrenheit,
-}
-
-/// Legacy unit type enum
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum UnitType {
-    Length,
-    Weight,
-    Time,
-    Data,
-    Temperature,
-}
-
-impl Unit {
-    /// Convert legacy Unit to CompoundUnit
-    pub fn to_compound(&self) -> CompoundUnit {
-        let symbol = match self {
-            Unit::Kilometer => "km",
-            Unit::Meter => "m",
-            Unit::Centimeter => "cm",
-            Unit::Millimeter => "mm",
-            Unit::Mile => "mi",
-            Unit::Foot => "ft",
-            Unit::Inch => "in",
-            Unit::Kilogram => "kg",
-            Unit::Gram => "g",
-            Unit::Milligram => "mg",
-            Unit::Pound => "lb",
-            Unit::Ounce => "oz",
-            Unit::Month => "mo",
-            Unit::Week => "wk",
-            Unit::Day => "d",
-            Unit::Hour => "h",
-            Unit::Minute => "min",
-            Unit::Second => "s",
-            Unit::Terabyte => "TB",
-            Unit::Gigabyte => "GB",
-            Unit::Megabyte => "MB",
-            Unit::Kilobyte => "KB",
-            Unit::Byte => "B",
-            Unit::Celsius => "°C",
-            Unit::Fahrenheit => "°F",
-        };
-        // SAFETY: All legacy Unit variants have known symbols that are registered in UNITS
-        parse_unit(symbol).expect("Legacy Unit symbol should be registered in UNITS")
-    }
-
-    pub fn unit_type(&self) -> UnitType {
-        match self {
-            Unit::Kilometer
-            | Unit::Meter
-            | Unit::Centimeter
-            | Unit::Millimeter
-            | Unit::Mile
-            | Unit::Foot
-            | Unit::Inch => UnitType::Length,
-            Unit::Kilogram | Unit::Gram | Unit::Milligram | Unit::Pound | Unit::Ounce => {
-                UnitType::Weight
-            }
-            Unit::Month | Unit::Week | Unit::Day | Unit::Hour | Unit::Minute | Unit::Second => {
-                UnitType::Time
-            }
-            Unit::Terabyte | Unit::Gigabyte | Unit::Megabyte | Unit::Kilobyte | Unit::Byte => {
-                UnitType::Data
-            }
-            Unit::Celsius | Unit::Fahrenheit => UnitType::Temperature,
-        }
-    }
-
-    pub fn short_name(&self) -> &'static str {
-        match self {
-            Unit::Kilometer => "km",
-            Unit::Meter => "m",
-            Unit::Centimeter => "cm",
-            Unit::Millimeter => "mm",
-            Unit::Mile => "mi",
-            Unit::Foot => "ft",
-            Unit::Inch => "in",
-            Unit::Kilogram => "kg",
-            Unit::Gram => "g",
-            Unit::Milligram => "mg",
-            Unit::Pound => "lb",
-            Unit::Ounce => "oz",
-            Unit::Month => "mo",
-            Unit::Week => "wk",
-            Unit::Day => "d",
-            Unit::Hour => "h",
-            Unit::Minute => "min",
-            Unit::Second => "s",
-            Unit::Terabyte => "TB",
-            Unit::Gigabyte => "GB",
-            Unit::Megabyte => "MB",
-            Unit::Kilobyte => "KB",
-            Unit::Byte => "B",
-            Unit::Celsius => "C",
-            Unit::Fahrenheit => "F",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Unit> {
-        let lower = s.to_lowercase();
-        match lower.as_str() {
-            "km" => Some(Unit::Kilometer),
-            "m" => Some(Unit::Meter),
-            "cm" => Some(Unit::Centimeter),
-            "mm" => Some(Unit::Millimeter),
-            "mi" | "mile" | "miles" => Some(Unit::Mile),
-            "ft" | "foot" | "feet" => Some(Unit::Foot),
-            "in" | "inch" | "inches" => Some(Unit::Inch),
-            "kg" => Some(Unit::Kilogram),
-            "g" => Some(Unit::Gram),
-            "mg" => Some(Unit::Milligram),
-            "lb" | "lbs" | "pound" | "pounds" => Some(Unit::Pound),
-            "oz" | "ounce" | "ounces" => Some(Unit::Ounce),
-            "mo" | "month" | "months" => Some(Unit::Month),
-            "wk" | "week" | "weeks" => Some(Unit::Week),
-            "d" | "day" | "days" => Some(Unit::Day),
-            "h" | "hr" | "hour" | "hours" => Some(Unit::Hour),
-            "min" | "minute" | "minutes" => Some(Unit::Minute),
-            "s" | "sec" | "second" | "seconds" => Some(Unit::Second),
-            "tb" => Some(Unit::Terabyte),
-            "gb" => Some(Unit::Gigabyte),
-            "mb" => Some(Unit::Megabyte),
-            "kb" => Some(Unit::Kilobyte),
-            "b" | "byte" | "bytes" => Some(Unit::Byte),
-            "c" | "celsius" => Some(Unit::Celsius),
-            "f" | "fahrenheit" => Some(Unit::Fahrenheit),
-            _ => None,
-        }
-    }
-
-    pub fn all_aliases() -> impl Iterator<Item = &'static str> {
-        all_aliases()
-    }
-
-    pub fn all_short_names() -> impl Iterator<Item = &'static str> {
-        all_symbols()
-    }
-}
-
-impl fmt::Display for Unit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.short_name())
-    }
-}
-
 // ============================================================================
 // TESTS
 // ============================================================================
@@ -1336,7 +1010,7 @@ mod tests {
     #[test]
     fn test_dimensions_multiply() {
         let length = Dimensions::length(1);
-        let area = length.multiply(length);
+        let area = length.checked_multiply(length).unwrap();
         assert_eq!(area.length, 2);
     }
 
@@ -1344,7 +1018,7 @@ mod tests {
     fn test_dimensions_divide() {
         let length = Dimensions::length(1);
         let time = Dimensions::time(1);
-        let speed = length.divide(time);
+        let speed = length.checked_divide(time).unwrap();
         assert_eq!(speed.length, 1);
         assert_eq!(speed.time, -1);
     }
@@ -1363,14 +1037,14 @@ mod tests {
     fn test_unit_conversion() {
         let km = parse_unit("km").unwrap();
         let m = parse_unit("m").unwrap();
-        let result = km.convert_to(d("1"), &m).unwrap();
+        let result = km.try_convert_to(d("1"), &m).unwrap().unwrap();
         assert_eq!(result, d("1000"));
     }
 
     #[test]
     fn test_compound_multiply() {
         let m = parse_unit("m").unwrap();
-        let m2 = m.multiply(&m);
+        let m2 = m.try_multiply(&m).unwrap();
         assert_eq!(m2.dimensions.length, 2);
     }
 
@@ -1378,7 +1052,7 @@ mod tests {
     fn test_compound_divide() {
         let km = parse_unit("km").unwrap();
         let h = parse_unit("h").unwrap();
-        let kmh = km.divide(&h);
+        let kmh = km.try_divide(&h).unwrap();
         assert_eq!(kmh.dimensions.length, 1);
         assert_eq!(kmh.dimensions.time, -1);
     }

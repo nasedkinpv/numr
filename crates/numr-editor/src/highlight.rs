@@ -28,7 +28,8 @@
 
 use numr_core::{
     catalog::{is_builtin_function, ANSWER_ALIASES, KEYWORDS, MATH_CONSTANTS},
-    Currency, Unit,
+    types::unit::{all_aliases, all_symbols},
+    Currency,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -76,20 +77,15 @@ static CURRENCY_WORDS: LazyLock<HashSet<String>> = LazyLock::new(|| {
 });
 
 static UNIT_WORDS: LazyLock<HashSet<String>> = LazyLock::new(|| {
-    Unit::all_aliases()
+    all_aliases()
         .map(|s| s.to_lowercase())
-        .chain(Unit::all_short_names().map(|s| s.to_lowercase()))
+        .chain(all_symbols().map(|s| s.to_lowercase()))
         .collect()
 });
 
 /// Check if a character is a currency symbol
 fn is_currency_symbol(c: char) -> bool {
     CURRENCY_SYMBOLS.contains(&c)
-}
-
-/// Check if a word is a currency code/name
-fn is_currency_word(word: &str) -> bool {
-    CURRENCY_WORDS.contains(&word.to_lowercase())
 }
 
 /// Check if a word is a unit
@@ -161,7 +157,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                 token_type: TokenType::Unit,
             });
             i += 1;
-        } else if c == '+' || c == '*' || c == '/' || c == '^' || c == '×' || c == '÷' {
+        } else if matches!(c, '+' | '*' | '/' | '^' | '×' | '÷' | '-' | '=') {
             tokens.push(Token {
                 text: c.to_string(),
                 token_type: TokenType::Operator,
@@ -171,18 +167,6 @@ pub fn tokenize(input: &str) -> Vec<Token> {
             // 'x' as multiplication operator (e.g., "2x3")
             tokens.push(Token {
                 text: "x".to_string(),
-                token_type: TokenType::Operator,
-            });
-            i += 1;
-        } else if c == '-' {
-            tokens.push(Token {
-                text: "-".to_string(),
-                token_type: TokenType::Operator,
-            });
-            i += 1;
-        } else if c == '=' {
-            tokens.push(Token {
-                text: "=".to_string(),
                 token_type: TokenType::Operator,
             });
             i += 1;
@@ -209,11 +193,11 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                     .any(|alias| alias.eq_ignore_ascii_case(&word))
             {
                 TokenType::Variable
-            } else if is_unit_word(&word) {
+            } else if UNIT_WORDS.contains(&lower) {
                 TokenType::Unit
-            } else if is_currency_word(&word) {
+            } else if CURRENCY_WORDS.contains(&lower) {
                 TokenType::Currency
-            } else if assignment_var.as_ref() == Some(&word) {
+            } else if assignment_var == Some(word.as_str()) {
                 // Variable being defined
                 TokenType::Variable
             } else {
@@ -271,21 +255,18 @@ pub fn tokenize_with_variables(input: &str, variables: &HashSet<String>) -> Vec<
 ///
 /// UI surfaces use this as the semantic anchor for results when a logical line wraps.
 pub fn expression_prefix(input: &str) -> &str {
-    let mut byte_len = 0;
-    for token in tokenize(input) {
-        if token.token_type == TokenType::Comment {
-            break;
-        }
-        byte_len += token.text.len();
-    }
-    input[..byte_len].trim_end()
+    let comment_start = [input.find('#'), input.find("//")]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(input.len());
+    input[..comment_start].trim_end()
 }
 
 /// Find variable name if line is an assignment (e.g., "tax = 20%" returns Some("tax"))
-fn find_assignment_variable(input: &str) -> Option<String> {
-    let parts: Vec<&str> = input.splitn(2, '=').collect();
-    if parts.len() == 2 {
-        let var_part = parts[0].trim();
+fn find_assignment_variable(input: &str) -> Option<&str> {
+    if let Some((var_part, _)) = input.split_once('=') {
+        let var_part = var_part.trim();
         // Check it's a valid identifier
         if !var_part.is_empty()
             && var_part
@@ -295,7 +276,7 @@ fn find_assignment_variable(input: &str) -> Option<String> {
                 .unwrap_or(false)
             && var_part.chars().all(|c| c.is_alphanumeric() || c == '_')
         {
-            return Some(var_part.to_string());
+            return Some(var_part);
         }
     }
     None
@@ -305,28 +286,15 @@ fn find_assignment_variable(input: &str) -> Option<String> {
 /// True if preceded by digit/)/% and followed by digit/(/currency symbol.
 /// Skips whitespace when checking context.
 fn is_multiply_context(chars: &[char], i: usize) -> bool {
-    // Look backwards, skipping whitespace
-    let prev_ok = {
-        let mut j = i;
-        while j > 0 && chars[j - 1] == ' ' {
-            j -= 1;
-        }
-        j > 0 && {
-            let p = chars[j - 1];
-            p.is_ascii_digit() || p == ')' || p == '%'
-        }
-    };
-    // Look forwards, skipping whitespace
-    let next_ok = {
-        let mut j = i + 1;
-        while j < chars.len() && chars[j] == ' ' {
-            j += 1;
-        }
-        j < chars.len() && {
-            let n = chars[j];
-            n.is_ascii_digit() || n == '(' || is_currency_symbol(n)
-        }
-    };
+    let prev_ok = chars[..i]
+        .iter()
+        .rev()
+        .find(|c| !c.is_whitespace())
+        .is_some_and(|c| c.is_ascii_digit() || matches!(c, ')' | '%'));
+    let next_ok = chars[i + 1..]
+        .iter()
+        .find(|c| !c.is_whitespace())
+        .is_some_and(|c| c.is_ascii_digit() || *c == '(' || is_currency_symbol(*c));
     prev_ok && next_ok
 }
 

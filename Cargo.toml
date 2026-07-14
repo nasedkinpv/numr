@@ -12,7 +12,6 @@ repository = "https://github.com/nasedkinpv/numr"
 [workspace.dependencies]
 # Core dependencies
 thiserror = "2"
-anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rust_decimal = { version = "1", features = ["serde", "serde-float", "maths"] }

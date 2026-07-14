@@ -178,13 +178,6 @@ pub fn value_to_result(value: &NumrValue) -> RpcEvalResult {
             message: None,
             display: value.to_string(),
         },
-        NumrValue::WithUnit { amount, unit } => RpcEvalResult {
-            result_type: "unit",
-            value: Some(format_number(*amount)),
-            unit: Some(unit.to_string()),
-            message: None,
-            display: value.to_string(),
-        },
         NumrValue::WithCompoundUnit { amount, unit } => RpcEvalResult {
             result_type: "unit",
             value: Some(format_number(*amount)),

@@ -13,29 +13,15 @@ use crate::ParseError;
 #[grammar = "parser/grammar.pest"]
 pub struct NumrParser;
 
-/// Resource limits applied before pest or the recursive evaluator see input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ParseLimits {
-    pub max_input_bytes: usize,
-    pub max_operations: usize,
-    pub max_nesting: usize,
-}
+const MAX_INPUT_BYTES: usize = 16 * 1024;
+const MAX_OPERATIONS: usize = 256;
+const MAX_NESTING: usize = 128;
 
-impl Default for ParseLimits {
-    fn default() -> Self {
-        Self {
-            max_input_bytes: 16 * 1024,
-            max_operations: 256,
-            max_nesting: 128,
-        }
-    }
-}
-
-fn validate_limits(input: &str, limits: ParseLimits) -> Result<(), ParseError> {
-    if input.len() > limits.max_input_bytes {
+fn validate_limits(input: &str) -> Result<(), ParseError> {
+    if input.len() > MAX_INPUT_BYTES {
         return Err(ParseError::InputTooLong {
             actual: input.len(),
-            max: limits.max_input_bytes,
+            max: MAX_INPUT_BYTES,
         });
     }
 
@@ -60,16 +46,16 @@ fn validate_limits(input: &str, limits: ParseLimits) -> Result<(), ParseError> {
             _ => {}
         }
     }
-    if max_nesting > limits.max_nesting {
+    if max_nesting > MAX_NESTING {
         return Err(ParseError::TooDeep {
             actual: max_nesting,
-            max: limits.max_nesting,
+            max: MAX_NESTING,
         });
     }
-    if operations > limits.max_operations {
+    if operations > MAX_OPERATIONS {
         return Err(ParseError::TooComplex {
             actual: operations,
-            max: limits.max_operations,
+            max: MAX_OPERATIONS,
         });
     }
     Ok(())
@@ -77,12 +63,7 @@ fn validate_limits(input: &str, limits: ParseLimits) -> Result<(), ParseError> {
 
 /// Parse a single line of input (with fuzzy fallback for user input)
 pub fn parse_line(input: &str) -> Result<Ast, ParseError> {
-    parse_line_with_limits(input, ParseLimits::default())
-}
-
-/// Parse with caller-supplied resource limits.
-pub fn parse_line_with_limits(input: &str, limits: ParseLimits) -> Result<Ast, ParseError> {
-    validate_limits(input, limits)?;
+    validate_limits(input)?;
     // Try parsing the full line first
     if let Ok(pairs) = NumrParser::parse(Rule::line, input) {
         if let Ok(ast) = ast::build_ast(pairs) {
@@ -118,12 +99,8 @@ pub fn parse_line_with_limits(input: &str, limits: ParseLimits) -> Result<Ast, P
 
 /// Parse a line exactly (no fuzzy fallback) - used for continuation detection
 pub fn try_parse_exact(input: &str) -> Result<Ast, ParseError> {
-    try_parse_exact_with_limits(input, ParseLimits::default())
-}
-
-pub fn try_parse_exact_with_limits(input: &str, limits: ParseLimits) -> Result<Ast, ParseError> {
-    validate_limits(input, limits)?;
-    match NumrParser::parse(Rule::line_no_prose, input) {
+    validate_limits(input)?;
+    match NumrParser::parse(Rule::line, input) {
         Ok(pairs) => ast::build_ast(pairs).map_err(ParseError::InvalidExpression),
         Err(_) => Err(ParseError::InvalidSyntax),
     }
@@ -153,10 +130,7 @@ mod tests {
 
     #[test]
     fn comments_only_consume_the_input_size_budget() {
-        let comment = format!(
-            "# {}",
-            "+".repeat(ParseLimits::default().max_operations + 1)
-        );
+        let comment = format!("# {}", "+".repeat(MAX_OPERATIONS + 1));
         assert!(parse_line(&comment).is_ok());
         assert!(try_parse_exact(&comment).is_ok());
     }

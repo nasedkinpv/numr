@@ -25,7 +25,6 @@
 //! assert_eq!(result.as_f64(), Some(30.0));
 //! ```
 
-use rust_decimal::prelude::FromPrimitive;
 use serde::Serialize;
 use std::str::FromStr;
 
@@ -45,13 +44,10 @@ pub mod wasm;
 pub use cache::RateCache;
 pub use error::{EvalError, ParseError, RateError};
 pub use eval::EvalContext;
-pub use parser::{
-    parse_line, parse_line_with_limits, try_parse_exact, try_parse_exact_with_limits, Ast,
-    BinaryOp, Expr, ParseLimits,
-};
+pub use parser::{parse_line, try_parse_exact, Ast, BinaryOp, Expr};
 pub use types::{
     format_currency_value, format_number, CompoundUnit, Currency, CurrencyDef, Dimensions,
-    NumberBase, RuntimeUnitDef, Unit, UnitType, Value, CURRENCIES, UNITS,
+    NumberBase, RuntimeUnitDef, Value, CURRENCIES, UNITS,
 };
 
 // Re-export Decimal for tests and external use
@@ -109,15 +105,6 @@ impl Engine {
     pub fn new() -> Self {
         Self {
             context: EvalContext::new(),
-            lines: Vec::new(),
-        }
-    }
-
-    /// Create an engine with a caller-owned rate table/cache.
-    #[must_use]
-    pub fn with_rate_cache(rate_cache: cache::RateCache) -> Self {
-        Self {
-            context: EvalContext::with_rate_cache(rate_cache),
             lines: Vec::new(),
         }
     }
@@ -318,7 +305,7 @@ impl Engine {
 
     /// Get totals grouped by currency and physical dimension.
     /// - Currencies are converted and summed to the last used currency
-    /// - Units of the same type are converted to the last used unit
+    /// - Compatible units are converted to the last used unit
     /// - Plain numbers and percentages are intentionally omitted
     /// - Excludes lines that were consumed by continuations
     #[must_use]
@@ -332,12 +319,7 @@ impl Engine {
         use std::collections::HashMap;
 
         let mut currency_amounts: Vec<(Currency, Decimal)> = Vec::new();
-        let mut unit_totals: HashMap<Unit, Decimal> = HashMap::new();
-        let mut last_unit_by_type: HashMap<types::UnitType, Unit> = HashMap::new();
-
-        // Track compound units by their dimensions
-        let mut compound_totals: HashMap<types::Dimensions, (Decimal, types::CompoundUnit)> =
-            HashMap::new();
+        let mut unit_amounts: HashMap<_, Vec<(Decimal, &types::CompoundUnit)>> = HashMap::new();
 
         // Collect all values, tracking last used currency/unit
         // Skip lines that were consumed by continuations
@@ -350,26 +332,11 @@ impl Engine {
                 Value::Currency { amount, currency } => {
                     currency_amounts.push((*currency, *amount));
                 }
-                Value::WithUnit { amount, unit } => {
-                    let total = unit_totals.entry(*unit).or_insert(Decimal::ZERO);
-                    *total = total.checked_add(*amount).ok_or(EvalError::Overflow {
-                        operation: "summing unit values",
-                    })?;
-                    last_unit_by_type.insert(unit.unit_type(), *unit);
-                }
                 Value::WithCompoundUnit { amount, unit } => {
-                    // Group by dimensions, convert to SI for summing
-                    let si_amount = unit.checked_to_si(*amount).ok_or(EvalError::Overflow {
-                        operation: "converting unit totals to a base scale",
-                    })?;
-                    let entry = compound_totals
+                    unit_amounts
                         .entry(unit.dimensions)
-                        .or_insert_with(|| (Decimal::ZERO, unit.clone()));
-                    entry.0 = entry.0.checked_add(si_amount).ok_or(EvalError::Overflow {
-                        operation: "summing unit values",
-                    })?;
-                    // Keep the last unit for display
-                    entry.1 = unit.clone();
+                        .or_default()
+                        .push((*amount, unit));
                 }
                 Value::Number(_)
                 | Value::BaseNumber { .. }
@@ -411,7 +378,7 @@ impl Engine {
                             })?;
                 } else {
                     // Can't convert - keep this currency separate instead of corrupting totals
-                    let total = unconverted.entry(*currency).or_insert(Decimal::ZERO);
+                    let total = unconverted.entry(*currency).or_default();
                     *total = total.checked_add(*amount).ok_or(EvalError::Overflow {
                         operation: "summing unconverted currencies",
                     })?;
@@ -433,58 +400,38 @@ impl Engine {
             }
         }
 
-        // Group units by type and convert to last used unit of that type
-        let mut unit_by_type: HashMap<types::UnitType, Decimal> = HashMap::new();
-        for (unit, amount) in &unit_totals {
-            let unit_type = unit.unit_type();
-            let target_unit = last_unit_by_type.get(&unit_type).unwrap_or(unit);
-
-            let converted = if unit == target_unit {
-                *amount
-            } else if let Some(converted_amount) =
-                types::unit::try_convert(*amount, &unit.to_compound(), &target_unit.to_compound())?
-            {
-                converted_amount
-            } else {
-                *amount // Can't convert, keep as is
-            };
-
-            let total = unit_by_type.entry(unit_type).or_insert(Decimal::ZERO);
-            *total = total.checked_add(converted).ok_or(EvalError::Overflow {
-                operation: "summing unit values",
-            })?;
-        }
-
-        // Add unit totals (one per unit type, using last used unit)
-        for (unit_type, amount) in unit_by_type {
-            if !amount.is_zero() {
-                if let Some(&unit) = last_unit_by_type.get(&unit_type) {
-                    result.push(Value::WithUnit { amount, unit });
-                }
-            }
-        }
-
-        // Add compound unit totals (one per dimension type)
-        for (_dims, (si_total, last_unit)) in compound_totals {
-            if !si_total.is_zero() {
-                // Convert from SI back to the last used unit
-                let display_amount =
-                    last_unit
-                        .checked_from_si(si_total)
-                        .ok_or(EvalError::Overflow {
-                            operation: "converting unit totals from a base scale",
+        // Convert each value to the last unit before summing. This is required for
+        // affine units such as Celsius and Fahrenheit, whose offsets are not additive.
+        for amounts in unit_amounts.into_values() {
+            let target_unit = amounts
+                .last()
+                .map(|(_, unit)| (*unit).clone())
+                .expect("unit groups are never empty");
+            let total = amounts
+                .into_iter()
+                .try_fold(Decimal::ZERO, |total, (amount, unit)| {
+                    let converted = types::unit::try_convert(amount, unit, &target_unit)?
+                        .ok_or_else(|| {
+                            EvalError::InvalidOperands(format!(
+                                "cannot convert {} to {}",
+                                unit.symbol, target_unit.symbol
+                            ))
                         })?;
+                    total.checked_add(converted).ok_or(EvalError::Overflow {
+                        operation: "summing unit values",
+                    })
+                })?;
+            if !total.is_zero() {
                 result.push(Value::WithCompoundUnit {
-                    amount: display_amount,
-                    unit: last_unit,
+                    amount: total,
+                    unit: target_unit,
                 });
             }
         }
 
         // Sort results for consistent display order:
         // 1. Currencies first (by code)
-        // 2. Simple units (by unit type)
-        // 3. Compound units (by dimensions: length, mass, time, temp, data)
+        // 2. Units by dimensions, then symbol
         result.sort_by(|a, b| match (a, b) {
             // Currencies come first
             (Value::Currency { currency: c1, .. }, Value::Currency { currency: c2, .. }) => {
@@ -493,14 +440,7 @@ impl Engine {
             (Value::Currency { .. }, _) => std::cmp::Ordering::Less,
             (_, Value::Currency { .. }) => std::cmp::Ordering::Greater,
 
-            // Simple units come before compound units
-            (Value::WithUnit { unit: u1, .. }, Value::WithUnit { unit: u2, .. }) => {
-                u1.unit_type().cmp(&u2.unit_type())
-            }
-            (Value::WithUnit { .. }, Value::WithCompoundUnit { .. }) => std::cmp::Ordering::Less,
-            (Value::WithCompoundUnit { .. }, Value::WithUnit { .. }) => std::cmp::Ordering::Greater,
-
-            // Compound units sorted by dimensions (length, mass, time, temp, data)
+            // Units sorted by dimensions (length, mass, time, temperature, data, angle)
             (
                 Value::WithCompoundUnit { unit: u1, .. },
                 Value::WithCompoundUnit { unit: u2, .. },
@@ -513,6 +453,7 @@ impl Engine {
                     .then(d1.time.cmp(&d2.time))
                     .then(d1.temperature.cmp(&d2.temperature))
                     .then(d1.data.cmp(&d2.data))
+                    .then(d1.angle.cmp(&d2.angle))
                     .then(u1.symbol.cmp(&u2.symbol)) // Final tiebreaker
             }
 
@@ -587,13 +528,6 @@ impl Engine {
         rate: Decimal,
     ) -> Result<(), EvalError> {
         self.context.try_set_exchange_rate(from, to, rate)
-    }
-
-    /// Set an exchange rate from f64 (convenience for API compatibility)
-    pub fn set_exchange_rate_f64(&mut self, from: Currency, to: Currency, rate: f64) {
-        if let Some(decimal_rate) = Decimal::from_f64(rate) {
-            self.context.set_exchange_rate(from, to, decimal_rate);
-        }
     }
 
     /// Apply raw rates from API response (delegates to rate cache)

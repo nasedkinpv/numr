@@ -14,10 +14,9 @@ use ratatui::{
 use std::{collections::HashSet, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
 
-// These bits are private layout metadata. They are removed from the frame buffer
-// immediately after the rendered cells have been located.
+// This bit is private cursor metadata. It is removed from the frame buffer
+// immediately after the rendered cell has been located.
 const CURSOR_MARKER: Modifier = Modifier::SLOW_BLINK;
-const RESULT_MARKER: Modifier = Modifier::RAPID_BLINK;
 
 #[derive(Clone, Debug)]
 struct CursorMarker {
@@ -28,14 +27,12 @@ struct CursorMarker {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LineMarkers {
     cursor: Option<CursorMarker>,
-    result: Option<Range<usize>>,
 }
 
 impl LineMarkers {
-    pub(crate) fn new(input: &str, cursor_x: Option<usize>, result: bool) -> Self {
+    pub(crate) fn new(input: &str, cursor_x: Option<usize>) -> Self {
         let cursor = cursor_x.and_then(|cursor_x| cursor_marker(input, cursor_x));
-        let result = result.then(|| result_marker(input)).flatten();
-        Self { cursor, result }
+        Self { cursor }
     }
 
     fn cursor_after(&self) -> bool {
@@ -46,7 +43,6 @@ impl LineMarkers {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MarkerCells {
     pub(crate) cursor: Option<Position>,
-    pub(crate) result: Option<Position>,
 }
 
 fn wrap_width(width: usize) -> u16 {
@@ -64,6 +60,26 @@ pub(crate) fn wrapped_height(input: &str, variables: &HashSet<String>, width: us
         .max(1)
 }
 
+/// Zero-based wrapped row containing the end of the executable expression.
+pub(crate) fn wrapped_result_row(
+    input: &str,
+    variables: &HashSet<String>,
+    width: usize,
+) -> Option<usize> {
+    let expression = expression_prefix(input);
+    if expression.is_empty() || width == 0 {
+        return None;
+    }
+
+    Some(
+        Paragraph::new(highlight_line(expression, variables))
+            .wrap(Wrap { trim: false })
+            .line_count(wrap_width(width))
+            .max(1)
+            - 1,
+    )
+}
+
 pub(crate) fn measure_wrapped_cursor(
     input: &str,
     variables: &HashSet<String>,
@@ -74,7 +90,7 @@ pub(crate) fn measure_wrapped_cursor(
         return (0, cursor_x);
     }
 
-    let markers = LineMarkers::new(input, Some(cursor_x), false);
+    let markers = LineMarkers::new(input, Some(cursor_x));
     let paragraph =
         Paragraph::new(marked_line(input, variables, &markers)).wrap(Wrap { trim: false });
     let height = paragraph.line_count(wrap_width(width)).max(1);
@@ -137,17 +153,26 @@ fn tokenize_and_style_with_markers(
         tokenize_with_variables(input, variables)
     };
     let mut byte_offset = 0;
-    let mut spans = Vec::with_capacity(tokens.len() + 4);
+    let mut spans = Vec::with_capacity(tokens.len() + 3);
 
     for token in tokens {
         let token_start = byte_offset;
         let token_end = token_start + token.text.len();
         byte_offset = token_end;
-        let cursor_range = markers.cursor.as_ref().map(|marker| &marker.range);
-        let result_range = markers.result.as_ref();
-        if !range_intersects(token_start..token_end, cursor_range)
-            && !range_intersects(token_start..token_end, result_range)
+
+        // Ratatui treats zero-width space as a wrap boundary. Keep an adjacent
+        // comment from moving the expression without changing visible text.
+        if token.token_type == TokenType::Comment
+            && input[..token_start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| !c.is_whitespace())
         {
+            spans.push(Span::raw("\u{200b}"));
+        }
+
+        let cursor_range = markers.cursor.as_ref().map(|marker| &marker.range);
+        if !range_intersects(token_start..token_end, cursor_range) {
             spans.push(Span::styled(
                 token.text,
                 Style::new().fg(token_color(token.token_type)),
@@ -155,21 +180,15 @@ fn tokenize_and_style_with_markers(
             continue;
         }
 
-        // Two markers contribute at most four internal boundaries. Keep the
+        // The marker contributes at most two internal boundaries. Keep the
         // cuts on the stack because this path runs on every terminal redraw.
-        let mut cuts = [0, token.text.len(), 0, 0, 0, 0];
+        let mut cuts = [0, token.text.len(), 0, 0];
         let mut cut_count = 2;
         add_marker_cuts(
             &mut cuts,
             &mut cut_count,
             token_start..token_end,
             cursor_range,
-        );
-        add_marker_cuts(
-            &mut cuts,
-            &mut cut_count,
-            token_start..token_end,
-            result_range,
         );
         cuts[..cut_count].sort_unstable();
         let mut unique_count = 1;
@@ -196,13 +215,6 @@ fn tokenize_and_style_with_markers(
             {
                 style = style.add_modifier(CURSOR_MARKER);
             }
-            if markers
-                .result
-                .as_ref()
-                .is_some_and(|range| range.contains(&global_start))
-            {
-                style = style.add_modifier(RESULT_MARKER);
-            }
             spans.push(Span::styled(
                 token.text[local_start..local_end].to_owned(),
                 style,
@@ -214,7 +226,7 @@ fn tokenize_and_style_with_markers(
 }
 
 fn add_marker_cuts(
-    cuts: &mut [usize; 6],
+    cuts: &mut [usize; 4],
     cut_count: &mut usize,
     token: Range<usize>,
     marker: Option<&Range<usize>>,
@@ -254,10 +266,6 @@ fn cursor_marker(input: &str, cursor_x: usize) -> Option<CursorMarker> {
     })
 }
 
-fn result_marker(input: &str) -> Option<Range<usize>> {
-    visible_grapheme_before(input, expression_prefix(input).len())
-}
-
 fn grapheme_at(input: &str, byte: usize) -> Option<(Range<usize>, &str)> {
     input
         .grapheme_indices(true)
@@ -265,17 +273,7 @@ fn grapheme_at(input: &str, byte: usize) -> Option<(Range<usize>, &str)> {
         .find(|(range, _)| range.start <= byte && byte < range.end)
 }
 
-fn visible_grapheme_before(input: &str, byte: usize) -> Option<Range<usize>> {
-    input
-        .grapheme_indices(true)
-        .map(|(start, grapheme)| (start..start + grapheme.len(), grapheme))
-        .take_while(|(range, _)| range.start < byte)
-        .filter(|(_, grapheme)| !grapheme.chars().all(char::is_whitespace))
-        .map(|(range, _)| range)
-        .last()
-}
-
-/// Locate and erase private layout markers from an already-rendered buffer.
+/// Locate and erase the private cursor marker from an already-rendered buffer.
 pub(crate) fn take_marker_cells(
     buffer: &mut Buffer,
     area: Rect,
@@ -291,13 +289,9 @@ pub(crate) fn take_marker_cells(
                 continue;
             };
             let cursor = cell.modifier.contains(CURSOR_MARKER);
-            let result = cell.modifier.contains(RESULT_MARKER);
             let cell_width = cell.symbol().cell_width();
-            cell.modifier.remove(CURSOR_MARKER | RESULT_MARKER);
+            cell.modifier.remove(CURSOR_MARKER);
 
-            if result && cells.result.is_none() {
-                cells.result = Some(Position { x, y });
-            }
             if cursor && (cells.cursor.is_none() || markers.cursor_after()) {
                 cells.cursor = cursor_position(
                     Position { x, y },
@@ -345,5 +339,31 @@ fn cursor_position(
             x: area.right().saturating_sub(1),
             y: marker.y,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn result_row_ignores_comments_and_trailing_whitespace() {
+        let variables = HashSet::new();
+        for (expression, suffix) in [
+            ("1 + 2", "   "),
+            ("90° to rad", " # trailing comment that wraps"),
+            ("é + 12345", " // trailing comment that wraps"),
+            ("🧮 + 12345", "#comment"),
+        ] {
+            for width in [1, 2, 3, 5, 8, 13, 21] {
+                assert_eq!(
+                    wrapped_result_row(&format!("{expression}{suffix}"), &variables, width),
+                    wrapped_result_row(expression, &variables, width),
+                    "expression={expression:?}, width={width}"
+                );
+            }
+        }
+
+        assert_eq!(highlight_line("1#c", &variables).width(), 3);
     }
 }

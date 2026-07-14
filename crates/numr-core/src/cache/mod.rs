@@ -124,11 +124,6 @@ impl RateCache {
         Ok(None)
     }
 
-    /// Clear all cached rates
-    pub fn clear(&mut self) {
-        self.rates.clear();
-    }
-
     /// Get the cache file path (native only)
     #[cfg(not(target_arch = "wasm32"))]
     fn cache_path() -> Option<PathBuf> {

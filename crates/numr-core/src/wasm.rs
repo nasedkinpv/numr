@@ -64,7 +64,7 @@ impl WasmEngine {
                 .into_iter()
                 .map(LineResultJson::from)
                 .collect(),
-            totals: document.totals.iter().map(format_value).collect(),
+            totals: document.totals.iter().map(ToString::to_string).collect(),
             variable_names: document
                 .variables
                 .into_iter()
@@ -93,7 +93,7 @@ impl From<crate::LineResult> for LineResultJson {
     fn from(line: crate::LineResult) -> Self {
         Self {
             input: line.input,
-            result: format_value(&line.value),
+            result: line.value.to_string(),
             is_error: line.value.is_error(),
             is_empty: matches!(line.value, Value::Empty),
         }
@@ -107,42 +107,9 @@ struct DocumentResultJson {
     variable_names: String,
 }
 
-fn format_value(value: &Value) -> String {
-    match value {
-        Value::Empty => String::new(),
-        Value::Error(error) => format!("Error: {error}"),
-        _ => value.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_decimal::Decimal;
-
-    #[test]
-    fn formats_public_result_shapes() {
-        let cases = [
-            (Value::Number(Decimal::from(42)), "42"),
-            (Value::Empty, ""),
-            (Value::error("Division by zero"), "Error: Division by zero"),
-        ];
-
-        for (value, expected) in cases {
-            assert_eq!(format_value(&value), expected);
-        }
-    }
-
-    #[test]
-    fn formats_currency_results() {
-        use crate::types::Currency;
-
-        let value = Value::Currency {
-            amount: Decimal::from(100),
-            currency: Currency::USD,
-        };
-        assert_eq!(format_value(&value), "$100.00");
-    }
 
     #[test]
     fn evaluates_document_in_one_wasm_call() {
