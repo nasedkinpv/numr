@@ -46,8 +46,9 @@ pub use error::{EvalError, ParseError, RateError};
 pub use eval::EvalContext;
 pub use parser::{parse_line, try_parse_exact, Ast, BinaryOp, Expr};
 pub use types::{
-    format_currency_value, format_number, CompoundUnit, Currency, CurrencyDef, Dimensions,
-    NumberBase, RuntimeUnitDef, Value, CURRENCIES, UNITS,
+    format_currency_value, format_number, CompoundUnit, Currency, CurrencyDef, DecimalPlaces,
+    Dimensions, DisplayOptions, InvalidDecimalPlaces, NumberBase, RuntimeUnitDef, Value,
+    CURRENCIES, UNITS,
 };
 
 // Re-export Decimal for tests and external use
@@ -99,6 +100,67 @@ pub struct DocumentResult {
     pub variables: Vec<(String, Value)>,
 }
 
+/// The selected syntax and its implicit inputs are shared by evaluation and preview.
+struct PreparedLine {
+    ast: Result<Ast, ParseError>,
+    previous: Option<Value>,
+    total: Option<Value>,
+    references_previous: bool,
+    is_aggregate: bool,
+}
+
+impl PreparedLine {
+    fn evaluate(&self, context: &mut EvalContext) -> Value {
+        if let Some(previous) = &self.previous {
+            for alias in catalog::ANSWER_ALIASES {
+                context.set_variable((*alias).to_string(), previous.clone());
+            }
+        }
+        if let Some(total) = &self.total {
+            context.set_variable("total".to_string(), total.clone());
+        }
+        match &self.ast {
+            Ok(ast) => eval::evaluate(ast, context),
+            Err(error) => Value::Error(EvalError::Parse(error.clone())),
+        }
+    }
+}
+
+/// Only value expressions read variables. Assignment names, function names,
+/// conversion targets, and text discarded by the parser are not references.
+#[derive(Default)]
+struct References {
+    previous: bool,
+    total: bool,
+}
+
+impl References {
+    fn visit(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Variable(name) => {
+                self.previous |= catalog::ANSWER_ALIASES.contains(&name.as_str());
+                self.total |= name == "total";
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.visit(left);
+                self.visit(right);
+            }
+            Expr::PercentageOf { value, .. } | Expr::Conversion { value, .. } => {
+                self.visit(value);
+            }
+            Expr::FunctionCall { args, .. } => {
+                for arg in args {
+                    self.visit(arg);
+                }
+            }
+            Expr::Number(_)
+            | Expr::Percentage(_)
+            | Expr::Currency { .. }
+            | Expr::WithCompoundUnit { .. } => {}
+        }
+    }
+}
+
 impl Engine {
     /// Create a new engine instance
     #[must_use]
@@ -111,26 +173,10 @@ impl Engine {
 
     /// Evaluate a single line and store the result
     pub fn eval(&mut self, input: &str) -> Value {
-        // Computing the document sum is linear in history, so materialize the
-        // magic variable only for lines that can actually reference it.
-        if Self::references_total(input) {
-            self.context.set_variable("total".to_string(), self.sum());
-        }
+        let prepared = self.prepare_line(input);
+        let result = prepared.evaluate(&mut self.context);
 
-        // Set '_', 'ANS', and 'ans' to the last valid result
-        if let Some(last_value) = self.last_valid_line().map(|lr| lr.value.clone()) {
-            self.context
-                .set_variable("_".to_string(), last_value.clone());
-            self.context
-                .set_variable("ANS".to_string(), last_value.clone());
-            self.context.set_variable("ans".to_string(), last_value); // Move on last use
-        }
-
-        // Try continuation-first if '_' exists, otherwise normal parse
-        let (result, continuation_succeeded) = self.eval_with_continuation(input);
-
-        // Mark previous line as consumed if continuation succeeded or input uses '_'
-        if !result.is_error() && (continuation_succeeded || Self::references_underscore(input)) {
+        if !result.is_error() && prepared.references_previous {
             if let Some(last) = self.last_valid_line_mut() {
                 last.is_continuation_source = true;
             }
@@ -140,48 +186,47 @@ impl Engine {
             input: input.to_string(),
             value: result.clone(),
             is_continuation_source: false,
-            is_aggregate: Self::is_aggregate_query(input),
+            is_aggregate: prepared.is_aggregate,
         });
 
         result
     }
 
-    /// Try continuation parsing first, fall back to normal parsing
-    /// Returns (result, whether_continuation_succeeded)
-    fn eval_with_continuation(&mut self, input: &str) -> (Value, bool) {
-        Self::eval_with_context(input, &mut self.context, |ctx| {
-            ctx.get_variable("_").is_some()
-        })
-    }
-
-    /// Shared continuation logic used by both eval and eval_preview.
-    /// `has_previous` checks whether a previous result exists for continuation.
-    fn eval_with_context(
-        input: &str,
-        ctx: &mut eval::EvalContext,
-        has_previous: impl FnOnce(&eval::EvalContext) -> bool,
-    ) -> (Value, bool) {
-        // Skip continuation for empty lines and comments
+    fn prepare_line(&self, input: &str) -> PreparedLine {
+        let previous = self.last_valid_line().map(|line| line.value.clone());
         let trimmed = input.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
-            return (Self::parse_and_eval_with(input, ctx), false);
+        // Select the continuation AST first, preserving normal fuzzy fallback.
+        // Once selected, even an evaluation error belongs to this AST; do not
+        // reinterpret a failed continuation as an independent expression.
+        let ast = if previous.is_some()
+            && !trimmed.starts_with('#')
+            && !trimmed.starts_with("//")
+            && Self::looks_like_continuation_static(trimmed)
+        {
+            try_parse_exact(&format!("_ {input}")).or_else(|_| parse_line(input))
+        } else {
+            parse_line(input)
+        };
+
+        let mut references = References::default();
+        let mut is_aggregate = false;
+        match &ast {
+            Ok(Ast::Expression(expr)) => {
+                references.visit(expr);
+                is_aggregate = matches!(expr, Expr::Variable(name) if name == "total");
+            }
+            Ok(Ast::Assignment { expr, .. }) => references.visit(expr),
+            Ok(Ast::Empty) | Err(_) => {}
         }
 
-        // Only try continuation if it looks like one and we have a previous result
-        if Self::looks_like_continuation_static(trimmed) && has_previous(ctx) {
-            let continued = format!("_ {}", input);
-            if let Ok(ast) = try_parse_exact(&continued) {
-                let result = eval::evaluate(&ast, ctx);
-                if !result.is_error() {
-                    return (result, true);
-                }
-                // A valid continuation that fails evaluation must retain its useful
-                // error and must not consume the source line.
-                return (result, false);
-            }
+        PreparedLine {
+            ast,
+            previous,
+            // Summing is linear in history. Only materialize it for actual reads.
+            total: references.total.then(|| self.sum()),
+            references_previous: references.previous,
+            is_aggregate,
         }
-        // Fall back to normal parsing
-        (Self::parse_and_eval_with(input, ctx), false)
     }
 
     /// Check if input looks like it's continuing a previous expression
@@ -223,23 +268,6 @@ impl Engine {
         false
     }
 
-    /// Check if input contains a standalone `_` or `ANS` reference (not part of another identifier)
-    fn references_underscore(input: &str) -> bool {
-        input
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .any(|word| word == "_" || word.eq_ignore_ascii_case("ans"))
-    }
-
-    fn is_aggregate_query(input: &str) -> bool {
-        input.trim().eq_ignore_ascii_case("total")
-    }
-
-    fn references_total(input: &str) -> bool {
-        input
-            .split(|character: char| !character.is_alphanumeric() && character != '_')
-            .any(|word| word.eq_ignore_ascii_case("total"))
-    }
-
     /// Find the last valid (non-empty, non-error) line result
     fn last_valid_line(&self) -> Option<&LineResult> {
         self.lines
@@ -256,29 +284,10 @@ impl Engine {
             .find(|lr| !lr.value.is_empty() && !lr.value.is_error())
     }
 
-    /// Parse and evaluate with a given context
-    fn parse_and_eval_with(input: &str, ctx: &mut eval::EvalContext) -> Value {
-        match parse_line(input) {
-            Ok(ast) => eval::evaluate(&ast, ctx),
-            Err(e) => Value::Error(EvalError::Parse(e)),
-        }
-    }
-
-    /// Evaluate without storing the result (for previews)
+    /// Evaluate without storing the result or changing variables (for previews).
     #[must_use]
     pub fn eval_preview(&self, input: &str) -> Value {
-        let mut ctx = self.context.clone();
-
-        // Set '_', 'ANS', and 'ans' to the last valid result for preview context
-        if let Some(last) = self.last_valid_line() {
-            ctx.set_variable("_".to_string(), last.value.clone());
-            ctx.set_variable("ANS".to_string(), last.value.clone());
-            ctx.set_variable("ans".to_string(), last.value.clone());
-        }
-
-        let (result, _) =
-            Self::eval_with_context(input, &mut ctx, |ctx| ctx.get_variable("_").is_some());
-        result
+        self.prepare_line(input).evaluate(&mut self.context.clone())
     }
 
     /// Get the sum of all computed values (as plain number)
@@ -562,6 +571,35 @@ impl Default for Engine {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    #[test]
+    fn preparation_only_materializes_actual_variable_reads() {
+        let mut engine = Engine::new();
+        engine.eval("100");
+        for input in [
+            "200 # total ANS",
+            "(200 + 0) prose total ANS",
+            "total = 200",
+            "ANS = 200",
+            "5 in total",
+            "5 in ANS",
+            "total(200)",
+            "ANS(200)",
+        ] {
+            let prepared = engine.prepare_line(input);
+            assert!(prepared.ast.is_ok(), "{input}");
+            assert!(prepared.total.is_none(), "{input}");
+            assert!(!prepared.references_previous, "{input}");
+            assert!(!prepared.is_aggregate, "{input}");
+        }
+        for input in ["sum(total)", "20% of total", "subtotal = total", "+ total"] {
+            assert_eq!(
+                engine.prepare_line(input).total,
+                Some(Value::Number(decimal("100"))),
+                "{input}"
+            );
+        }
+    }
 
     #[test]
     fn test_engine_basic() {

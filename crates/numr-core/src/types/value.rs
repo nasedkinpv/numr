@@ -8,6 +8,73 @@ use serde::{Deserialize, Serialize};
 /// Number of decimal places for display formatting
 const DISPLAY_PRECISION: u32 = 2;
 
+/// Validated display precision, from zero through the Decimal scale limit.
+/// All frontends share this type; invalid values are rejected rather than clamped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub struct DecimalPlaces(u32);
+
+/// A requested display precision outside the supported range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("decimal places must be between 0 and 28 (received {0})")]
+pub struct InvalidDecimalPlaces(u32);
+
+impl DecimalPlaces {
+    pub const MAX: u32 = 28;
+
+    pub const fn new(value: u32) -> Result<Self, InvalidDecimalPlaces> {
+        if value <= Self::MAX {
+            Ok(Self(value))
+        } else {
+            Err(InvalidDecimalPlaces(value))
+        }
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl TryFrom<u32> for DecimalPlaces {
+    type Error = InvalidDecimalPlaces;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<DecimalPlaces> for u32 {
+    fn from(value: DecimalPlaces) -> Self {
+        value.get()
+    }
+}
+
+/// Presentation-only options; calculations always retain their full precision.
+/// None preserves the default number and currency-specific display rules.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DisplayOptions {
+    /// Requested, validated decimal places; None preserves the existing rules.
+    pub decimals: Option<DecimalPlaces>,
+}
+
+impl DisplayOptions {
+    fn precision(self) -> u32 {
+        self.decimals.map_or(DISPLAY_PRECISION, DecimalPlaces::get)
+    }
+
+    fn number(self, n: Decimal) -> String {
+        format_number_with_precision(n, self.precision(), self.decimals.is_none())
+    }
+
+    fn currency(self, n: Decimal, currency: Currency) -> String {
+        format_currency_with_precision(
+            n,
+            self.decimals
+                .map_or(currency.display_precision(), DecimalPlaces::get),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NumberBase {
     Binary,
@@ -114,51 +181,59 @@ impl Value {
     }
 }
 
-impl std::fmt::Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Value {
+    /// Format a value without changing its stored amount or evaluation precision.
+    pub fn format_with_options(&self, options: DisplayOptions) -> String {
         match self {
-            Value::Number(n) => write!(f, "{}", format_number(*n)),
-            Value::BaseNumber { amount, base } => {
-                write!(f, "{}", format_number_base(*amount, *base))
-            }
+            Value::Number(n) => options.number(*n),
+            Value::BaseNumber { amount, base } => format_number_base(*amount, *base),
             Value::Percentage(p) => match p.checked_mul(Decimal::from(100)) {
-                Some(percent) => write!(f, "{}%", format_number(percent)),
-                // Programmatic callers can construct a percentage outside the
-                // representable display range. Formatting must remain total.
-                None => write!(f, "{}×100%", format_number(*p)),
+                Some(percent) => format!("{}%", options.number(percent)),
+                // Programmatic percentages can exceed the displayable range.
+                None => format!("{}×100%", options.number(*p)),
             },
             Value::Currency { amount, currency } => {
-                let formatted = format_currency_value(*amount, *currency);
+                let formatted = options.currency(*amount, *currency);
                 if currency.symbol_after() {
-                    write!(f, "{}{}", formatted, currency.symbol())
+                    format!("{}{}", formatted, currency.symbol())
                 } else {
-                    write!(f, "{}{}", currency.symbol(), formatted)
+                    format!("{}{}", currency.symbol(), formatted)
                 }
             }
             Value::WithCompoundUnit { amount, unit } => {
                 if unit.symbol == "°" {
-                    write!(f, "{}°", format_number(*amount))
+                    format!("{}°", options.number(*amount))
                 } else {
-                    write!(f, "{} {}", format_number(*amount), unit)
+                    format!("{} {}", options.number(*amount), unit)
                 }
             }
-            Value::Empty => Ok(()),
-            Value::Error(msg) => write!(f, "Error: {msg}"),
+            Value::Empty => String::new(),
+            Value::Error(msg) => format!("Error: {msg}"),
         }
+    }
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.format_with_options(DisplayOptions::default()))
     }
 }
 
 /// Format a number nicely (max DISPLAY_PRECISION decimal places, unless that would hide a small non-zero value)
 pub fn format_number(n: Decimal) -> String {
-    let rounded = n.round_dp(DISPLAY_PRECISION);
-    if rounded.is_zero() && !n.is_zero() {
+    format_number_with_precision(n, DISPLAY_PRECISION, true)
+}
+
+fn format_number_with_precision(n: Decimal, precision: u32, preserve_small: bool) -> String {
+    let rounded = n.round_dp(precision);
+    if preserve_small && rounded.is_zero() && !n.is_zero() {
         return n.normalize().to_string();
     }
 
     if rounded.fract().is_zero() {
         format!("{}", rounded.trunc())
     } else {
-        format!("{:.prec$}", rounded, prec = DISPLAY_PRECISION as usize)
+        format!("{:.prec$}", rounded, prec = precision as usize)
     }
 }
 

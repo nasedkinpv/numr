@@ -267,6 +267,7 @@ keybinding_mode = "vim"   # "vim" or "standard"
 wrap_mode = false
 show_line_numbers = false
 show_header = false
+# decimals = 4          # Optional display precision, 0–28 decimal places
 
 [files]
 default_path = "~/Documents/calculations.numr"
@@ -278,6 +279,21 @@ crypto_rates_url = "https://api.coingecko.com/api/v3/simple/price"
 [api.keys]
 coingecko_api_key = "your-key-here"
 ```
+
+Set `[preferences] decimals = 4` to display `152/150` as `1.0133`.
+The preference applies to TUI results and totals, CLI output (including the REPL),
+and JSON-RPC `display` strings. It only rounds presentation: stored values,
+variables, and subsequent calculations keep their full precision. Explicit
+precision applies to numbers, percentages, units, and currencies; binary and
+hexadecimal output are unchanged. Small values may display as zero at the
+selected precision. Omit `decimals` to preserve the existing formatting rules
+(two places for ordinary numbers, currency-specific precision, and the
+small-number fallback). Values outside 0–28 are rejected as invalid config.
+
+Web integrations can set the same presentation precision through
+`WasmEngine.set_decimal_places(4)` and reset it with
+`WasmEngine.set_decimal_places(undefined)`; this does not read a native config
+file. The separate web frontend must expose and persist this setting.
 
 CoinGecko API key header (demo vs pro) is selected automatically based on the URL host.
 

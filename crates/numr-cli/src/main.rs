@@ -11,7 +11,7 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser};
-use numr_core::{Engine, Value};
+use numr_core::{DisplayOptions, Engine, Value};
 
 #[derive(Parser, Debug)]
 #[command(name = "numr-cli")]
@@ -43,6 +43,10 @@ struct Args {
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
+    let (options, warning) = numr_cli::config::load_display_options();
+    if let Some(warning) = warning {
+        eprintln!("Warning: {warning}");
+    }
 
     let mut engine = Engine::new();
     let cache_loaded = match engine.load_rates_from_cache() {
@@ -56,7 +60,7 @@ fn main() -> io::Result<()> {
     // Server mode uses deterministic defaults plus an explicitly loaded cache. Clients can request
     // a network refresh through `reload_rates` when they need one.
     if args.server {
-        numr_cli::server::run_server(&mut engine)?;
+        numr_cli::server::run_server_with_options(&mut engine, options)?;
         return Ok(());
     }
 
@@ -83,23 +87,23 @@ fn main() -> io::Result<()> {
     // File mode defaults to verbose (aligned output), everything else to quiet
     if let Some(expr) = &args.expression {
         // Single expression mode
-        eval_and_print(&mut engine, expr, !args.verbose);
+        eval_and_print(&mut engine, expr, !args.verbose, options);
     } else if let Some(path) = &args.file {
         // File mode — verbose by default
         let content = std::fs::read_to_string(path)?;
         let document = engine.evaluate_document(&content);
         for line in document.lines {
-            print_evaluated(&line.input, &line.value, false);
+            print_evaluated(&line.input, &line.value, false, options);
         }
     } else if args.interactive {
         // Interactive REPL
-        run_repl(&mut engine)?;
+        run_repl(&mut engine, options)?;
     } else if !io::stdin().is_terminal() {
         // Pipe mode (stdin is not a tty)
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
             let line = line?;
-            eval_and_print(&mut engine, &line, !args.verbose);
+            eval_and_print(&mut engine, &line, !args.verbose, options);
         }
     } else {
         Args::command().print_help()?;
@@ -111,24 +115,24 @@ fn main() -> io::Result<()> {
     if args.total {
         let sum = engine.sum();
         println!("─────────────");
-        println!("Total: {sum}");
+        println!("Total: {}", sum.format_with_options(options));
     }
 
     Ok(())
 }
 
-fn eval_and_print(engine: &mut Engine, input: &str, quiet: bool) {
+fn eval_and_print(engine: &mut Engine, input: &str, quiet: bool, options: DisplayOptions) {
     let result = engine.eval(input);
-    print_evaluated(input, &result, quiet);
+    print_evaluated(input, &result, quiet, options);
 }
 
-fn print_evaluated(input: &str, result: &Value, quiet: bool) {
+fn print_evaluated(input: &str, result: &Value, quiet: bool, options: DisplayOptions) {
     if quiet {
         if !result.is_empty() {
-            println!("{result}");
+            println!("{}", result.format_with_options(options));
         }
     } else {
-        let result_str = result.to_string();
+        let result_str = result.format_with_options(options);
         if result_str.is_empty() {
             println!("{input}");
         } else {
@@ -139,7 +143,7 @@ fn print_evaluated(input: &str, result: &Value, quiet: bool) {
     }
 }
 
-fn run_repl(engine: &mut Engine) -> io::Result<()> {
+fn run_repl(engine: &mut Engine, options: DisplayOptions) -> io::Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
@@ -171,7 +175,7 @@ fn run_repl(engine: &mut Engine) -> io::Result<()> {
                 continue;
             }
             "total" | "sum" => {
-                println!("Total: {}", engine.sum());
+                println!("Total: {}", engine.sum().format_with_options(options));
                 continue;
             }
             "help" => {
@@ -181,7 +185,7 @@ fn run_repl(engine: &mut Engine) -> io::Result<()> {
             _ => {}
         }
 
-        eval_and_print(engine, line, true);
+        eval_and_print(engine, line, true, options);
     }
 
     Ok(())

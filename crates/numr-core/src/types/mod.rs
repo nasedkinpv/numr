@@ -6,4 +6,7 @@ mod value;
 
 pub use currency::{Currency, CurrencyDef, CURRENCIES};
 pub use unit::{CompoundUnit, Dimensions, RuntimeUnitDef, UNITS};
-pub use value::{format_currency_value, format_number, NumberBase, Value};
+pub use value::{
+    format_currency_value, format_number, DecimalPlaces, DisplayOptions, InvalidDecimalPlaces,
+    NumberBase, Value,
+};

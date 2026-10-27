@@ -3,7 +3,9 @@
 //! The protocol handler is intentionally independent from stdin/stdout so clients and tests can
 //! exercise the exact same parsing, validation, and dispatch path as the CLI server.
 
-use numr_core::{format_currency_value, format_number, Decimal, Engine, Value as NumrValue};
+use numr_core::{
+    format_currency_value, format_number, Decimal, DisplayOptions, Engine, Value as NumrValue,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
@@ -137,30 +139,36 @@ impl RpcFailure {
 /// Convert a core value into the single JSON representation used by every RPC method.
 #[must_use]
 pub fn value_to_result(value: &NumrValue) -> RpcEvalResult {
+    value_to_result_with_options(value, DisplayOptions::default())
+}
+
+/// Format the display field with preferences while preserving protocol value fields.
+#[must_use]
+pub fn value_to_result_with_options(value: &NumrValue, options: DisplayOptions) -> RpcEvalResult {
     match value {
         NumrValue::Number(n) => RpcEvalResult {
             result_type: "number",
             value: Some(format_number(*n)),
             unit: None,
             message: None,
-            display: value.to_string(),
+            display: value.format_with_options(options),
         },
         NumrValue::BaseNumber { amount, .. } => RpcEvalResult {
             result_type: "number",
             value: Some(format_number(*amount)),
             unit: None,
             message: None,
-            display: value.to_string(),
+            display: value.format_with_options(options),
         },
         NumrValue::Percentage(p) => match p.checked_mul(Decimal::from(100)) {
             Some(points) => {
                 let formatted = format_number(points);
                 RpcEvalResult {
                     result_type: "percentage",
-                    value: Some(formatted.clone()),
+                    value: Some(formatted),
                     unit: None,
                     message: None,
-                    display: format!("{formatted}%"),
+                    display: value.format_with_options(options),
                 }
             }
             None => RpcEvalResult {
@@ -176,14 +184,14 @@ pub fn value_to_result(value: &NumrValue) -> RpcEvalResult {
             value: Some(format_currency_value(*amount, *currency)),
             unit: Some(currency.code().to_string()),
             message: None,
-            display: value.to_string(),
+            display: value.format_with_options(options),
         },
         NumrValue::WithCompoundUnit { amount, unit } => RpcEvalResult {
             result_type: "unit",
             value: Some(format_number(*amount)),
             unit: Some(unit.symbol.clone()),
             message: None,
-            display: value.to_string(),
+            display: value.format_with_options(options),
         },
         NumrValue::Empty => RpcEvalResult {
             result_type: "empty",
@@ -197,7 +205,7 @@ pub fn value_to_result(value: &NumrValue) -> RpcEvalResult {
             value: None,
             unit: None,
             message: Some(message.to_string()),
-            display: value.to_string(),
+            display: value.format_with_options(options),
         },
     }
 }
@@ -206,12 +214,26 @@ pub fn value_to_result(value: &NumrValue) -> RpcEvalResult {
 pub struct JsonRpcHandler<'a> {
     engine: &'a mut Engine,
     runtime: &'a tokio::runtime::Runtime,
+    display_options: DisplayOptions,
 }
 
 impl<'a> JsonRpcHandler<'a> {
     #[must_use]
     pub fn new(engine: &'a mut Engine, runtime: &'a tokio::runtime::Runtime) -> Self {
-        Self { engine, runtime }
+        Self::with_display_options(engine, runtime, DisplayOptions::default())
+    }
+
+    #[must_use]
+    pub fn with_display_options(
+        engine: &'a mut Engine,
+        runtime: &'a tokio::runtime::Runtime,
+        display_options: DisplayOptions,
+    ) -> Self {
+        Self {
+            engine,
+            runtime,
+            display_options,
+        }
     }
 
     /// Handle one complete JSON-RPC message.
@@ -285,7 +307,7 @@ impl<'a> JsonRpcHandler<'a> {
                     self.engine
                         .grouped_totals()
                         .iter()
-                        .map(value_to_result)
+                        .map(|value| value_to_result_with_options(value, self.display_options))
                         .collect::<Vec<_>>(),
                 )
             }
@@ -298,7 +320,7 @@ impl<'a> JsonRpcHandler<'a> {
                         .into_iter()
                         .map(|(name, value)| VariableInfo {
                             name,
-                            value: value_to_result(&value),
+                            value: value_to_result_with_options(&value, self.display_options),
                         })
                         .collect::<Vec<_>>(),
                 )
@@ -314,7 +336,10 @@ impl<'a> JsonRpcHandler<'a> {
 
     fn eval(&mut self, params: Option<Value>) -> Result<Value, RpcFailure> {
         let params: EvalParams = parse_params(params)?;
-        to_json(value_to_result(&self.engine.eval(&params.expr)))
+        to_json(value_to_result_with_options(
+            &self.engine.eval(&params.expr),
+            self.display_options,
+        ))
     }
 
     fn eval_lines(&mut self, params: Option<Value>) -> Result<Value, RpcFailure> {
@@ -323,7 +348,7 @@ impl<'a> JsonRpcHandler<'a> {
             self.engine
                 .append_lines(params.lines.iter().map(String::as_str))
                 .iter()
-                .map(|line| value_to_result(&line.value))
+                .map(|line| value_to_result_with_options(&line.value, self.display_options))
                 .collect::<Vec<_>>(),
         )
     }
@@ -490,10 +515,21 @@ fn drain_line(reader: &mut impl BufRead) -> io::Result<()> {
 pub fn run_server_with_io(
     engine: &mut Engine,
     runtime: &tokio::runtime::Runtime,
+    input: impl BufRead,
+    output: impl Write,
+) -> io::Result<()> {
+    run_server_with_io_and_options(engine, runtime, input, output, DisplayOptions::default())
+}
+
+/// Run the protocol with configured display precision.
+pub fn run_server_with_io_and_options(
+    engine: &mut Engine,
+    runtime: &tokio::runtime::Runtime,
     mut input: impl BufRead,
     mut output: impl Write,
+    options: DisplayOptions,
 ) -> io::Result<()> {
-    let mut handler = JsonRpcHandler::new(engine, runtime);
+    let mut handler = JsonRpcHandler::with_display_options(engine, runtime, options);
     let mut buffer = Vec::with_capacity(4096);
 
     loop {
@@ -520,9 +556,20 @@ pub fn run_server_with_io(
 
 /// Run the JSON-RPC server on stdin/stdout.
 pub fn run_server(engine: &mut Engine) -> io::Result<()> {
+    run_server_with_options(engine, DisplayOptions::default())
+}
+
+/// Run the JSON-RPC server with configured display precision.
+pub fn run_server_with_options(engine: &mut Engine, options: DisplayOptions) -> io::Result<()> {
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| io::Error::other(format!("failed to create runtime: {error}")))?;
-    run_server_with_io(engine, &runtime, io::stdin().lock(), io::stdout().lock())
+    run_server_with_io_and_options(
+        engine,
+        &runtime,
+        io::stdin().lock(),
+        io::stdout().lock(),
+        options,
+    )
 }
 
 #[cfg(test)]
@@ -535,6 +582,86 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         let mut handler = JsonRpcHandler::new(&mut engine, &runtime);
         test(&mut handler);
+    }
+
+    #[test]
+    fn comments_do_not_change_reference_or_aggregate_semantics() {
+        handler_test(|handler| {
+            for (lines, expected) in [
+                (vec!["100", "200 # ANS", "total"], "300"),
+                (vec!["100", "total # subtotal", "total"], "100"),
+            ] {
+                handler
+                    .handle(r#"{"jsonrpc":"2.0","id":1,"method":"clear"}"#)
+                    .unwrap();
+                let request = serde_json::json!({
+                    "jsonrpc": "2.0", "id": 2, "method": "eval_lines",
+                    "params": { "lines": lines }
+                });
+                let response = handler.handle(&request.to_string()).unwrap();
+                assert_eq!(response["result"][2]["display"], expected);
+            }
+        });
+    }
+
+    #[test]
+    fn configured_precision_applies_to_every_rpc_display_only() {
+        let mut engine = Engine::new();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let mut handler = JsonRpcHandler::with_display_options(
+            &mut engine,
+            &runtime,
+            DisplayOptions {
+                decimals: Some(numr_core::DecimalPlaces::new(4).unwrap()),
+            },
+        );
+        let eval = handler
+            .handle(r#"{"jsonrpc":"2.0","id":1,"method":"eval","params":{"expr":"x = 1 / 3"}}"#)
+            .unwrap();
+        assert_eq!(eval["result"]["display"], "0.3333");
+        assert_eq!(eval["result"]["value"], "0.33");
+        let lines = handler.handle(r#"{"jsonrpc":"2.0","id":2,"method":"eval_lines","params":{"lines":["x", "x * 3", "1.234567 kg"]}}"#).unwrap();
+        assert_eq!(lines["result"][0]["display"], "0.3333");
+        assert_eq!(lines["result"][1]["display"], "1");
+        let totals = handler
+            .handle(r#"{"jsonrpc":"2.0","id":3,"method":"get_totals"}"#)
+            .unwrap();
+        assert_eq!(totals["result"][0]["display"], "1.2346 kg");
+        let variables = handler
+            .handle(r#"{"jsonrpc":"2.0","id":4,"method":"get_variables"}"#)
+            .unwrap();
+        assert_eq!(variables["result"][0]["value"]["display"], "0.3333");
+    }
+
+    #[test]
+    fn custom_precision_keeps_raw_fields_for_all_numeric_types() {
+        let mut engine = Engine::new();
+        for expression in [
+            "1 / 3",
+            "1.234567%",
+            "$1.234567",
+            "1.234567 BTC",
+            "1.234567 km",
+            "255 to hex",
+        ] {
+            let value = engine.eval(expression);
+            assert!(!value.is_error(), "{expression}: {value}");
+            let original = value_to_result(&value);
+            let configured = value_to_result_with_options(
+                &value,
+                DisplayOptions {
+                    decimals: Some(numr_core::DecimalPlaces::new(4).unwrap()),
+                },
+            );
+            assert_eq!(configured.value, original.value, "{expression}");
+            assert_eq!(configured.unit, original.unit, "{expression}");
+            assert_eq!(
+                configured.display,
+                value.format_with_options(DisplayOptions {
+                    decimals: Some(numr_core::DecimalPlaces::new(4).unwrap())
+                })
+            );
+        }
     }
 
     #[test]

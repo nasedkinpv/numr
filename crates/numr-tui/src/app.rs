@@ -3,7 +3,7 @@
 use crate::config::Config;
 use crate::line_layout::{measure_wrapped_cursor, wrapped_height};
 use crate::persistence::atomic_write;
-use numr_core::{Decimal, Engine, FetchConfig, RateError, Value};
+use numr_core::{Decimal, DisplayOptions, Engine, FetchConfig, RateError, Value};
 use numr_editor::char_to_byte_idx;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -68,6 +68,7 @@ struct Document {
     dirty: bool,
     persist_rates: bool,
     engine: Engine,
+    display_options: DisplayOptions,
 }
 
 #[derive(Default)]
@@ -89,6 +90,7 @@ impl Document {
             dirty: false,
             persist_rates: true,
             engine: Engine::new(),
+            display_options: DisplayOptions::default(),
         };
         document.refresh_results();
         document
@@ -108,6 +110,7 @@ impl Document {
             dirty: false,
             persist_rates: false,
             engine: Engine::new(),
+            display_options: DisplayOptions::default(),
         };
         document.refresh_results();
         document
@@ -322,21 +325,15 @@ impl Document {
     // typical document sizes (<100 lines) this completes in ~1ms. Not worth the
     // complexity of incremental eval until users report actual lag.
     fn recompute_results(&mut self) {
-        self.engine.clear();
-        self.results.clear();
+        // Terminate every editor line so `str::lines` also retains the final
+        // empty line (including the one-line empty document).
+        let mut content = self.lines.join("\n");
+        content.push('\n');
+        let document = self.engine.evaluate_document(&content);
+        self.results = document.lines.into_iter().map(|line| line.value).collect();
 
-        for line in &self.lines {
-            let value = if line.trim().is_empty() {
-                Value::Empty
-            } else {
-                self.engine.eval(line)
-            };
-            self.results.push(value);
-        }
-
-        let variable_names = self
-            .engine
-            .variables()
+        let variable_names = document
+            .variables
             .into_iter()
             .map(|(name, _)| name)
             .collect();
@@ -347,7 +344,7 @@ impl Document {
                 if value.is_error() || value.is_empty() {
                     None
                 } else {
-                    Some(value.to_string())
+                    Some(value.format_with_options(self.display_options))
                 }
             })
             .collect();
@@ -365,11 +362,10 @@ impl Document {
                 _ => None,
             })
             .collect();
-        let totals_text = self
-            .engine
-            .grouped_totals()
+        let totals_text = document
+            .totals
             .into_iter()
-            .map(|value| value.to_string())
+            .map(|value| value.format_with_options(self.display_options))
             .collect::<Vec<_>>()
             .join("  ");
         self.render_state = DocumentRenderState {
@@ -743,6 +739,11 @@ impl App {
             debug_mode,
             ..Self::default()
         };
+
+        app.document.display_options = DisplayOptions {
+            decimals: app.config.preferences.decimals,
+        };
+        app.document.refresh_results();
 
         if let Err(error) = app.document.load_rates_from_cache() {
             app.set_status(&format!("Rates cache error: {error}"));
@@ -1218,6 +1219,122 @@ mod tests {
             "numr-document-{test_name}-{}-{nonce}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn comments_do_not_change_displayed_totals() {
+        for (middle, expected) in [("200 # ANS", "300"), ("total # subtotal", "100")] {
+            let document = Document::from_lines(vec!["100".into(), middle.into(), "total".into()]);
+            assert_eq!(document.result_text(2), Some(expected));
+        }
+    }
+
+    #[test]
+    fn document_adapter_matches_core_results_and_rendering() {
+        let sources = [
+            "",
+            "\n",
+            "1\n",
+            "1\n\n",
+            " \n\t\n",
+            "x = 1.234567 kg\nx * 3\n\n+ 0.1 kg\n1 / 0\ntotal\n",
+            "x = 10\n2\n+ 3\ntotal\nans * 2\n# comment\n5 USD\n",
+        ];
+        for source in sources {
+            for decimals in [None, Some(0), Some(4), Some(28)] {
+                let options = DisplayOptions {
+                    decimals: decimals.map(|value| numr_core::DecimalPlaces::new(value).unwrap()),
+                };
+                let mut document =
+                    Document::from_lines(source.split('\n').map(String::from).collect());
+                document.display_options = options;
+                document.refresh_results();
+                let expected = Engine::new().evaluate_document(&format!("{source}\n"));
+                assert_eq!(document.results.len(), document.lines.len(), "{source:?}");
+                assert_eq!(document.engine.lines(), expected.lines, "{source:?}");
+                assert_eq!(
+                    document.results,
+                    expected
+                        .lines
+                        .iter()
+                        .map(|line| line.value.clone())
+                        .collect::<Vec<_>>(),
+                    "{source:?}"
+                );
+                assert_eq!(
+                    document.variable_names(),
+                    &expected
+                        .variables
+                        .iter()
+                        .map(|(name, _)| name.clone())
+                        .collect::<HashSet<_>>()
+                );
+                let mut max_width = 0;
+                for (index, line) in expected.lines.iter().enumerate() {
+                    match &line.value {
+                        Value::Empty => {
+                            assert_eq!(document.result_text(index), None);
+                            assert_eq!(document.current_line_error(index), None);
+                        }
+                        Value::Error(error) => {
+                            assert_eq!(document.result_text(index), None);
+                            assert_eq!(
+                                document.current_line_error(index),
+                                Some(error.to_string().as_str())
+                            );
+                        }
+                        value => {
+                            let text = value.format_with_options(options);
+                            max_width = max_width.max(text.chars().count());
+                            assert_eq!(document.result_text(index), Some(text.as_str()));
+                            assert_eq!(document.current_line_error(index), None);
+                        }
+                    }
+                }
+                assert_eq!(document.max_result_width(), max_width);
+                assert_eq!(
+                    document.totals_text(),
+                    expected
+                        .totals
+                        .iter()
+                        .map(|value| value.format_with_options(options))
+                        .collect::<Vec<_>>()
+                        .join("  ")
+                );
+                assert!(!document.dirty());
+            }
+        }
+    }
+
+    #[test]
+    fn document_replacement_clears_variables_but_preserves_rates_and_dirty_state() {
+        let mut document = Document::from_lines(vec!["old = 10".into()]);
+        let rates = HashMap::from([("BTC".to_string(), Decimal::from(42000))]);
+        document.update_rates(&rates).unwrap();
+        document.lines = vec!["1 BTC in USD".into(), String::new()];
+        document.recalculate();
+        assert!(document.dirty());
+        assert!(document.variable_names().is_empty());
+        assert_eq!(document.results[0].as_decimal(), Some(Decimal::from(42000)));
+        assert_eq!(document.results[1], Value::Empty);
+        document.refresh_results();
+        assert!(document.dirty());
+        assert_eq!(document.results[0].as_decimal(), Some(Decimal::from(42000)));
+    }
+
+    #[test]
+    fn decimal_preferences_format_results_widths_and_totals_without_changing_values() {
+        let mut document = Document::from_lines(vec!["x = 1.234567 kg".into(), "x * 3".into()]);
+        let before = document.results.clone();
+        document.display_options = DisplayOptions {
+            decimals: Some(numr_core::DecimalPlaces::new(4).unwrap()),
+        };
+        document.refresh_results();
+        assert_eq!(document.result_text(0), Some("1.2346 kg"));
+        assert_eq!(document.result_text(1), Some("3.7037 kg"));
+        assert_eq!(document.max_result_width(), 9);
+        assert_eq!(document.totals_text(), "4.9383 kg");
+        assert_eq!(document.results, before);
     }
 
     #[test]

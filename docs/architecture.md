@@ -54,7 +54,12 @@ The main evaluation surfaces are:
 - `evaluate_document`: clear existing state, evaluate a complete document, and return a `DocumentResult` containing lines, grouped totals, and sorted user variables.
 - `append_lines`: append multiple lines to existing state without clearing it.
 
-`LineResult` records the input, value, continuation-consumption state, and whether the line is a display-only aggregate. Continuations only consume the preceding successful value when their evaluation succeeds. Aggregate queries do not feed later totals.
+`LineResult` records the input, value, continuation-consumption state, and whether the line is a display-only aggregate. Continuations only consume the preceding successful value when their evaluation succeeds. Aggregate queries do not feed later totals. Both evaluation and preview select the same
+AST (including continuation-first parsing and fuzzy fallback), then derive implicit
+answer/total references from its value expressions. Comments, discarded prose,
+assignment names, function names, and conversion targets do not count as reads.
+A bare `total` AST remains display-only even with trailing comments or parentheses.
+The current total is computed lazily only when the selected AST reads it.
 
 The parser applies fixed resource checks before Pest or the recursive evaluator receives input: 16 KiB per expression, 256 operation tokens, 128 parenthesis levels, and at most 128 fuzzy suffix attempts. Adapters may impose tighter transport limits before calling the core.
 
@@ -63,6 +68,12 @@ Failures cross the core boundary as typed errors:
 - `ParseError` describes syntax and parser resource limits.
 - `EvalError` describes checked arithmetic, division, operands, variables, functions, and conversions.
 - `RateError` describes rate validation, network responses, and cache/filesystem failures.
+
+`DecimalPlaces` is the validated 0–28 display-precision type shared by native
+configuration, Rust callers, and the WASM boundary. `DisplayOptions` carries an
+optional precision; omission preserves the existing formatting rules. JavaScript
+numbers are checked for finiteness and an integer value before conversion to this
+type. Formatting never changes stored values or calculation precision.
 
 The evaluator uses checked Decimal operations on user-controlled paths so invalid or extreme input becomes a `Value::Error` instead of a process panic. Physical quantities have one representation, `CompoundUnit`, for both simple and derived units; conversion and grouped totals do not branch through a legacy unit model.
 
@@ -82,7 +93,7 @@ The JSON-RPC parser/validator/dispatcher is independent of stdin/stdout, which k
 
 `numr-tui` owns the document buffer, cursor/viewport state, keybindings, configuration, persistence, and terminal lifecycle. The core and editor remain unaware of Ratatui.
 
-The main loop is event-driven. It redraws after input and state changes, or while the rate-loading indicator is animated; static status messages schedule one wakeup for expiry instead of running a frame loop. Document evaluation refreshes a cached render state containing formatted results, errors, variable names, totals, and result widths, and the renderer limits widget work to visible content.
+The main loop is event-driven. It redraws after input and state changes, or while the rate-loading indicator is animated; static status messages schedule one wakeup for expiry instead of running a frame loop. Document evaluation consumes the core `Engine::evaluate_document` / `DocumentResult` contract and refreshes a frontend-owned cached render state containing formatted results, errors, variable names, totals, and result widths, and the renderer limits widget work to visible content.
 
 Documents and configuration use same-directory atomic replacement after flushing and syncing the temporary file. Ratatui owns raw mode and the alternate screen through `DefaultTerminal`; a small RAII session adds and restores mouse capture, keyboard enhancement, and cursor visibility across normal exits and errors.
 

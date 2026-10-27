@@ -1,7 +1,7 @@
 //! Configuration file handling for numr TUI
 
 use directories::ProjectDirs;
-use numr_core::{FetchConfig, DEFAULT_CRYPTO_RATES_URL, DEFAULT_FIAT_RATES_URL};
+use numr_core::{DecimalPlaces, FetchConfig, DEFAULT_CRYPTO_RATES_URL, DEFAULT_FIAT_RATES_URL};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -32,6 +32,9 @@ pub enum KeybindingMode {
 #[serde(default)]
 pub struct Preferences {
     pub keybinding_mode: KeybindingMode,
+    /// Maximum decimal places for displayed results; omitted preserves legacy formatting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decimals: Option<DecimalPlaces>,
     pub wrap_mode: bool,
     pub show_line_numbers: bool,
     pub show_header: bool,
@@ -133,6 +136,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn decimal_preference_is_optional_validated_and_preserved() {
+        for value in [0, 4, 28] {
+            let config: Config =
+                toml::from_str(&format!("[preferences]\ndecimals = {value}")).unwrap();
+            assert_eq!(
+                config.preferences.decimals,
+                Some(DecimalPlaces::new(value).unwrap())
+            );
+            let saved = toml::to_string(&config).unwrap();
+            let restored: Config = toml::from_str(&saved).unwrap();
+            assert_eq!(
+                restored.preferences.decimals,
+                Some(DecimalPlaces::new(value).unwrap())
+            );
+        }
+        assert_eq!(Config::default().preferences.decimals, None);
+        assert!(!toml::to_string(&Config::default())
+            .unwrap()
+            .contains("decimals"));
+        for value in ["-1", "29", "1.5", "\"4\""] {
+            assert!(
+                toml::from_str::<Config>(&format!("[preferences]\ndecimals = {value}")).is_err()
+            );
+        }
+    }
+
+    #[test]
     fn test_serialization_roundtrip() {
         let config = Config {
             preferences: Preferences {
@@ -141,6 +171,7 @@ mod tests {
                 show_line_numbers: true,
                 show_header: true,
                 debug_mode: true,
+                decimals: Some(DecimalPlaces::new(4).unwrap()),
             },
             files: FilesConfig {
                 default_path: Some("~/custom/path.numr".to_string()),

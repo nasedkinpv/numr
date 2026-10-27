@@ -1425,10 +1425,12 @@ name = "numr-cli"
 version = "0.8.0"
 dependencies = [
  "clap",
+ "directories",
  "numr-core",
  "serde",
  "serde_json",
  "tokio",
+ "toml",
 ]
 
 [[package]]

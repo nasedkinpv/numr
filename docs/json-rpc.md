@@ -2,6 +2,12 @@
 
 `numr-cli --server` exposes a stateful JSON-RPC 2.0 calculator over standard input and output. It is intended for editors, launchers, and local tools that can keep one process alive.
 
+The native `[preferences] decimals` setting controls `display` strings across
+all calculator-returning methods. It does not change the existing `value`
+field formatting or calculation precision. For example, with `decimals = 4`,
+`152/150` returns `"display":"1.0133"` while `"value":"1.01"` retains its
+compatibility format.
+
 ## Transport
 
 - Each request or batch is one complete JSON value followed by `\n` (CRLF is also accepted).

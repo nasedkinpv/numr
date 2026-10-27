@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>numr WASM runtime contract</title>
+<pre id="status">RUNNING</pre>
+<script type="module">
+  import init, { WasmEngine } from './wasm-web/numr_core.js';
+  import { testWasmRuntime } from './test-wasm-runtime.mjs';
+  try {
+    await init();
+    document.querySelector('#status').textContent =
+      'PASS ' + JSON.stringify(testWasmRuntime(WasmEngine));
+  } catch (error) {
+    document.querySelector('#status').textContent = 'FAIL ' + error.stack;
+  }
+</script>
