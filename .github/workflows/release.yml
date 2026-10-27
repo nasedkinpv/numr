@@ -30,6 +30,7 @@ jobs:
           cargo_version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml)"
           test -n "$cargo_version"
           test "$tag_version" = "$cargo_version"
+          test -s "docs/releases/${GITHUB_REF_NAME}.md"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -61,7 +62,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: false
-          generate_release_notes: true
+          body_path: docs/releases/${{ github.ref_name }}.md
+          generate_release_notes: false
 
   # Build and upload binaries for all platforms
   upload-binaries:
