@@ -272,6 +272,7 @@ impl RateCache {
         self.set_rate(Currency::USD, Currency::ILS, d("3.65"));
         self.set_rate(Currency::USD, Currency::PLN, d("4"));
         self.set_rate(Currency::USD, Currency::UAH, d("41"));
+        self.set_rate(Currency::USD, Currency::KZT, d("450"));
 
         // Crypto rates (1 TOKEN = X USD) - approximate values
         self.set_rate(Currency::BTC, Currency::USD, d("95000"));
@@ -351,6 +352,7 @@ mod tests {
         assert!(cache.get_rate(Currency::ETH, Currency::USD).is_some());
         assert!(cache.get_rate(Currency::SOL, Currency::USD).is_some());
         assert!(cache.get_rate(Currency::PLN, Currency::USD).is_some());
+        assert!(cache.get_rate(Currency::KZT, Currency::USD).is_some());
     }
 
     #[test]

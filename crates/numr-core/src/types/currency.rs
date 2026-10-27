@@ -180,6 +180,16 @@ pub static CURRENCIES: &[CurrencyDef] = &[
         is_crypto: false,
         coingecko_id: None,
     },
+    CurrencyDef {
+        currency: Currency::KZT,
+        symbol: "₸",
+        code: "KZT",
+        aliases: &["₸", "kzt", "tenge"],
+        symbol_after: true,
+        display_precision: FIAT_DISPLAY_PRECISION,
+        is_crypto: false,
+        coingecko_id: None,
+    },
     // === Cryptocurrencies ===
     CurrencyDef {
         currency: Currency::BTC,
@@ -351,6 +361,7 @@ pub enum Currency {
     ILS,
     PLN,
     UAH,
+    KZT,
     // Crypto
     BTC,
     ETH,

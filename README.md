@@ -22,7 +22,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 - **Variables**: `tax = 15%` then `100 + tax`
 - **Unit conversions**: Length, weight, time, temperature, data sizes
 - **Compound units**: `5 m * 10 m = 50 m²`, `100 km / 2 h = 50 km/h`
-- **Currency conversions**: USD, EUR, GBP, JPY, CHF, CNY, CAD, AUD, INR, KRW, RUB, ILS, PLN, UAH + crypto (BTC, ETH, SOL, and more)
+- **Currency conversions**: USD, EUR, GBP, JPY, CHF, CNY, CAD, AUD, INR, KRW, RUB, ILS, PLN, UAH, KZT + crypto (BTC, ETH, SOL, and more)
 - **Number base conversions**: `22 to hex`, `22 to bin`
 - **Math functions and constants**: `median(1, 3, 2)`, `clamp(120, 0, 100)`, `sin(90°)`, `factorial(5)`
 - **Angle conversions**: `90° to rad`, `3.14159 rad to deg`, `rad(180)`, `deg(pi)`
@@ -250,7 +250,7 @@ See [example.numr](example.numr) for a complete, executable tour of arithmetic, 
 | Power | `W`, `kW` |
 | Temperature | `K`/`Kelvin`, `C`/`Celsius`, `F`/`Fahrenheit` |
 | Data | `TB`, `GB`, `MB`, `KB`, `bytes` |
-| Fiat | `$`/`USD`, `€`/`EUR`, `£`/`GBP`, `¥`/`JPY`, `CHF`, `CNY`, `CAD`, `AUD`, `₹`/`INR`, `₩`/`KRW`, `₽`/`RUB`, `₪`/`ILS`, `zł`/`PLN`, `₴`/`UAH` |
+| Fiat | `$`/`USD`, `€`/`EUR`, `£`/`GBP`, `¥`/`JPY`, `CHF`, `CNY`, `CAD`, `AUD`, `₹`/`INR`, `₩`/`KRW`, `₽`/`RUB`, `₪`/`ILS`, `zł`/`PLN`, `₴`/`UAH`, `₸`/`KZT` |
 | Crypto | `₿`/`BTC`, `Ξ`/`ETH`, `◎`/`SOL`, `₮`/`USDT`, `USDC`, `BNB`, `XRP`, `₳`/`ADA`, `Ð`/`DOGE`, `DOT`, `Ł`/`LTC`, `LINK`, `AVAX`, `MATIC`, `TON` |
 
 ## Architecture
