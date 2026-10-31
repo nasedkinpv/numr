@@ -274,6 +274,7 @@ default_path = "~/Documents/calculations.numr"
 
 [api]
 fiat_rates_url = "https://open.er-api.com/v6/latest/USD"
+fiat_rates_fallback_url = "https://allratestoday.com/api/open/latest/USD"  # "" to disable
 crypto_rates_url = "https://api.coingecko.com/api/v3/simple/price"
 
 [api.keys]
@@ -306,6 +307,7 @@ Exchange rates are cached to `rates.json` in the same config directory with 1-ho
 Rate sources:
 
 - **Fiat currencies**: [open.er-api.com](https://open.er-api.com) (152 currencies, free)
+- **Fiat fallback**: [allratestoday.com](https://allratestoday.com) ECB reference rates (30 currencies, free, no key), used only when the primary source fails; the status line says so
 - **Cryptocurrency**: [CoinGecko](https://www.coingecko.com/en/api) (15 tokens, free)
 
 ## Integrations
