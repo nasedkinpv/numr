@@ -105,7 +105,7 @@ struct PreparedLine {
     ast: Result<Ast, ParseError>,
     previous: Option<Value>,
     total: Option<Value>,
-    references_previous: bool,
+    continuation_source: Option<usize>,
     is_aggregate: bool,
 }
 
@@ -176,9 +176,9 @@ impl Engine {
         let prepared = self.prepare_line(input);
         let result = prepared.evaluate(&mut self.context);
 
-        if !result.is_error() && prepared.references_previous {
-            if let Some(last) = self.last_valid_line_mut() {
-                last.is_continuation_source = true;
+        if !result.is_error() {
+            if let Some(source) = prepared.continuation_source {
+                self.lines[source].is_continuation_source = true;
             }
         }
 
@@ -193,7 +193,11 @@ impl Engine {
     }
 
     fn prepare_line(&self, input: &str) -> PreparedLine {
-        let previous = self.last_valid_line().map(|line| line.value.clone());
+        let previous_index = self
+            .lines
+            .iter()
+            .rposition(|line| !line.value.is_empty() && !line.value.is_error());
+        let previous = previous_index.map(|index| self.lines[index].value.clone());
         let trimmed = input.trim();
         // Select the continuation AST first, preserving normal fuzzy fallback.
         // Once selected, even an evaluation error belongs to this AST; do not
@@ -224,7 +228,9 @@ impl Engine {
             previous,
             // Summing is linear in history. Only materialize it for actual reads.
             total: references.total.then(|| self.sum()),
-            references_previous: references.previous,
+            // Keep the selected source so committing a successful evaluation does
+            // not search history again. Preview never commits this index.
+            continuation_source: previous_index.filter(|_| references.previous),
             is_aggregate,
         }
     }
@@ -266,22 +272,6 @@ impl Engine {
         }
 
         false
-    }
-
-    /// Find the last valid (non-empty, non-error) line result
-    fn last_valid_line(&self) -> Option<&LineResult> {
-        self.lines
-            .iter()
-            .rev()
-            .find(|lr| !lr.value.is_empty() && !lr.value.is_error())
-    }
-
-    /// Find the last valid line result (mutable)
-    fn last_valid_line_mut(&mut self) -> Option<&mut LineResult> {
-        self.lines
-            .iter_mut()
-            .rev()
-            .find(|lr| !lr.value.is_empty() && !lr.value.is_error())
     }
 
     /// Evaluate without storing the result or changing variables (for previews).
@@ -509,7 +499,7 @@ impl Engine {
         self.context.clear_variables();
     }
 
-    /// Get all user-defined variables (excludes 'total', '_', 'ANS', and 'ans')
+    /// Get all user-defined variables sorted by name (excludes 'total', '_', 'ANS', and 'ans')
     #[must_use]
     pub fn variables(&self) -> Vec<(String, Value)> {
         let mut variables: Vec<_> = self
@@ -589,7 +579,7 @@ mod tests {
             let prepared = engine.prepare_line(input);
             assert!(prepared.ast.is_ok(), "{input}");
             assert!(prepared.total.is_none(), "{input}");
-            assert!(!prepared.references_previous, "{input}");
+            assert!(prepared.continuation_source.is_none(), "{input}");
             assert!(!prepared.is_aggregate, "{input}");
         }
         for input in ["sum(total)", "20% of total", "subtotal = total", "+ total"] {

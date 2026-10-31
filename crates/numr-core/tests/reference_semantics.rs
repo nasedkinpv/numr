@@ -5,6 +5,52 @@ fn number(value: Value, expected: &str) {
 }
 
 #[test]
+fn continuation_commits_the_selected_source_across_empty_and_failed_lines() {
+    let mut engine = Engine::new();
+    engine.evaluate_document("$10\n# comment\n1 / 0\n\n// comment");
+    let before = engine.lines().to_vec();
+    assert_eq!(engine.eval_preview("+ $5").to_string(), "$15.00");
+    assert_eq!(engine.lines(), before);
+    assert!(engine.eval("ANS / 0").is_error());
+    assert_eq!(engine.lines()[..before.len()], before);
+
+    let appended = engine.append_lines(["+ $5", "# trailing comment"]);
+    assert_eq!(appended[0].value.to_string(), "$15.00");
+    assert!(engine.lines()[0].is_continuation_source);
+    assert!(engine.lines()[1..]
+        .iter()
+        .all(|line| !line.is_continuation_source));
+    number(engine.sum(), "15");
+    assert_eq!(engine.grouped_totals(), vec![appended[0].value.clone()]);
+}
+
+#[test]
+fn aggregate_can_be_an_answer_source_without_becoming_a_contribution() {
+    let mut engine = Engine::new();
+    engine.evaluate_document("10\n20\ntotal\n# comment\n1 / 0");
+    number(engine.eval_preview("+ 5"), "35");
+    assert!(!engine.lines()[2].is_continuation_source);
+    number(engine.eval("+ 5"), "35");
+    assert!(engine.lines()[2].is_aggregate);
+    assert!(engine.lines()[2].is_continuation_source);
+    assert!(!engine.lines()[1].is_continuation_source);
+    number(engine.sum(), "65");
+}
+
+#[test]
+fn variables_are_sorted_and_hide_implicit_inputs_at_the_core_boundary() {
+    let mut engine = Engine::new();
+    let document = engine.evaluate_document("z = 1\na = 2\nm = 3\ntotal\nANS");
+    let expected = vec![
+        ("a".to_string(), Value::Number(decimal("2"))),
+        ("m".to_string(), Value::Number(decimal("3"))),
+        ("z".to_string(), Value::Number(decimal("1"))),
+    ];
+    assert_eq!(document.variables, expected);
+    assert_eq!(engine.variables(), expected);
+}
+
+#[test]
 fn comments_and_discarded_prose_do_not_consume_previous_values() {
     for input in [
         "200 # ANS _ ans total",

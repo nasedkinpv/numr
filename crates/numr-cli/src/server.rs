@@ -145,68 +145,44 @@ pub fn value_to_result(value: &NumrValue) -> RpcEvalResult {
 /// Format the display field with preferences while preserving protocol value fields.
 #[must_use]
 pub fn value_to_result_with_options(value: &NumrValue, options: DisplayOptions) -> RpcEvalResult {
-    match value {
-        NumrValue::Number(n) => RpcEvalResult {
-            result_type: "number",
-            value: Some(format_number(*n)),
-            unit: None,
-            message: None,
-            display: value.format_with_options(options),
-        },
-        NumrValue::BaseNumber { amount, .. } => RpcEvalResult {
-            result_type: "number",
-            value: Some(format_number(*amount)),
-            unit: None,
-            message: None,
-            display: value.format_with_options(options),
-        },
+    // Wire amounts deliberately use legacy formatting, independently of display preferences.
+    let (result_type, amount, unit, message) = match value {
+        NumrValue::Number(amount) | NumrValue::BaseNumber { amount, .. } => {
+            ("number", Some(format_number(*amount)), None, None)
+        }
         NumrValue::Percentage(p) => match p.checked_mul(Decimal::from(100)) {
-            Some(points) => {
-                let formatted = format_number(points);
-                RpcEvalResult {
-                    result_type: "percentage",
-                    value: Some(formatted),
+            Some(points) => ("percentage", Some(format_number(points)), None, None),
+            None => {
+                return RpcEvalResult {
+                    result_type: "error",
+                    value: None,
                     unit: None,
-                    message: None,
-                    display: value.format_with_options(options),
+                    message: Some("percentage is outside the displayable range".to_string()),
+                    display: "Error: percentage is outside the displayable range".to_string(),
                 }
             }
-            None => RpcEvalResult {
-                result_type: "error",
-                value: None,
-                unit: None,
-                message: Some("percentage is outside the displayable range".to_string()),
-                display: "Error: percentage is outside the displayable range".to_string(),
-            },
         },
-        NumrValue::Currency { amount, currency } => RpcEvalResult {
-            result_type: "currency",
-            value: Some(format_currency_value(*amount, *currency)),
-            unit: Some(currency.code().to_string()),
-            message: None,
-            display: value.format_with_options(options),
-        },
-        NumrValue::WithCompoundUnit { amount, unit } => RpcEvalResult {
-            result_type: "unit",
-            value: Some(format_number(*amount)),
-            unit: Some(unit.symbol.clone()),
-            message: None,
-            display: value.format_with_options(options),
-        },
-        NumrValue::Empty => RpcEvalResult {
-            result_type: "empty",
-            value: None,
-            unit: None,
-            message: None,
-            display: String::new(),
-        },
-        NumrValue::Error(message) => RpcEvalResult {
-            result_type: "error",
-            value: None,
-            unit: None,
-            message: Some(message.to_string()),
-            display: value.format_with_options(options),
-        },
+        NumrValue::Currency { amount, currency } => (
+            "currency",
+            Some(format_currency_value(*amount, *currency)),
+            Some(currency.code().to_string()),
+            None,
+        ),
+        NumrValue::WithCompoundUnit { amount, unit } => (
+            "unit",
+            Some(format_number(*amount)),
+            Some(unit.symbol.clone()),
+            None,
+        ),
+        NumrValue::Empty => ("empty", None, None, None),
+        NumrValue::Error(message) => ("error", None, None, Some(message.to_string())),
+    };
+    RpcEvalResult {
+        result_type,
+        value: amount,
+        unit,
+        message,
+        display: value.format_with_options(options),
     }
 }
 
@@ -313,10 +289,9 @@ impl<'a> JsonRpcHandler<'a> {
             }
             "get_variables" => {
                 ensure_no_params(params)?;
-                let mut variables = self.engine.variables();
-                variables.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
                 to_json(
-                    variables
+                    self.engine
+                        .variables()
                         .into_iter()
                         .map(|(name, value)| VariableInfo {
                             name,
@@ -582,6 +557,89 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         let mut handler = JsonRpcHandler::new(&mut engine, &runtime);
         test(&mut handler);
+    }
+
+    #[test]
+    fn rpc_numeric_variants_keep_literal_wire_amounts_and_optional_fields() {
+        let options = DisplayOptions {
+            decimals: Some(numr_core::DecimalPlaces::new(4).unwrap()),
+        };
+        for (expression, expected, display) in [
+            (
+                "1.234567",
+                json!({"type":"number","value":"1.23","display":"1.23"}),
+                "1.2346",
+            ),
+            (
+                "255 to hex",
+                json!({"type":"number","value":"255","display":"0xff"}),
+                "0xff",
+            ),
+            (
+                "1.234567%",
+                json!({"type":"percentage","value":"1.23","display":"1.23%"}),
+                "1.2346%",
+            ),
+            (
+                "$1.234567",
+                json!({"type":"currency","value":"1.23","unit":"USD","display":"$1.23"}),
+                "$1.2346",
+            ),
+            (
+                "1.234567 BTC",
+                json!({"type":"currency","value":"1.234567","unit":"BTC","display":"₿1.234567"}),
+                "₿1.2346",
+            ),
+            (
+                "1.234567 km / 1 h",
+                json!({"type":"unit","value":"1.23","unit":"km/h","display":"1.23 km/h"}),
+                "1.2346 km/h",
+            ),
+        ] {
+            let value = Engine::new().eval(expression);
+            assert_eq!(
+                serde_json::to_value(value_to_result(&value)).unwrap(),
+                expected,
+                "{expression}"
+            );
+            let mut configured = expected;
+            configured["display"] = json!(display);
+            assert_eq!(
+                serde_json::to_value(value_to_result_with_options(&value, options)).unwrap(),
+                configured,
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn rpc_empty_error_and_percentage_overflow_keep_their_wire_shapes() {
+        for (value, expected) in [
+            (NumrValue::Empty, json!({"type":"empty","display":""})),
+            (
+                NumrValue::Error(numr_core::EvalError::DivisionByZero),
+                json!({"type":"error","message":"division by zero","display":"Error: division by zero"}),
+            ),
+            (
+                NumrValue::Percentage(Decimal::MAX),
+                json!({"type":"error","message":"percentage is outside the displayable range","display":"Error: percentage is outside the displayable range"}),
+            ),
+        ] {
+            for decimals in [
+                None,
+                Some(numr_core::DecimalPlaces::new(0).unwrap()),
+                Some(numr_core::DecimalPlaces::new(28).unwrap()),
+            ] {
+                assert_eq!(
+                    serde_json::to_value(value_to_result_with_options(
+                        &value,
+                        DisplayOptions { decimals }
+                    ))
+                    .unwrap(),
+                    expected
+                );
+            }
+        }
     }
 
     #[test]
