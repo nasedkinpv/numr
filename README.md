@@ -232,6 +232,8 @@ Direct input like traditional editors - no modal switching required.
 | Comments | `# comment` or `// comment` |
 | Reference previous | `_` or `ANS` for last result |
 
+`round(x, n)` rounds the value to 0–28 decimal places using midpoint-to-even rounding; `round(x)` rounds to an integer. Display precision remains a separate setting.
+
 **Compound unit aliases**: `kph` (km/h), `mph` (mi/h), `mps` (m/s), `m2` (m²), `km2` (km²), `ft2` (ft²)
 
 See [example.numr](example.numr) for a complete, executable tour of arithmetic, variables, continuations, functions, currencies, angles, and compound units. Constants are `pi`, `e`, and `phi`.

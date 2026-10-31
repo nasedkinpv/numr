@@ -45,6 +45,12 @@ export function testWasmRuntime(WasmEngine) {
     equal(result('100\nresult = sum(ANS, 20)\ntotal'), '120', 'nested ANS consumes source');
     equal(result('100\nANS / 0\ntotal'), '100', 'failed ANS leaves source');
     equal(result('100\ntotal + 0\ntotal'), '200', 'total expression contributes');
+    equal(result('round(1.234567, 4)'), '1.2346', 'round accepts precision');
+    equal(result('rounded = round(1.234567, 4)\nrounded * 10000'), '12346', 'round changes stored arithmetic');
+    equal(result('round(2.345, 2)'), '2.3400', 'round uses midpoint to even');
+    for (const places of ['-1', '29', '1.5', '4294967296', '$2']) {
+      equal(document(`round(1.234567, ${places})`).results[0].is_error, true, `round rejects precision ${places}`);
+    }
     equal(document('1').results[0].is_error, false, 'document replacement resets prior errors');
     return { passed: checks };
   } finally {

@@ -33,7 +33,7 @@ use ratatui::layout::Rect;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(name = "numr", author, version, about, long_about = None)]
 struct Args {
     /// Path to the numr file to open
     #[arg(value_name = "FILE")]
