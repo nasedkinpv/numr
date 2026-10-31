@@ -11,11 +11,16 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 pub const DEFAULT_FIAT_RATES_URL: &str = "https://open.er-api.com/v6/latest/USD";
+/// Tried when `fiat_rates_url` fails: ECB reference rates (about 30 currencies),
+/// keyless, in the same `{ "rates": { ... } }` shape as the default source.
+pub const DEFAULT_FIAT_RATES_FALLBACK_URL: &str = "https://allratestoday.com/api/open/latest/USD";
 pub const DEFAULT_CRYPTO_RATES_URL: &str = "https://api.coingecko.com/api/v3/simple/price";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchConfig {
     pub fiat_rates_url: String,
+    /// Second fiat source, used only when `fiat_rates_url` fails. `None` disables it.
+    pub fiat_rates_fallback_url: Option<String>,
     pub crypto_rates_url: String,
     pub coingecko_api_key: Option<String>,
 }
@@ -24,6 +29,7 @@ impl Default for FetchConfig {
     fn default() -> Self {
         Self {
             fiat_rates_url: DEFAULT_FIAT_RATES_URL.to_string(),
+            fiat_rates_fallback_url: Some(DEFAULT_FIAT_RATES_FALLBACK_URL.to_string()),
             crypto_rates_url: DEFAULT_CRYPTO_RATES_URL.to_string(),
             coingecko_api_key: None,
         }
@@ -67,20 +73,40 @@ pub async fn fetch_rates_with_config(config: &FetchConfig) -> Result<FetchResult
         .build()
         .map_err(|e| RateError::Network(format!("failed to build HTTP client: {e}")))?;
     let (fiat_result, crypto_result) = tokio::join!(
-        fetch_fiat_rates(&client, &config.fiat_rates_url),
+        fetch_fiat_rates_with_fallback(&client, config),
         fetch_crypto_prices(&client, config)
     );
-    let mut rates = fiat_result?;
+    let (mut rates, mut warnings) = fiat_result?;
 
-    let warning = match crypto_result {
-        Ok(crypto_rates) => {
-            rates.extend(crypto_rates);
-            None
-        }
-        Err(e) => Some(format!("crypto rates unavailable: {e}")),
-    };
+    match crypto_result {
+        Ok(crypto_rates) => rates.extend(crypto_rates),
+        Err(e) => warnings.push(format!("crypto rates unavailable: {e}")),
+    }
 
+    let warning = (!warnings.is_empty()).then(|| warnings.join("; "));
     Ok(FetchResult { rates, warning })
+}
+
+/// Fiat rates from the primary URL, or from the fallback URL when the primary
+/// fails. Using the fallback adds a warning, since it may cover fewer currencies.
+async fn fetch_fiat_rates_with_fallback(
+    client: &reqwest::Client,
+    config: &FetchConfig,
+) -> Result<(HashMap<String, Decimal>, Vec<String>), RateError> {
+    let primary_error = match fetch_fiat_rates(client, &config.fiat_rates_url).await {
+        Ok(rates) => return Ok((rates, Vec::new())),
+        Err(e) => e,
+    };
+    let Some(fallback_url) = config.fiat_rates_fallback_url.as_deref() else {
+        return Err(primary_error);
+    };
+    match fetch_fiat_rates(client, fallback_url).await {
+        Ok(rates) => Ok((
+            rates,
+            vec![format!("fiat rates from fallback source ({primary_error})")],
+        )),
+        Err(_) => Err(primary_error),
+    }
 }
 
 async fn fetch_fiat_rates(
@@ -207,8 +233,39 @@ mod tests {
     fn test_fetch_config_defaults_match_public_constants() {
         let config = FetchConfig::default();
         assert_eq!(config.fiat_rates_url, DEFAULT_FIAT_RATES_URL);
+        assert_eq!(
+            config.fiat_rates_fallback_url.as_deref(),
+            Some(DEFAULT_FIAT_RATES_FALLBACK_URL)
+        );
         assert_eq!(config.crypto_rates_url, DEFAULT_CRYPTO_RATES_URL);
         assert!(config.coingecko_api_key.is_none());
+    }
+
+    #[tokio::test]
+    async fn fiat_fallback_is_used_when_primary_fails() {
+        // Nothing listens on port 9; both URLs fail unless the fallback answers.
+        let client = reqwest::Client::new();
+        let config = FetchConfig {
+            fiat_rates_url: "http://127.0.0.1:9/primary".to_string(),
+            fiat_rates_fallback_url: None,
+            ..FetchConfig::default()
+        };
+        let error = fetch_fiat_rates_with_fallback(&client, &config)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("primary"), "{error}");
+
+        let config = FetchConfig {
+            fiat_rates_url: "http://127.0.0.1:9/primary".to_string(),
+            fiat_rates_fallback_url: Some("http://127.0.0.1:9/fallback".to_string()),
+            ..FetchConfig::default()
+        };
+        let error = fetch_fiat_rates_with_fallback(&client, &config)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("primary"), "{error}");
     }
 
     #[test]

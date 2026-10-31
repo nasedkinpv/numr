@@ -1,7 +1,10 @@
 //! Configuration file handling for numr TUI
 
 use directories::ProjectDirs;
-use numr_core::{DecimalPlaces, FetchConfig, DEFAULT_CRYPTO_RATES_URL, DEFAULT_FIAT_RATES_URL};
+use numr_core::{
+    DecimalPlaces, FetchConfig, DEFAULT_CRYPTO_RATES_URL, DEFAULT_FIAT_RATES_FALLBACK_URL,
+    DEFAULT_FIAT_RATES_URL,
+};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -53,6 +56,8 @@ pub struct FilesConfig {
 #[serde(default)]
 pub struct ApiConfig {
     pub fiat_rates_url: String,
+    /// Tried when `fiat_rates_url` fails. Set to an empty string to disable.
+    pub fiat_rates_fallback_url: String,
     pub crypto_rates_url: String,
     pub keys: ApiKeys,
 }
@@ -115,6 +120,7 @@ impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             fiat_rates_url: DEFAULT_FIAT_RATES_URL.to_string(),
+            fiat_rates_fallback_url: DEFAULT_FIAT_RATES_FALLBACK_URL.to_string(),
             crypto_rates_url: DEFAULT_CRYPTO_RATES_URL.to_string(),
             keys: ApiKeys::default(),
         }
@@ -125,6 +131,8 @@ impl From<&ApiConfig> for FetchConfig {
     fn from(config: &ApiConfig) -> Self {
         Self {
             fiat_rates_url: config.fiat_rates_url.clone(),
+            fiat_rates_fallback_url: (!config.fiat_rates_fallback_url.is_empty())
+                .then(|| config.fiat_rates_fallback_url.clone()),
             crypto_rates_url: config.crypto_rates_url.clone(),
             coingecko_api_key: config.keys.coingecko_api_key.clone(),
         }
@@ -178,6 +186,7 @@ mod tests {
             },
             api: ApiConfig {
                 fiat_rates_url: "https://example.com/fiat".to_string(),
+                fiat_rates_fallback_url: "https://example.com/fiat-fallback".to_string(),
                 crypto_rates_url: "https://example.com/crypto".to_string(),
                 keys: ApiKeys {
                     coingecko_api_key: Some("test-key".to_string()),
@@ -234,6 +243,10 @@ wrap_mode = true
 
         // Api defaults
         assert_eq!(config.api.fiat_rates_url, DEFAULT_FIAT_RATES_URL);
+        assert_eq!(
+            config.api.fiat_rates_fallback_url,
+            DEFAULT_FIAT_RATES_FALLBACK_URL
+        );
         assert_eq!(config.api.crypto_rates_url, DEFAULT_CRYPTO_RATES_URL);
         assert!(config.api.keys.coingecko_api_key.is_none());
     }
@@ -242,6 +255,7 @@ wrap_mode = true
     fn test_api_config_converts_to_core_fetch_config() {
         let api = ApiConfig {
             fiat_rates_url: "https://example.com/fiat".to_string(),
+            fiat_rates_fallback_url: String::new(),
             crypto_rates_url: "https://pro-api.coingecko.com/api/v3/simple/price".to_string(),
             keys: ApiKeys {
                 coingecko_api_key: Some("test-key".to_string()),
@@ -250,6 +264,7 @@ wrap_mode = true
 
         let fetch: FetchConfig = (&api).into();
         assert_eq!(fetch.fiat_rates_url, "https://example.com/fiat");
+        assert!(fetch.fiat_rates_fallback_url.is_none());
         assert_eq!(
             fetch.crypto_rates_url,
             "https://pro-api.coingecko.com/api/v3/simple/price"

@@ -72,7 +72,7 @@ pub fn decimal(s: &str) -> Decimal {
 #[cfg(all(feature = "fetch", not(target_arch = "wasm32")))]
 pub use fetch::{
     fetch_rates, fetch_rates_with_config, FetchConfig, FetchResult, DEFAULT_CRYPTO_RATES_URL,
-    DEFAULT_FIAT_RATES_URL,
+    DEFAULT_FIAT_RATES_FALLBACK_URL, DEFAULT_FIAT_RATES_URL,
 };
 
 /// Main engine for evaluating expressions
