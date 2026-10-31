@@ -1,37 +1,15 @@
 //! Durable local file replacement shared by documents and configuration.
 
-use std::fs;
-use std::io::{self, Write};
-use std::path::Path;
-
-/// Replace a file atomically after its complete contents have reached the OS.
-///
-/// A same-directory temporary file is committed with the platform's native
-/// replace primitive, including replacement of existing files on Windows.
-pub(crate) fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::create_dir_all(parent)?;
-
-    let existing_permissions = fs::metadata(path)
-        .ok()
-        .map(|metadata| metadata.permissions());
-
-    let mut file = atomic_write_file::AtomicWriteFile::open(path)?;
-    if let Some(permissions) = existing_permissions {
-        file.set_permissions(permissions)?;
-    }
-    file.write_all(contents)?;
-    file.flush()?;
-    file.sync_all()?;
-    file.commit()
-}
+pub(crate) use numr_core::persistence::atomic_write;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    #[cfg(unix)]
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::path::Path;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -44,6 +22,111 @@ mod tests {
             "numr-tui-{test_name}-{}-{nonce}",
             std::process::id()
         ))
+    }
+
+    #[cfg(unix)]
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).unwrap().permissions().mode() & 0o7777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_new_document_and_nested_directories() {
+        let directory = temporary_directory("private-new");
+        let parent = directory.join("nested");
+        let path = parent.join("document.numr");
+        atomic_write(&path, b"private").unwrap();
+        let modes = (mode(&path), mode(&directory), mode(&parent));
+        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(modes, (0o600, 0o700, 0o700));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_overwrite_preserves_file_and_existing_directory_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = temporary_directory("private-overwrite");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = directory.join("document.numr");
+        for permissions in [0o644, 0o600, 0o640, 0o6750] {
+            fs::write(&path, b"old").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(permissions)).unwrap();
+            atomic_write(&path, b"new").unwrap();
+            assert_eq!(mode(&path), permissions);
+            assert_eq!(mode(&directory), 0o755);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_external_append_then_save_replaces_content() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let directory = temporary_directory("private-append");
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("document.numr");
+        let mut external = fs::OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        external.write_all(b"external append").unwrap();
+        drop(external);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        atomic_write(&path, b"saved content").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"saved content");
+        assert_eq!(mode(&path), 0o600);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn private_bare_relative_filename() {
+        const CHILD: &str = "NUMR_PERSISTENCE_RELATIVE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            atomic_write(PathBuf::from("document.numr").as_path(), b"relative").unwrap();
+            assert_eq!(fs::read("document.numr").unwrap(), b"relative");
+            return;
+        }
+        let directory = temporary_directory("relative");
+        fs::create_dir(&directory).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "persistence::tests::private_bare_relative_filename",
+            ])
+            .env(CHILD, "1")
+            .current_dir(&directory)
+            .status()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        assert!(status.success());
+    }
+
+    // Exercise the same writer used by Config::save without changing the
+    // process-global configuration environment in parallel tests.
+    #[cfg(unix)]
+    #[test]
+    fn private_config_uses_same_policy() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = temporary_directory("private-config");
+        let path = directory.join("numr/config.toml");
+        let content = toml::to_string_pretty(&crate::config::Config::default()).unwrap();
+        atomic_write(&path, content.as_bytes()).unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&directory), 0o700);
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        for permissions in [0o644, 0o600] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(permissions)).unwrap();
+            atomic_write(&path, content.as_bytes()).unwrap();
+            assert_eq!(mode(&path), permissions);
+        }
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

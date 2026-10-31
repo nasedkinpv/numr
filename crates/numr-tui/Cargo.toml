@@ -22,4 +22,3 @@ tokio.workspace = true
 unicode-segmentation = "1.13"
 toml = "1"
 serde.workspace = true
-atomic-write-file.workspace = true

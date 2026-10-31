@@ -33,6 +33,8 @@ pub mod catalog;
 pub mod error;
 pub mod eval;
 pub mod parser;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod persistence;
 pub mod types;
 
 #[cfg(all(feature = "fetch", not(target_arch = "wasm32")))]
