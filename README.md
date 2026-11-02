@@ -166,8 +166,11 @@ Native settings, `default.numr`, and the shared 1-hour rate cache live in the OS
 
 `numr-core` owns calculation semantics; `numr-editor` provides shared highlighting and UTF-8 primitives. CLI, TUI, web, and desktop are I/O and presentation adapters. See [architecture](docs/architecture.md) for contracts and data flow. The web frontend lives in [numr-web](https://github.com/nasedkinpv/numr-web), the Tauri desktop shell in [numr-desktop](https://github.com/nasedkinpv/numr-desktop), and the native Apple app in [numr-apple](https://github.com/nasedkinpv/numr-apple).
 
-## Integrations
+## Related repositories
 
+- [numr-web](https://github.com/nasedkinpv/numr-web) — Web app at [numr.cc](https://numr.cc) and the `<numr-calculator>` element, built on the `numr-core` and `numr-editor` WASM packages
+- [numr-desktop](https://github.com/nasedkinpv/numr-desktop) — Tauri desktop app for Linux and macOS (AUR, Homebrew cask, `.deb`/`.rpm`/AppImage/`.dmg`)
+- [numr-apple](https://github.com/nasedkinpv/numr-apple) — Native SwiftUI app for iOS and macOS
 - [elephant-numr](https://github.com/nasedkinpv/elephant-numr) — Provider for [Walker/Elephant](https://github.com/abenz1267/walker) launcher
 - [omarchy-numr](https://github.com/nasedkinpv/omarchy-numr) — Omarchy Quattro calculator overlay using `numr-cli --server` and sharing the TUI's document.
 
