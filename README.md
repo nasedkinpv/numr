@@ -44,6 +44,10 @@ yay -S numr
 paru -S numr
 ```
 
+### Desktop app
+
+The desktop app lives in [numr-desktop](https://github.com/nasedkinpv/numr-desktop): AUR `numr-desktop-bin`, Homebrew cask `numr-desktop`, plus `.deb`, `.rpm`, AppImage, and `.dmg` release bundles. On macOS and iOS there is also the native [numr-apple](https://github.com/nasedkinpv/numr-apple) app.
+
 ### From source
 
 Requires Rust 1.88 or later. From the repository root:
@@ -160,7 +164,7 @@ Native settings, `default.numr`, and the shared 1-hour rate cache live in the OS
 
 ## Architecture
 
-`numr-core` owns calculation semantics; `numr-editor` provides shared highlighting and UTF-8 primitives. CLI, TUI, web, and desktop are I/O and presentation adapters. See [architecture](docs/architecture.md) for contracts and data flow. The web frontend lives in the separate [numr-web repository](https://github.com/nasedkinpv/numr-web).
+`numr-core` owns calculation semantics; `numr-editor` provides shared highlighting and UTF-8 primitives. CLI, TUI, web, and desktop are I/O and presentation adapters. See [architecture](docs/architecture.md) for contracts and data flow. The web frontend lives in [numr-web](https://github.com/nasedkinpv/numr-web), the Tauri desktop shell in [numr-desktop](https://github.com/nasedkinpv/numr-desktop), and the native Apple app in [numr-apple](https://github.com/nasedkinpv/numr-apple).
 
 ## Integrations
 
