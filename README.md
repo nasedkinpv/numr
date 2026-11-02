@@ -13,7 +13,7 @@ A text calculator for natural language expressions with a vim-style TUI.
 </p>
 
 <p align="center">
-  <img src="screenshots/numr_demo.gif" width="700" alt="numr TUI demo - calculations with variables, units, currencies, and continuation">
+  <img src="screenshots/finances.png" width="700" alt="numr TUI showing a finance document: currency conversions, percentages, crypto, compound units, and functions">
 </p>
 
 ## Features
@@ -22,6 +22,10 @@ A text calculator for natural language expressions with a vim-style TUI.
 - Unit and currency conversions, compound units, math functions, and number bases
 - TUI with Vim or Standard editing, syntax highlighting, mouse scrolling, wrapping, and grouped totals
 - Saved calculation documents, CLI/REPL, and a JSON-RPC backend for integrations
+
+<p align="center">
+  <img src="screenshots/typing.gif" width="700" alt="numr TUI demo: typing a trip budget in Vim insert mode with live results">
+</p>
 
 ## Installation
 

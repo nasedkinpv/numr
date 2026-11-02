@@ -119,3 +119,7 @@ Run `npx playwright install chromium webkit` once before the local browser gate.
 - `_`, `ANS`, and `ans` reference the previous successful result.
 - Comments start with `#` or `//`.
 - Aggregate lines such as bare `total` are display-only and do not feed later totals.
+
+## README Media
+
+`scripts/capture-media.sh` regenerates `screenshots/finances.png` and `screenshots/typing.gif` from `docs/media/screenshot.numr` and `docs/media/demo.numr`. It is Hyprland-specific (floating opaque Alacritty, compositor rounding and border stripped and verified, `wf-recorder` in RGB, typing through ydotool); required tools are listed in the script header. The same documents are used by numr-desktop so both READMEs show the same calculations.
