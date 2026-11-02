@@ -7,6 +7,7 @@
 - `numr-tui`: Event-driven Ratatui frontend with Vim and Standard modes, cached render state, atomic persistence, and a persistent background rate worker.
 - `numr-cli`: Command-line, REPL, and newline-delimited JSON-RPC 2.0 interfaces.
 - `numr-web`: Separate Git repository checked out at `numr/numr-web` for a compatible build. It is not a submodule.
+- `numr-desktop`: Separate Git repository with the Tauri desktop shell; it pins `numr-web` as a git submodule and ships AUR/Homebrew packages.
 
 The workspace MSRV is Rust 1.88. Keep native release builds runtime-oriented; the web build entrypoints override optimization to `z` for WASM size.
 
@@ -22,7 +23,7 @@ The workspace MSRV is Rust 1.88. Keep native release builds runtime-oriented; th
 
 Replace `X.Y.Z` consistently in the commands below.
 
-1. Bump the workspace version in `Cargo.toml`. In the separate web repository, bump `package.json` and `electrobun.config.ts`; regenerated WASM package manifests must end at the same version.
+1. Bump the workspace version in `Cargo.toml`. In the separate web repository, bump `package.json`; regenerated WASM package manifests must end at the same version. In `numr-desktop`, bump `Cargo.toml` and the `numr-web` submodule after the web tag exists.
 2. Refresh the workspace lockfile after the version bump:
 
    ```bash
@@ -48,7 +49,6 @@ Replace `X.Y.Z` consistently in the commands below.
    npm run build
    npm run check
    npm run test:browser
-   npm run desktop:check
    cd ..
    ```
 
@@ -80,7 +80,7 @@ Replace `X.Y.Z` consistently in the commands below.
    build and verification commands from checklist item 4, then update the Web
    commit before pushing it.
 
-   `numr-web/scripts/check-version-sync.mjs` must continue comparing the checked-out workspace version with Web, desktop, and generated WASM package versions.
+   `numr-web/scripts/check-version-sync.mjs` must continue comparing the checked-out workspace version with Web and generated WASM package versions.
 
 8. Create and push the main repository tag:
 
@@ -111,7 +111,7 @@ npm run test:browser
 npm run serve
 ```
 
-Run `npx playwright install chromium webkit` once before the local browser gate. The web CI checks out `nasedkinpv/numr` into `numr/`, checks out `nasedkinpv/numr-web` into `numr/numr-web`, tests the committed deployable artifacts, rebuilds both WASM packages with `--locked`, and rechecks the generated contracts and desktop entrypoints.
+Run `npx playwright install chromium webkit` once before the local browser gate. The web CI checks out `nasedkinpv/numr` into `numr/`, checks out `nasedkinpv/numr-web` into `numr/numr-web`, tests the committed deployable artifacts, rebuilds both WASM packages with `--locked`, and rechecks the generated contracts.
 
 ## Language Semantics
 

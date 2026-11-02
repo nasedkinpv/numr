@@ -12,7 +12,7 @@ flowchart LR
     end
 
     subgraph Browser["numr-web (separate repository)"]
-        Views["web · Electrobun · custom element"]
+        Views["web · numr-desktop (Tauri) · custom element"]
         BrowserEditor["NumrEditor<br/>CodeMirror buffer · gutters · keymap"]
         Session["NumrSession"]
         Rates["RatesService"]
@@ -109,7 +109,7 @@ Rate refreshes use one long-lived background thread with one current-thread Toki
 
 `RatesService` is the single browser policy for rate cache age, provider requests, timeouts, concurrent fiat/crypto loading, partial-provider success, coalesced refreshes, and cleanup. It obtains crypto provider IDs from the core currency catalog.
 
-`NumrEditor` is the only browser editor implementation. It owns the CodeMirror document/history, standard platform keymap, visible-range semantic decorations, optional line numbers, result anchoring, wrapping, and scrolling. It calls `NumrSession` for whole-document evaluation and tokenization; it does not introduce a JavaScript parser. The standalone site and Electrobun use the same application entrypoint, while the native custom element is a thin Shadow DOM shell around the same editor controller.
+`NumrEditor` is the only browser editor implementation. It owns the CodeMirror document/history, standard platform keymap, visible-range semantic decorations, optional line numbers, result anchoring, wrapping, and scrolling. It calls `NumrSession` for whole-document evaluation and tokenization; it does not introduce a JavaScript parser. The standalone site and the numr-desktop Tauri shell use the same application entrypoint, while the native custom element is a thin Shadow DOM shell around the same editor controller.
 
 Safe token DOM/range mapping and WASM module loading are shared modules. A failed WASM import is removed from the loader cache so a later attempt can recover.
 
