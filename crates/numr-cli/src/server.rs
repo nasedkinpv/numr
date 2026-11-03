@@ -3,8 +3,10 @@
 //! The protocol handler is intentionally independent from stdin/stdout so clients and tests can
 //! exercise the exact same parsing, validation, and dispatch path as the CLI server.
 
+use crate::config::Settings;
 use numr_core::{
-    format_currency_value, format_number, Decimal, DisplayOptions, Engine, Value as NumrValue,
+    format_currency_value, format_number, Decimal, DisplayOptions, Engine, FetchConfig,
+    Value as NumrValue,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -197,6 +199,7 @@ pub struct JsonRpcHandler<'a> {
     engine: &'a mut Engine,
     runtime: &'a tokio::runtime::Runtime,
     display_options: DisplayOptions,
+    fetch_config: FetchConfig,
 }
 
 impl<'a> JsonRpcHandler<'a> {
@@ -211,10 +214,27 @@ impl<'a> JsonRpcHandler<'a> {
         runtime: &'a tokio::runtime::Runtime,
         display_options: DisplayOptions,
     ) -> Self {
+        Self::with_settings(
+            engine,
+            runtime,
+            Settings {
+                display: display_options,
+                fetch: FetchConfig::default(),
+            },
+        )
+    }
+
+    #[must_use]
+    pub fn with_settings(
+        engine: &'a mut Engine,
+        runtime: &'a tokio::runtime::Runtime,
+        settings: Settings,
+    ) -> Self {
         Self {
             engine,
             runtime,
-            display_options,
+            display_options: settings.display,
+            fetch_config: settings.fetch,
         }
     }
 
@@ -352,7 +372,10 @@ impl<'a> JsonRpcHandler<'a> {
     }
 
     fn reload_rates(&mut self) -> Result<Value, RpcFailure> {
-        match self.runtime.block_on(numr_core::fetch_rates()) {
+        match self
+            .runtime
+            .block_on(numr_core::fetch_rates_with_config(&self.fetch_config))
+        {
             Ok(result) => {
                 self.engine
                     .apply_raw_rates(&result.rates)
@@ -516,18 +539,18 @@ pub fn run_server_with_io(
     input: impl BufRead,
     output: impl Write,
 ) -> io::Result<()> {
-    run_server_with_io_and_options(engine, runtime, input, output, DisplayOptions::default())
+    run_server_with_io_and_settings(engine, runtime, input, output, Settings::default())
 }
 
 /// Run the protocol with configured display precision.
-pub fn run_server_with_io_and_options(
+pub fn run_server_with_io_and_settings(
     engine: &mut Engine,
     runtime: &tokio::runtime::Runtime,
     mut input: impl BufRead,
     mut output: impl Write,
-    options: DisplayOptions,
+    settings: Settings,
 ) -> io::Result<()> {
-    let mut handler = JsonRpcHandler::with_display_options(engine, runtime, options);
+    let mut handler = JsonRpcHandler::with_settings(engine, runtime, settings);
     let mut buffer = Vec::with_capacity(4096);
 
     loop {
@@ -554,19 +577,19 @@ pub fn run_server_with_io_and_options(
 
 /// Run the JSON-RPC server on stdin/stdout.
 pub fn run_server(engine: &mut Engine) -> io::Result<()> {
-    run_server_with_options(engine, DisplayOptions::default())
+    run_server_with_settings(engine, Settings::default())
 }
 
 /// Run the JSON-RPC server with configured display precision.
-pub fn run_server_with_options(engine: &mut Engine, options: DisplayOptions) -> io::Result<()> {
+pub fn run_server_with_settings(engine: &mut Engine, settings: Settings) -> io::Result<()> {
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|error| io::Error::other(format!("failed to create runtime: {error}")))?;
-    run_server_with_io_and_options(
+    run_server_with_io_and_settings(
         engine,
         &runtime,
         io::stdin().lock(),
         io::stdout().lock(),
-        options,
+        settings,
     )
 }
 

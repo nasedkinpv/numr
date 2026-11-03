@@ -111,7 +111,7 @@ crypto_rates_url = "https://api.coingecko.com/api/v3/simple/price"
 coingecko_api_key = "your-key-here"
 ```
 
-The TUI uses the file and API settings; `numr-cli` reads the display precision, not those TUI overrides. CoinGecko API key header (demo vs pro) is selected automatically based on the URL host.
+The TUI, `numr-cli`, and the JSON-RPC server all read the `[api]` section (URLs, fallback, keys); the `[files]` section is TUI-only. CoinGecko API key header (demo vs pro) is selected automatically based on the URL host.
 
 ### Display precision
 
@@ -137,11 +137,11 @@ Default sources are [open.er-api.com](https://open.er-api.com) for fiat and [Coi
 
 #### Fiat fallback source
 
-`[api] fiat_rates_fallback_url` is an optional second fiat source that the TUI contacts only when `fiat_rates_url` fails (network error, non-2xx status, or an empty `rates` object). It is unset by default: no fallback host is contacted unless you add the setting. Any endpoint that returns the same `{ "rates": { "EUR": 0.92, ... } }` shape with USD as the base works.
+`[api] fiat_rates_fallback_url` is an optional second fiat source that the TUI, `numr-cli`, and the JSON-RPC server contact only when `fiat_rates_url` fails (network error, non-2xx status, or an empty `rates` object). It is unset by default: no fallback host is contacted unless you add the setting. Any endpoint that returns the same `{ "rates": { "EUR": 0.92, ... } }` shape with USD as the base works.
 
 When the fallback is used, the status line warns that rates came from the fallback source together with the primary error. Currencies the fallback does not cover are simply absent, so conversions involving them fail until the primary source recovers; the fallback never fills them in with stale or default values. If both sources fail, the primary error is reported and cached rates (if any) stay in use.
 
-Example, using a keyless ECB reference-rate feed:
+Example, using a keyless ECB reference-rate feed (a project of the contributor who added this setting; numr is not affiliated with it):
 
 ```toml
 [api]

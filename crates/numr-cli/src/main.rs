@@ -43,7 +43,8 @@ struct Args {
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
-    let (options, warning) = numr_cli::config::load_display_options();
+    let (settings, warning) = numr_cli::config::load_settings();
+    let options = settings.display;
     if let Some(warning) = warning {
         eprintln!("Warning: {warning}");
     }
@@ -60,14 +61,14 @@ fn main() -> io::Result<()> {
     // Server mode uses deterministic defaults plus an explicitly loaded cache. Clients can request
     // a network refresh through `reload_rates` when they need one.
     if args.server {
-        numr_cli::server::run_server_with_options(&mut engine, options)?;
+        numr_cli::server::run_server_with_settings(&mut engine, settings)?;
         return Ok(());
     }
 
     // Fetch fresh rates if the explicit cache load found no usable entry.
     if !cache_loaded {
         let rt = tokio::runtime::Runtime::new()?;
-        match rt.block_on(numr_core::fetch_rates()) {
+        match rt.block_on(numr_core::fetch_rates_with_config(&settings.fetch)) {
             Ok(result) => match engine.apply_raw_rates(&result.rates) {
                 Ok(_) => {
                     if let Err(error) = engine.save_rates_to_cache(&result.rates) {
