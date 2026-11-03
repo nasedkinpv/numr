@@ -31,6 +31,7 @@ The TUI supports **Vim** (default) and **Standard** modes. Press `Shift+Tab` to 
 | `?` / `F1` | Toggle help |
 | `Ctrl+s` | Save |
 | `Ctrl+r` | Refresh rates |
+| `Ctrl+n` | Clear document |
 | `F12` | Toggle debug |
 | `Shift+Tab` | Switch to Standard mode |
 | `q` | Quit |
@@ -71,6 +72,7 @@ Direct input without modal switching.
 | `?` / `F1` | Toggle help |
 | `Ctrl+s` | Save |
 | `Ctrl+r` | Refresh rates |
+| `Ctrl+n` | Clear document |
 | `Shift+Tab` | Switch to Vim mode |
 | `Ctrl+q` | Quit |
 

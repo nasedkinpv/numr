@@ -79,6 +79,12 @@ struct EvalParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct TokenizeParams {
+    expr: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EvalLinesParams {
     lines: Vec<String>,
 }
@@ -272,6 +278,7 @@ impl<'a> JsonRpcHandler<'a> {
         match method {
             "eval" => self.eval(params),
             "eval_lines" => self.eval_lines(params),
+            "tokenize" => self.tokenize(params),
             "clear" => {
                 ensure_no_params(params)?;
                 self.engine.clear();
@@ -326,6 +333,22 @@ impl<'a> JsonRpcHandler<'a> {
                 .map(|line| value_to_result_with_options(&line.value, self.display_options))
                 .collect::<Vec<_>>(),
         )
+    }
+
+    /// Syntax tokens for one line, with the engine's current variables promoted from plain
+    /// text, so a client without the WASM tokenizer can highlight the way the web and TUI do.
+    fn tokenize(&mut self, params: Option<Value>) -> Result<Value, RpcFailure> {
+        let params: TokenizeParams = parse_params(params)?;
+        let variables = self
+            .engine
+            .variables()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        to_json(numr_editor::tokenize_with_variables(
+            &params.expr,
+            &variables,
+        ))
     }
 
     fn reload_rates(&mut self) -> Result<Value, RpcFailure> {
@@ -640,6 +663,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn tokenize_promotes_engine_variables() {
+        handler_test(|handler| {
+            handler
+                .handle(
+                    r#"{"jsonrpc":"2.0","id":0,"method":"eval","params":{"expr":"rent = $1200"}}"#,
+                )
+                .unwrap();
+            let response = handler
+                .handle(r#"{"jsonrpc":"2.0","id":1,"method":"tokenize","params":{"expr":"rent * 12 in eur"}}"#)
+                .unwrap();
+            let tokens: Vec<(String, String)> = response["result"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|token| token["token_type"] != "whitespace")
+                .map(|token| {
+                    (
+                        token["text"].as_str().unwrap().to_owned(),
+                        token["token_type"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect();
+            let expected = [
+                ("rent", "variable"),
+                ("*", "operator"),
+                ("12", "number"),
+                ("in", "keyword"),
+                ("eur", "currency"),
+            ];
+            assert_eq!(
+                tokens,
+                expected
+                    .iter()
+                    .map(|(text, kind)| (text.to_string(), kind.to_string()))
+                    .collect::<Vec<_>>()
+            );
+        });
     }
 
     #[test]

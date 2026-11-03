@@ -324,6 +324,7 @@ fn handle_standard_mode(
         KeyCode::Char('r') if ctrl => {
             rate_fetcher.request(app);
         }
+        KeyCode::Char('n') if ctrl => app.clear_document(),
         KeyCode::Char('k') if ctrl => app.delete_to_line_end(),
         KeyCode::Char('u') if ctrl => app.delete_to_line_start(),
         KeyCode::Char('w') if ctrl => app.delete_word_backward(),
@@ -410,6 +411,7 @@ fn handle_vim_normal_mode(
         KeyCode::Char('r') if ctrl => {
             rate_fetcher.request(app);
         }
+        KeyCode::Char('n') if ctrl => app.clear_document(),
         // Enter insert mode
         KeyCode::Char('i') => app.mode = InputMode::Insert,
         KeyCode::Char('a') => {
@@ -494,6 +496,7 @@ fn handle_vim_insert_mode(
         KeyCode::Char('r') if ctrl => {
             rate_fetcher.request(app);
         }
+        KeyCode::Char('n') if ctrl => app.clear_document(),
         KeyCode::Char('w') if ctrl => app.delete_word_backward(),
         KeyCode::Char('u') if ctrl => app.delete_to_line_start(),
         KeyCode::Backspace if alt => app.delete_word_backward(),

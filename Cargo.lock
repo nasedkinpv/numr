@@ -1422,11 +1422,12 @@ dependencies = [
 
 [[package]]
 name = "numr-cli"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "clap",
  "directories",
  "numr-core",
+ "numr-editor",
  "serde",
  "serde_json",
  "tokio",
@@ -1435,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "numr-core"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "atomic-write-file",
  "console_error_panic_hook",
@@ -1453,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "numr-editor"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "console_error_panic_hook",
  "numr-core",
@@ -1464,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "numr-tui"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "clap",
  "crossterm",

@@ -210,6 +210,7 @@ fn vim_help_rows() -> Vec<Row<'static>> {
         Row::new(vec!["W / N / H", "Toggle wrap/numbers/header"]),
         Row::new(vec!["Ctrl+s", "Save file"]),
         Row::new(vec!["Ctrl+r", "Refresh rates"]),
+        Row::new(vec!["Ctrl+n", "Clear document"]),
         Row::new(vec!["F12", "Toggle debug"]),
         Row::new(vec!["? / F1", "Toggle help"]),
         Row::new(vec!["q", "Quit"]),
@@ -242,6 +243,7 @@ fn standard_help_rows() -> Vec<Row<'static>> {
         Row::new(vec!["Ctrl+l / Ctrl+h", "Toggle numbers/header"]),
         Row::new(vec!["Ctrl+s", "Save file"]),
         Row::new(vec!["Ctrl+r", "Refresh rates"]),
+        Row::new(vec!["Ctrl+n", "Clear document"]),
         Row::new(vec!["Ctrl+q", "Quit"]),
     ]
 }

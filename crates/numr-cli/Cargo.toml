@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 numr-core = { path = "../numr-core", features = ["fetch"] }
+numr-editor = { path = "../numr-editor", features = ["serde"] }
 clap.workspace = true
 tokio.workspace = true
 serde.workspace = true

@@ -79,6 +79,30 @@ Returns grouped currency and physical-unit totals. Plain numbers and percentages
 
 Result: an array of calculator values.
 
+### `tokenize`
+
+Splits one line into syntax tokens for highlighting, using the same tokenizer as the TUI and the web editor. Names bound in the server's current state are reported as `variable`. It does not evaluate anything or change state.
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tokenize","params":{"expr":"rent * 12 in eur"}}
+```
+
+```json
+[
+  {"text":"rent","token_type":"variable"},
+  {"text":" ","token_type":"whitespace"},
+  {"text":"*","token_type":"operator"},
+  {"text":" ","token_type":"whitespace"},
+  {"text":"12","token_type":"number"},
+  {"text":" ","token_type":"whitespace"},
+  {"text":"in","token_type":"keyword"},
+  {"text":" ","token_type":"whitespace"},
+  {"text":"eur","token_type":"currency"}
+]
+```
+
+Token types: `number`, `operator`, `variable`, `unit`, `currency`, `keyword`, `function`, `comment`, `text`, `whitespace`, `punctuation`. Concatenating `text` in order gives the input back.
+
 ### `get_variables`
 
 Returns user variables sorted by name. Internal `total`, `_`, `ANS`, and `ans` bindings are excluded. It accepts no params.

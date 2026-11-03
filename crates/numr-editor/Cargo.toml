@@ -15,7 +15,8 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-wasm = ["dep:wasm-bindgen", "dep:serde", "dep:serde_json", "dep:console_error_panic_hook"]
+serde = ["dep:serde"]
+wasm = ["dep:wasm-bindgen", "serde", "dep:serde_json", "dep:console_error_panic_hook"]
 
 [dependencies]
 numr-core = { path = "../numr-core" }
