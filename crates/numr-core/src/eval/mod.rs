@@ -795,7 +795,23 @@ fn eval_function(name: &str, args: &[Value]) -> Value {
 
         // Single-value math functions
         "abs" => require_number(name, args, |n| Value::Number(n.abs())),
-        "round" => require_number(name, args, |n| Value::Number(n.round())),
+        "round" => match args {
+            [_] => require_number(name, args, |n| Value::Number(n.round())),
+            [value, places] => {
+                let Some(places) = plain_decimal(places)
+                    .filter(|places| places.fract().is_zero())
+                    .and_then(|places| places.to_u32())
+                    .filter(|places| *places <= crate::DecimalPlaces::MAX)
+                else {
+                    return Value::error("round precision must be an integer between 0 and 28");
+                };
+                match value.as_decimal() {
+                    Some(value) => Value::Number(value.round_dp(places)),
+                    None => Value::error("round requires a number"),
+                }
+            }
+            _ => Value::error("round requires one or two arguments"),
+        },
         "floor" => require_number(name, args, |n| Value::Number(n.floor())),
         "ceil" => require_number(name, args, |n| Value::Number(n.ceil())),
         "sin" => require_angle(f64::sin),

@@ -309,6 +309,13 @@ impl Document {
         }
     }
 
+    /// Replace the document with one empty line. The file on disk is untouched until the
+    /// next save, so quitting without saving still recovers the old contents.
+    pub fn clear(&mut self) {
+        self.lines = vec![String::new()];
+        self.recalculate();
+    }
+
     #[cfg(test)]
     fn set_lines(&mut self, lines: Vec<String>) {
         self.lines = if lines.is_empty() {
@@ -1000,6 +1007,13 @@ impl App {
         }
     }
 
+    /// Clear the whole document (Ctrl+n)
+    pub fn clear_document(&mut self) {
+        self.document.clear();
+        self.view.move_to_first_line(&self.document, self.wrap_mode);
+        self.set_status("Document cleared; quit without saving to restore the file");
+    }
+
     /// Delete the current line
     pub fn delete_line(&mut self) {
         self.view.cursor_y = self.document.delete_line(self.view.cursor_y);
@@ -1206,6 +1220,17 @@ impl Default for App {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clear_document_leaves_one_dirty_empty_line() {
+        let mut app = super::App::default();
+        app.set_lines_for_test(vec!["x = 1".into(), "x * 2".into()]);
+        app.move_to_last_line();
+        app.clear_document();
+        assert_eq!(app.document.lines(), [String::new()]);
+        assert!(app.document.dirty());
+        assert_eq!((app.view.cursor_y, app.view.cursor_x), (0, 0));
+    }
+
     use super::*;
     use ratatui::widgets::{Paragraph, Wrap};
     use std::time::{SystemTime, UNIX_EPOCH};

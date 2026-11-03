@@ -15,8 +15,7 @@ use std::collections::HashMap;
 use directories::ProjectDirs;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
-#[cfg(not(target_arch = "wasm32"))]
-use std::io::Write;
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 #[cfg(not(target_arch = "wasm32"))]
@@ -185,10 +184,6 @@ impl RateCache {
         let mut validation_cache = Self::new();
         validation_cache.apply_raw_rates(raw_rates)?;
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(RateError::CreateDirectory)?;
-        }
-
         let duration = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| RateError::Clock)?;
@@ -205,13 +200,14 @@ impl RateCache {
         };
 
         let content = serde_json::to_string_pretty(&cached).map_err(RateError::Serialize)?;
-        let mut file = atomic_write_file::AtomicWriteFile::open(path).map_err(RateError::Write)?;
-        file.write_all(content.as_bytes())
-            .map_err(RateError::Write)?;
-        file.flush().map_err(RateError::Write)?;
-        file.sync_all().map_err(RateError::Write)?;
-        file.commit().map_err(RateError::Write)?;
-        Ok(())
+        crate::persistence::atomic_write_staged(path, content.as_bytes()).map_err(|error| {
+            match error {
+                crate::persistence::WriteError::CreateDirectory(error) => {
+                    RateError::CreateDirectory(error)
+                }
+                crate::persistence::WriteError::Write(error) => RateError::Write(error),
+            }
+        })
     }
 
     /// Save current rates to file cache (WASM stub - no-op)
@@ -383,6 +379,102 @@ mod tests {
             assert!(!RateCache::new().load_from_path(&path).unwrap());
         }
         fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).unwrap().permissions().mode() & 0o7777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_cache_new_file_and_nested_directories() {
+        let directory = temporary_cache_path("private-new").with_extension("");
+        let parent = directory.join("nested");
+        let path = parent.join("rates.json");
+        let rates = HashMap::from([("EUR".to_string(), Decimal::ONE)]);
+        RateCache::new().save_to_path(&path, &rates).unwrap();
+        let modes = (mode(&path), mode(&directory), mode(&parent));
+        fs::remove_dir_all(directory).unwrap();
+        assert_eq!(modes, (0o600, 0o700, 0o700));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_cache_preserves_existing_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = temporary_cache_path("private-overwrite").with_extension("");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = directory.join("rates.json");
+        let rates = HashMap::from([("EUR".to_string(), Decimal::ONE)]);
+        for permissions in [0o644, 0o600] {
+            fs::write(&path, b"old").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(permissions)).unwrap();
+            RateCache::new().save_to_path(&path, &rates).unwrap();
+            let actual = mode(&path);
+            if actual != permissions {
+                fs::remove_dir_all(&directory).unwrap();
+            }
+            assert_eq!(actual, permissions);
+            assert_eq!(mode(&directory), 0o755);
+            assert!(RateCache::new().load_from_path(&path).unwrap());
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn private_cache_bare_relative_filename() {
+        const CHILD: &str = "NUMR_CACHE_RELATIVE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let rates = HashMap::from([("EUR".to_string(), Decimal::ONE)]);
+            let path = Path::new("rates.json");
+            RateCache::new().save_to_path(path, &rates).unwrap();
+            assert!(RateCache::new().load_from_path(path).unwrap());
+            return;
+        }
+        let directory = temporary_cache_path("relative").with_extension("");
+        fs::create_dir(&directory).unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "cache::tests::private_cache_bare_relative_filename",
+            ])
+            .env(CHILD, "1")
+            .current_dir(&directory)
+            .status()
+            .unwrap();
+        fs::remove_dir_all(directory).unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn cache_save_preserves_error_stages_and_failed_replacement() {
+        let directory = temporary_cache_path("error-stages").with_extension("");
+        fs::create_dir(&directory).unwrap();
+        let blocker = directory.join("not-a-directory");
+        fs::write(&blocker, b"untouched").unwrap();
+        let rates = HashMap::from([("EUR".to_string(), Decimal::ONE)]);
+        let cache = RateCache::new();
+        assert!(matches!(
+            cache.save_to_path(&blocker.join("rates.json"), &rates),
+            Err(RateError::CreateDirectory(_))
+        ));
+        let destination = directory.join("rates.json");
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("sentinel"), b"untouched").unwrap();
+        assert!(matches!(
+            cache.save_to_path(&destination, &rates),
+            Err(RateError::Write(_))
+        ));
+        assert_eq!(
+            fs::read(destination.join("sentinel")).unwrap(),
+            b"untouched"
+        );
+        assert_eq!(fs::read(&blocker).unwrap(), b"untouched");
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 2);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

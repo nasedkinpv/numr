@@ -1,0 +1,11 @@
+# Weekend in Lisbon
+flights = 2 * 240 eur
+hotel = 3 * 95 eur
+trip = flights + hotel
++ 15%                // taxes and fees
+in usd
+
+# Numbers that matter
+0.1 BTC in usd
+313 km / 3.5 h
+median(12, 7, 30)

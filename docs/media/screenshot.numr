@@ -1,0 +1,28 @@
+# Freelance month
+techcorp = 45h * 85 usd
+- 25%                            // income tax
+saas = 340 usd * 12
+income = techcorp + saas
+income in eur
+
+# Living in Tel Aviv
+rent = 1850 usd in ils
+groceries = 4,200 ils
+expenses = rent + groceries
+runway = 18,000 usd / expenses in months
+
+# Portfolio
+btc = 0.42 BTC in usd
+stocks = 28,400 eur + 12.5%
+net_worth = btc + stocks
+net_worth in ils
+
+# Trip math
+9,500 km to miles
+average_speed = 450 km / 5 h
+marathon = 42.195 km in miles
+
+# Odds and ends
+median(10, 30, 20)
+255 in hex
+90° to rad

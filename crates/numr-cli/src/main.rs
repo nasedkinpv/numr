@@ -14,7 +14,7 @@ use clap::{CommandFactory, Parser};
 use numr_core::{DisplayOptions, Engine, Value};
 
 #[derive(Parser, Debug)]
-#[command(name = "numr-cli")]
+#[command(name = "numr-cli", version)]
 #[command(about = "A natural language calculator", long_about = None)]
 struct Args {
     /// Expression to evaluate

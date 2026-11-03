@@ -36,8 +36,8 @@ use std::sync::LazyLock;
 
 /// Semantic token types (UI-agnostic)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "wasm", derive(serde::Serialize))]
-#[cfg_attr(feature = "wasm", serde(rename_all = "snake_case"))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum TokenType {
     Number,
     Operator,
@@ -54,7 +54,7 @@ pub enum TokenType {
 
 /// A token with its text and semantic type
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "wasm", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Token {
     pub text: String,
     pub token_type: TokenType,
