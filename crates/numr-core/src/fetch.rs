@@ -16,6 +16,10 @@ pub const DEFAULT_CRYPTO_RATES_URL: &str = "https://api.coingecko.com/api/v3/sim
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchConfig {
     pub fiat_rates_url: String,
+    /// Optional second fiat source, contacted only when `fiat_rates_url` fails.
+    /// It must return the same `{ "rates": { ... } }` shape as the primary source.
+    /// `None` (the default) disables the fallback; no other host is contacted.
+    pub fiat_rates_fallback_url: Option<String>,
     pub crypto_rates_url: String,
     pub coingecko_api_key: Option<String>,
 }
@@ -24,6 +28,7 @@ impl Default for FetchConfig {
     fn default() -> Self {
         Self {
             fiat_rates_url: DEFAULT_FIAT_RATES_URL.to_string(),
+            fiat_rates_fallback_url: None,
             crypto_rates_url: DEFAULT_CRYPTO_RATES_URL.to_string(),
             coingecko_api_key: None,
         }
@@ -67,20 +72,42 @@ pub async fn fetch_rates_with_config(config: &FetchConfig) -> Result<FetchResult
         .build()
         .map_err(|e| RateError::Network(format!("failed to build HTTP client: {e}")))?;
     let (fiat_result, crypto_result) = tokio::join!(
-        fetch_fiat_rates(&client, &config.fiat_rates_url),
+        fetch_fiat_rates_with_fallback(&client, config),
         fetch_crypto_prices(&client, config)
     );
-    let mut rates = fiat_result?;
+    let (mut rates, mut warnings) = fiat_result?;
 
-    let warning = match crypto_result {
-        Ok(crypto_rates) => {
-            rates.extend(crypto_rates);
-            None
-        }
-        Err(e) => Some(format!("crypto rates unavailable: {e}")),
-    };
+    match crypto_result {
+        Ok(crypto_rates) => rates.extend(crypto_rates),
+        Err(e) => warnings.push(format!("crypto rates unavailable: {e}")),
+    }
 
+    let warning = (!warnings.is_empty()).then(|| warnings.join("; "));
     Ok(FetchResult { rates, warning })
+}
+
+/// Fiat rates from the primary URL, or from the opt-in fallback URL when the
+/// primary fails. Using the fallback adds a warning, since it may cover fewer
+/// currencies than the primary. Without a configured fallback, the primary
+/// error is returned unchanged.
+async fn fetch_fiat_rates_with_fallback(
+    client: &reqwest::Client,
+    config: &FetchConfig,
+) -> Result<(HashMap<String, Decimal>, Vec<String>), RateError> {
+    let primary_error = match fetch_fiat_rates(client, &config.fiat_rates_url).await {
+        Ok(rates) => return Ok((rates, Vec::new())),
+        Err(e) => e,
+    };
+    let Some(fallback_url) = config.fiat_rates_fallback_url.as_deref() else {
+        return Err(primary_error);
+    };
+    match fetch_fiat_rates(client, fallback_url).await {
+        Ok(rates) => Ok((
+            rates,
+            vec![format!("fiat rates from fallback source ({primary_error})")],
+        )),
+        Err(_) => Err(primary_error),
+    }
 }
 
 async fn fetch_fiat_rates(
@@ -193,7 +220,11 @@ mod tests {
     use super::*;
     use rust_decimal::Decimal;
     use std::collections::HashMap;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::str::FromStr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     fn request_query(request: &reqwest::Request) -> HashMap<String, String> {
         request
@@ -207,8 +238,169 @@ mod tests {
     fn test_fetch_config_defaults_match_public_constants() {
         let config = FetchConfig::default();
         assert_eq!(config.fiat_rates_url, DEFAULT_FIAT_RATES_URL);
+        assert!(
+            config.fiat_rates_fallback_url.is_none(),
+            "fiat fallback must be opt-in"
+        );
         assert_eq!(config.crypto_rates_url, DEFAULT_CRYPTO_RATES_URL);
         assert!(config.coingecko_api_key.is_none());
+    }
+
+    /// Minimal single-threaded HTTP stub: answers every request with the given
+    /// status and body, and counts how many requests it received.
+    struct StubServer {
+        url: String,
+        hits: Arc<AtomicUsize>,
+    }
+
+    impl StubServer {
+        fn start(status: &'static str, body: &'static str) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/rates", listener.local_addr().unwrap());
+            let hits = Arc::new(AtomicUsize::new(0));
+            let counter = Arc::clone(&hits);
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { break };
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf);
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            });
+            Self { url, hits }
+        }
+
+        fn hits(&self) -> usize {
+            self.hits.load(Ordering::SeqCst)
+        }
+    }
+
+    fn fiat_config(primary: &str, fallback: Option<&str>) -> FetchConfig {
+        FetchConfig {
+            fiat_rates_url: primary.to_string(),
+            fiat_rates_fallback_url: fallback.map(str::to_string),
+            ..FetchConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn fiat_fallback_is_off_by_default_and_contacts_no_second_host() {
+        let primary = StubServer::start("503 Service Unavailable", "");
+        let other = StubServer::start("200 OK", r#"{"rates":{"EUR":0.92}}"#);
+        let client = reqwest::Client::new();
+
+        let config = fiat_config(
+            &primary.url,
+            FetchConfig::default().fiat_rates_fallback_url.as_deref(),
+        );
+        let error = fetch_fiat_rates_with_fallback(&client, &config)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("HTTP 503"), "{error}");
+        assert_eq!(primary.hits(), 1);
+        assert_eq!(
+            other.hits(),
+            0,
+            "no fallback host may be contacted unless configured"
+        );
+    }
+
+    #[tokio::test]
+    async fn fiat_fallback_is_not_contacted_when_primary_succeeds() {
+        let primary = StubServer::start("200 OK", r#"{"rates":{"EUR":0.92,"RUB":92}}"#);
+        let fallback = StubServer::start("200 OK", r#"{"rates":{"EUR":0.95}}"#);
+        let client = reqwest::Client::new();
+
+        let (rates, warnings) = fetch_fiat_rates_with_fallback(
+            &client,
+            &fiat_config(&primary.url, Some(&fallback.url)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(rates.get("EUR"), Some(&Decimal::from_str("0.92").unwrap()));
+        assert_eq!(rates.get("RUB"), Some(&Decimal::from(92)));
+        assert!(warnings.is_empty());
+        assert_eq!(fallback.hits(), 0);
+    }
+
+    #[tokio::test]
+    async fn fiat_fallback_is_used_when_enabled_and_primary_fails() {
+        let primary = StubServer::start("503 Service Unavailable", "");
+        let fallback = StubServer::start("200 OK", r#"{"rates":{"EUR":0.92,"GBP":0.79}}"#);
+        let client = reqwest::Client::new();
+
+        let (rates, warnings) = fetch_fiat_rates_with_fallback(
+            &client,
+            &fiat_config(&primary.url, Some(&fallback.url)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(rates.get("EUR"), Some(&Decimal::from_str("0.92").unwrap()));
+        assert_eq!(rates.get("GBP"), Some(&Decimal::from_str("0.79").unwrap()));
+        assert_eq!(primary.hits(), 1);
+        assert_eq!(fallback.hits(), 1);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("fallback source"), "{}", warnings[0]);
+        assert!(warnings[0].contains("HTTP 503"), "{}", warnings[0]);
+    }
+
+    #[tokio::test]
+    async fn fiat_fallback_with_narrower_coverage_omits_missing_currencies() {
+        // The fallback source knows EUR but not RUB; RUB must be absent, not invented.
+        let primary = StubServer::start("500 Internal Server Error", "");
+        let fallback = StubServer::start("200 OK", r#"{"rates":{"EUR":0.92}}"#);
+        let client = reqwest::Client::new();
+
+        let (rates, warnings) = fetch_fiat_rates_with_fallback(
+            &client,
+            &fiat_config(&primary.url, Some(&fallback.url)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(rates.get("EUR"), Some(&Decimal::from_str("0.92").unwrap()));
+        assert_eq!(rates.get("RUB"), None);
+        assert_eq!(rates.len(), 1);
+        assert_eq!(warnings.len(), 1, "a warning must flag the narrower source");
+    }
+
+    #[tokio::test]
+    async fn fiat_fallback_failure_reports_primary_error() {
+        let primary = StubServer::start("503 Service Unavailable", "");
+        let fallback = StubServer::start("200 OK", r#"{"rates":{}}"#);
+        let client = reqwest::Client::new();
+
+        let error = fetch_fiat_rates_with_fallback(
+            &client,
+            &fiat_config(&primary.url, Some(&fallback.url)),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("HTTP 503"), "{error}");
+        assert_eq!(primary.hits(), 1);
+        assert_eq!(fallback.hits(), 1);
+
+        // Unreachable fallback host behaves the same way.
+        let error = fetch_fiat_rates_with_fallback(
+            &client,
+            &fiat_config(&primary.url, Some("http://127.0.0.1:9/fallback")),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("HTTP 503"), "{error}");
     }
 
     #[test]

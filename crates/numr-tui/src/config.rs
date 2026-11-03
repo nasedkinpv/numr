@@ -53,6 +53,10 @@ pub struct FilesConfig {
 #[serde(default)]
 pub struct ApiConfig {
     pub fiat_rates_url: String,
+    /// Opt-in second fiat source, contacted only when `fiat_rates_url` fails.
+    /// Unset by default: no fallback host is contacted unless configured here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fiat_rates_fallback_url: Option<String>,
     pub crypto_rates_url: String,
     pub keys: ApiKeys,
 }
@@ -115,6 +119,7 @@ impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             fiat_rates_url: DEFAULT_FIAT_RATES_URL.to_string(),
+            fiat_rates_fallback_url: None,
             crypto_rates_url: DEFAULT_CRYPTO_RATES_URL.to_string(),
             keys: ApiKeys::default(),
         }
@@ -125,6 +130,12 @@ impl From<&ApiConfig> for FetchConfig {
     fn from(config: &ApiConfig) -> Self {
         Self {
             fiat_rates_url: config.fiat_rates_url.clone(),
+            fiat_rates_fallback_url: config
+                .fiat_rates_fallback_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+                .map(str::to_string),
             crypto_rates_url: config.crypto_rates_url.clone(),
             coingecko_api_key: config.keys.coingecko_api_key.clone(),
         }
@@ -178,6 +189,7 @@ mod tests {
             },
             api: ApiConfig {
                 fiat_rates_url: "https://example.com/fiat".to_string(),
+                fiat_rates_fallback_url: Some("https://example.com/fiat-fallback".to_string()),
                 crypto_rates_url: "https://example.com/crypto".to_string(),
                 keys: ApiKeys {
                     coingecko_api_key: Some("test-key".to_string()),
@@ -234,6 +246,7 @@ wrap_mode = true
 
         // Api defaults
         assert_eq!(config.api.fiat_rates_url, DEFAULT_FIAT_RATES_URL);
+        assert!(config.api.fiat_rates_fallback_url.is_none());
         assert_eq!(config.api.crypto_rates_url, DEFAULT_CRYPTO_RATES_URL);
         assert!(config.api.keys.coingecko_api_key.is_none());
     }
@@ -242,6 +255,7 @@ wrap_mode = true
     fn test_api_config_converts_to_core_fetch_config() {
         let api = ApiConfig {
             fiat_rates_url: "https://example.com/fiat".to_string(),
+            fiat_rates_fallback_url: None,
             crypto_rates_url: "https://pro-api.coingecko.com/api/v3/simple/price".to_string(),
             keys: ApiKeys {
                 coingecko_api_key: Some("test-key".to_string()),
@@ -250,11 +264,51 @@ wrap_mode = true
 
         let fetch: FetchConfig = (&api).into();
         assert_eq!(fetch.fiat_rates_url, "https://example.com/fiat");
+        assert!(fetch.fiat_rates_fallback_url.is_none());
         assert_eq!(
             fetch.crypto_rates_url,
             "https://pro-api.coingecko.com/api/v3/simple/price"
         );
         assert_eq!(fetch.coingecko_api_key.as_deref(), Some("test-key"));
+    }
+
+    #[test]
+    fn fiat_fallback_is_off_by_default_and_not_written_to_config() {
+        let config = Config::default();
+        assert!(config.api.fiat_rates_fallback_url.is_none());
+        let fetch: FetchConfig = (&config.api).into();
+        assert!(fetch.fiat_rates_fallback_url.is_none());
+
+        let saved = toml::to_string_pretty(&config).unwrap();
+        assert!(!saved.contains("fiat_rates_fallback_url"), "{saved}");
+
+        // A config written before this setting existed stays fallback-free.
+        let parsed: Config =
+            toml::from_str("[api]\nfiat_rates_url = \"https://example.com/fiat\"\n").unwrap();
+        assert!(parsed.api.fiat_rates_fallback_url.is_none());
+    }
+
+    #[test]
+    fn fiat_fallback_is_enabled_only_by_an_explicit_url() {
+        let parsed: Config = toml::from_str(
+            "[api]\nfiat_rates_fallback_url = \"https://example.com/fiat-fallback\"\n",
+        )
+        .unwrap();
+        let fetch: FetchConfig = (&parsed.api).into();
+        assert_eq!(
+            fetch.fiat_rates_fallback_url.as_deref(),
+            Some("https://example.com/fiat-fallback")
+        );
+        let saved = toml::to_string_pretty(&parsed).unwrap();
+        assert!(saved.contains("fiat_rates_fallback_url = \"https://example.com/fiat-fallback\""));
+
+        // Empty or blank values disable it rather than producing a bogus request.
+        for value in ["\"\"", "\"   \""] {
+            let parsed: Config =
+                toml::from_str(&format!("[api]\nfiat_rates_fallback_url = {value}\n")).unwrap();
+            let fetch: FetchConfig = (&parsed.api).into();
+            assert!(fetch.fiat_rates_fallback_url.is_none(), "{value}");
+        }
     }
 
     #[test]
