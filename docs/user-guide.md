@@ -104,6 +104,7 @@ default_path = "~/Documents/calculations.numr"
 
 [api]
 fiat_rates_url = "https://open.er-api.com/v6/latest/USD"
+# fiat_rates_fallback_url = "https://allratestoday.com/api/open/latest/USD"  # Optional, off by default; see "Fiat fallback source"
 crypto_rates_url = "https://api.coingecko.com/api/v3/simple/price"
 
 [api.keys]
@@ -133,3 +134,18 @@ Native adapters explicitly load and share `rates.json` in the config directory, 
 Without usable cached or fetched rates, the engine uses built-in defaults, not live rates. `Engine::new()` itself performs no filesystem or network I/O; web integrations supply rates separately.
 
 Default sources are [open.er-api.com](https://open.er-api.com) for fiat and [CoinGecko](https://www.coingecko.com/en/api) for crypto. See [architecture](architecture.md) for rate data flow and embedding contracts.
+
+#### Fiat fallback source
+
+`[api] fiat_rates_fallback_url` is an optional second fiat source that the TUI contacts only when `fiat_rates_url` fails (network error, non-2xx status, or an empty `rates` object). It is unset by default: no fallback host is contacted unless you add the setting. Any endpoint that returns the same `{ "rates": { "EUR": 0.92, ... } }` shape with USD as the base works.
+
+When the fallback is used, the status line warns that rates came from the fallback source together with the primary error. Currencies the fallback does not cover are simply absent, so conversions involving them fail until the primary source recovers; the fallback never fills them in with stale or default values. If both sources fail, the primary error is reported and cached rates (if any) stay in use.
+
+Example, using a keyless ECB reference-rate feed:
+
+```toml
+[api]
+fiat_rates_fallback_url = "https://allratestoday.com/api/open/latest/USD"
+```
+
+Coverage limitation of this example: it serves the ECB reference table, about 30 currencies (EUR, GBP, JPY, CHF, CNY, INR, and the other ECB-quoted currencies). It does not include RUB, KZT, UAH, or AED, so those conversions are unavailable while the fallback is in use. Any other same-shape endpoint can be configured instead.
